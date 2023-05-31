@@ -1,6 +1,8 @@
 # Audio Chat
 Audio Chat is a peer to peer chat application focused on privacy and security. It supports encrypted audio calls with encrypted text messages, files, and screen shares in the call.
 
+![Corroded Monitor CPU Utilization](https://chanchan.dev/static/images/audio-chat.png)
+
 ### Contributing
 Contributions are welcome! Please open an issue or pull request if you have any suggestions or bug reports.
 
