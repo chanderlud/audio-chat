@@ -1,4 +1,6 @@
 from os import path, getenv, getcwd, makedirs, remove
+from pathlib import Path
+from appdirs import user_data_dir
 
 
 # check if we have permission to write to a directory
@@ -37,3 +39,14 @@ def cv(file_name: str) -> str:
         return to_appdata(file_name)  # if the installation location is not writeable, use appdata
     else:
         return file_name  # otherwise, use the installation location
+
+
+def download_path() -> str:
+    # format downloads path
+    downloads_path = path.join(path.expanduser("~"), "Downloads")
+
+    # create downloads folder if it doesn't exist
+    if not path.exists(downloads_path):
+        makedirs(downloads_path)
+
+    return downloads_path

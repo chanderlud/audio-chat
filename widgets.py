@@ -1,3 +1,4 @@
+import logging
 import secrets
 import tkinter
 import webbrowser
@@ -14,6 +15,8 @@ from port_range import PortRange
 from pyaudio import PyAudio
 
 # windows only imports
+from _nuitka import download_path
+
 if platform == "win32":
     import ctypes
     import win32gui
@@ -310,7 +313,7 @@ class ChatWidget(ctk.CTkFrame):
 
         message.bind("<Enter>", lambda _: message.configure(font=(self.defaultFont.name, 13, "underline")))
         message.bind("<Leave>", lambda _: message.configure(font=(self.defaultFont.name, 13)))
-        message.bind("<Button-1>", lambda _: show_file("downloads/" + file if not real_path else real_path))
+        message.bind("<Button-1>", lambda _: show_file(download_path() + "/" + file if not real_path else real_path))
         message.configure(cursor="hand2")
         message.pack(side=tkinter.TOP, anchor=tkinter.W, padx=20)
 
@@ -1071,6 +1074,8 @@ class ScreenshareWidget(ctk.CTkToplevel):
 
 # show file in file explorer
 def show_file(file_path: str) -> None:
+    logging.debug(f"showing {file_path}")
+
     if platform == "win32":  # this code is more reliable than a version that selects the file in explorer
         # windows only imports
         from os import startfile

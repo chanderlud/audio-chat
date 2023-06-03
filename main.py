@@ -32,7 +32,7 @@ from pydub.playback import play
 from pystray import Icon, MenuItem
 
 import widgets
-from _nuitka import cv
+from _nuitka import cv, download_path
 from config import Config
 
 # noise reduction only works on Windows for now
@@ -1020,10 +1020,7 @@ class App(ctk.CTk):
                     warning(f"file signature mismatch: {signature} != {transfer.signature}")
                     break
 
-                local_path = f"downloads/{transfer.formatted_name}"
-
-                if not path.exists("downloads"):  # create downloads directory if it doesn't exist
-                    mkdir("downloads")
+                local_path = f"{download_path()}/{transfer.formatted_name}"
 
                 open(local_path, "wb+").write(file_data)  # write file data to disk
 
