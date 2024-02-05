@@ -1,0 +1,20 @@
+syntax = "proto2";
+
+package audio_chat.items;
+
+message Message {
+  oneof message {
+    Hello hello = 1;
+    InputConfig input_config = 2;
+  }
+}
+
+message Hello {
+  required uint32 port = 1;
+}
+
+message InputConfig {
+  required uint32 channels = 1;
+  required uint32 sample_rate = 2;
+  required string sample_format = 4;
+}
