@@ -1,4 +1,5 @@
 use cpal::SupportedStreamConfig;
+use ed25519_dalek::Signature;
 
 include!(concat!(env!("OUT_DIR"), "/audio_chat.items.rs"));
 
@@ -15,5 +16,11 @@ impl From<&SupportedStreamConfig> for InputConfig {
             sample_rate: value.sample_rate().0,
             sample_format: value.sample_format().to_string(),
         }
+    }
+}
+
+impl Identity {
+    pub(crate) fn new(nonce: [u8; 1024], signature: Signature) -> Self {
+        Self { nonce: nonce.to_vec(), signature: signature.to_bytes().to_vec() }
     }
 }

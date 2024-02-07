@@ -18,3 +18,8 @@ message InputConfig {
   required uint32 sample_rate = 2;
   required string sample_format = 4;
 }
+
+message Identity {
+  required bytes nonce = 1;
+  required bytes signature = 2;
+}

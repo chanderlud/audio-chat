@@ -5,7 +5,16 @@
 
 import '../frb_generated.dart';
 import 'error.dart';
+import 'package:collection/collection.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+
+Stream<String> createLogStream({dynamic hint}) =>
+    RustLib.instance.api.createLogStream(hint: hint);
+
+void rustSetUp({dynamic hint}) => RustLib.instance.api.rustSetUp(hint: hint);
+
+U8Array64 generateKeys({dynamic hint}) =>
+    RustLib.instance.api.generateKeys(hint: hint);
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::rust_async::RwLock<AudioChat>>
 @sealed
@@ -24,8 +33,8 @@ class AudioChat extends RustOpaque {
         RustLib.instance.api.rust_arc_decrement_strong_count_AudioChatPtr,
   );
 
-  /// The public add_contact function
-  Future<void> addContact({required String contact, dynamic hint}) =>
+  /// Adds add a contact to the known contacts
+  Future<void> addContact({required Contact contact, dynamic hint}) =>
       RustLib.instance.api.audioChatAddContact(
         that: this,
         contact: contact,
@@ -43,14 +52,88 @@ class AudioChat extends RustOpaque {
       );
 
   static Future<AudioChat> newAudioChat(
-          {required int listenPort, required int receivePort, dynamic hint}) =>
+          {required int listenPort,
+          required int receivePort,
+          required List<int> signingKey,
+          dynamic hint}) =>
       RustLib.instance.api.audioChatNew(
-          listenPort: listenPort, receivePort: receivePort, hint: hint);
+          listenPort: listenPort,
+          receivePort: receivePort,
+          signingKey: signingKey,
+          hint: hint);
 
   /// The public say_hello function
-  Future<void> sayHello({required String address, dynamic hint}) =>
+  Future<void> sayHello({required Contact contact, dynamic hint}) =>
       RustLib.instance.api.audioChatSayHello(
         that: this,
-        address: address,
+        contact: contact,
       );
+}
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::rust_async::RwLock<Contact>>
+@sealed
+class Contact extends RustOpaque {
+  Contact.dcoDecode(List<dynamic> wire) : super.dcoDecode(wire, _kStaticData);
+
+  Contact.sseDecode(int ptr, int externalSizeOnNative)
+      : super.sseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        RustLib.instance.api.rust_arc_increment_strong_count_Contact,
+    rustArcDecrementStrongCount:
+        RustLib.instance.api.rust_arc_decrement_strong_count_Contact,
+    rustArcDecrementStrongCountPtr:
+        RustLib.instance.api.rust_arc_decrement_strong_count_ContactPtr,
+  );
+
+  String addressStr({dynamic hint}) => RustLib.instance.api.contactAddressStr(
+        that: this,
+      );
+
+  String ipStr({dynamic hint}) => RustLib.instance.api.contactIpStr(
+        that: this,
+      );
+
+  static Contact newContact(
+          {required String nickname,
+          required String verifyingKey,
+          required String address,
+          dynamic hint}) =>
+      RustLib.instance.api.contactNew(
+          nickname: nickname,
+          verifyingKey: verifyingKey,
+          address: address,
+          hint: hint);
+
+  String nickname({dynamic hint}) => RustLib.instance.api.contactNickname(
+        that: this,
+      );
+
+  static Contact parse({required String s, dynamic hint}) =>
+      RustLib.instance.api.contactParse(s: s, hint: hint);
+
+  Uint8List verifyingKey({dynamic hint}) =>
+      RustLib.instance.api.contactVerifyingKey(
+        that: this,
+      );
+
+  String verifyingKeyStr({dynamic hint}) =>
+      RustLib.instance.api.contactVerifyingKeyStr(
+        that: this,
+      );
+}
+
+class U8Array64 extends NonGrowableListView<int> {
+  static const arraySize = 64;
+
+  @internal
+  Uint8List get inner => _inner;
+  final Uint8List _inner;
+
+  U8Array64(this._inner)
+      : assert(_inner.length == arraySize),
+        super(_inner);
+
+  U8Array64.init() : this(Uint8List(arraySize));
 }

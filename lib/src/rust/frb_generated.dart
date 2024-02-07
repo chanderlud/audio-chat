@@ -64,7 +64,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 
 abstract class RustLibApi extends BaseApi {
   Future<void> audioChatAddContact(
-      {required AudioChat that, required String contact, dynamic hint});
+      {required AudioChat that, required Contact contact, dynamic hint});
 
   Future<void> audioChatEndCall({required AudioChat that, dynamic hint});
 
@@ -72,10 +72,37 @@ abstract class RustLibApi extends BaseApi {
       {required AudioChat that, dynamic hint});
 
   Future<AudioChat> audioChatNew(
-      {required int listenPort, required int receivePort, dynamic hint});
+      {required int listenPort,
+      required int receivePort,
+      required List<int> signingKey,
+      dynamic hint});
 
   Future<void> audioChatSayHello(
-      {required AudioChat that, required String address, dynamic hint});
+      {required AudioChat that, required Contact contact, dynamic hint});
+
+  String contactAddressStr({required Contact that, dynamic hint});
+
+  String contactIpStr({required Contact that, dynamic hint});
+
+  Contact contactNew(
+      {required String nickname,
+      required String verifyingKey,
+      required String address,
+      dynamic hint});
+
+  String contactNickname({required Contact that, dynamic hint});
+
+  Contact contactParse({required String s, dynamic hint});
+
+  Uint8List contactVerifyingKey({required Contact that, dynamic hint});
+
+  String contactVerifyingKeyStr({required Contact that, dynamic hint});
+
+  Stream<String> createLogStream({dynamic hint});
+
+  U8Array64 generateKeys({dynamic hint});
+
+  void rustSetUp({dynamic hint});
 
   RustArcIncrementStrongCountFnType
       get rust_arc_increment_strong_count_AudioChat;
@@ -84,6 +111,12 @@ abstract class RustLibApi extends BaseApi {
       get rust_arc_decrement_strong_count_AudioChat;
 
   CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_AudioChatPtr;
+
+  RustArcIncrementStrongCountFnType get rust_arc_increment_strong_count_Contact;
+
+  RustArcDecrementStrongCountFnType get rust_arc_decrement_strong_count_Contact;
+
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ContactPtr;
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -96,19 +129,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @override
   Future<void> audioChatAddContact(
-      {required AudioChat that, required String contact, dynamic hint}) {
+      {required AudioChat that, required Contact contact, dynamic hint}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
             that, serializer);
-        sse_encode_String(contact, serializer);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
+            contact, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 3, port: port_);
+            funcId: 6, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_dart_error,
+        decodeErrorData: null,
       ),
       constMeta: kAudioChatAddContactConstMeta,
       argValues: [that, contact],
@@ -130,7 +164,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
             that, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 4, port: port_);
+            funcId: 7, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -157,7 +191,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
             that, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 5, port: port_);
+            funcId: 8, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_record_list_string_list_string,
@@ -177,14 +211,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @override
   Future<AudioChat> audioChatNew(
-      {required int listenPort, required int receivePort, dynamic hint}) {
+      {required int listenPort,
+      required int receivePort,
+      required List<int> signingKey,
+      dynamic hint}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_u_16(listenPort, serializer);
         sse_encode_u_16(receivePort, serializer);
+        sse_encode_list_prim_u_8_loose(signingKey, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 1, port: port_);
+            funcId: 4, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData:
@@ -192,7 +230,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         decodeErrorData: null,
       ),
       constMeta: kAudioChatNewConstMeta,
-      argValues: [listenPort, receivePort],
+      argValues: [listenPort, receivePort, signingKey],
       apiImpl: this,
       hint: hint,
     ));
@@ -200,27 +238,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kAudioChatNewConstMeta => const TaskConstMeta(
         debugName: "AudioChat_new",
-        argNames: ["listenPort", "receivePort"],
+        argNames: ["listenPort", "receivePort", "signingKey"],
       );
 
   @override
   Future<void> audioChatSayHello(
-      {required AudioChat that, required String address, dynamic hint}) {
+      {required AudioChat that, required Contact contact, dynamic hint}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
             that, serializer);
-        sse_encode_String(address, serializer);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
+            contact, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 2, port: port_);
+            funcId: 5, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: sse_decode_dart_error,
       ),
       constMeta: kAudioChatSayHelloConstMeta,
-      argValues: [that, address],
+      argValues: [that, contact],
       apiImpl: this,
       hint: hint,
     ));
@@ -228,7 +267,258 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kAudioChatSayHelloConstMeta => const TaskConstMeta(
         debugName: "AudioChat_say_hello",
-        argNames: ["that", "address"],
+        argNames: ["that", "contact"],
+      );
+
+  @override
+  String contactAddressStr({required Contact that, dynamic hint}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
+            that, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 15)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_String,
+        decodeErrorData: null,
+      ),
+      constMeta: kContactAddressStrConstMeta,
+      argValues: [that],
+      apiImpl: this,
+      hint: hint,
+    ));
+  }
+
+  TaskConstMeta get kContactAddressStrConstMeta => const TaskConstMeta(
+        debugName: "Contact_address_str",
+        argNames: ["that"],
+      );
+
+  @override
+  String contactIpStr({required Contact that, dynamic hint}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
+            that, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_String,
+        decodeErrorData: null,
+      ),
+      constMeta: kContactIpStrConstMeta,
+      argValues: [that],
+      apiImpl: this,
+      hint: hint,
+    ));
+  }
+
+  TaskConstMeta get kContactIpStrConstMeta => const TaskConstMeta(
+        debugName: "Contact_ip_str",
+        argNames: ["that"],
+      );
+
+  @override
+  Contact contactNew(
+      {required String nickname,
+      required String verifyingKey,
+      required String address,
+      dynamic hint}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_String(nickname, serializer);
+        sse_encode_String(verifyingKey, serializer);
+        sse_encode_String(address, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact,
+        decodeErrorData: sse_decode_dart_error,
+      ),
+      constMeta: kContactNewConstMeta,
+      argValues: [nickname, verifyingKey, address],
+      apiImpl: this,
+      hint: hint,
+    ));
+  }
+
+  TaskConstMeta get kContactNewConstMeta => const TaskConstMeta(
+        debugName: "Contact_new",
+        argNames: ["nickname", "verifyingKey", "address"],
+      );
+
+  @override
+  String contactNickname({required Contact that, dynamic hint}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
+            that, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_String,
+        decodeErrorData: null,
+      ),
+      constMeta: kContactNicknameConstMeta,
+      argValues: [that],
+      apiImpl: this,
+      hint: hint,
+    ));
+  }
+
+  TaskConstMeta get kContactNicknameConstMeta => const TaskConstMeta(
+        debugName: "Contact_nickname",
+        argNames: ["that"],
+      );
+
+  @override
+  Contact contactParse({required String s, dynamic hint}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_String(s, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact,
+        decodeErrorData: sse_decode_dart_error,
+      ),
+      constMeta: kContactParseConstMeta,
+      argValues: [s],
+      apiImpl: this,
+      hint: hint,
+    ));
+  }
+
+  TaskConstMeta get kContactParseConstMeta => const TaskConstMeta(
+        debugName: "Contact_parse",
+        argNames: ["s"],
+      );
+
+  @override
+  Uint8List contactVerifyingKey({required Contact that, dynamic hint}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
+            that, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_prim_u_8_strict,
+        decodeErrorData: null,
+      ),
+      constMeta: kContactVerifyingKeyConstMeta,
+      argValues: [that],
+      apiImpl: this,
+      hint: hint,
+    ));
+  }
+
+  TaskConstMeta get kContactVerifyingKeyConstMeta => const TaskConstMeta(
+        debugName: "Contact_verifying_key",
+        argNames: ["that"],
+      );
+
+  @override
+  String contactVerifyingKeyStr({required Contact that, dynamic hint}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
+            that, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_String,
+        decodeErrorData: null,
+      ),
+      constMeta: kContactVerifyingKeyStrConstMeta,
+      argValues: [that],
+      apiImpl: this,
+      hint: hint,
+    ));
+  }
+
+  TaskConstMeta get kContactVerifyingKeyStrConstMeta => const TaskConstMeta(
+        debugName: "Contact_verifying_key_str",
+        argNames: ["that"],
+      );
+
+  @override
+  Stream<String> createLogStream({dynamic hint}) {
+    return handler.executeStream(StreamTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 1, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_String,
+        decodeErrorData: null,
+      ),
+      constMeta: kCreateLogStreamConstMeta,
+      argValues: [],
+      apiImpl: this,
+      hint: hint,
+    ));
+  }
+
+  TaskConstMeta get kCreateLogStreamConstMeta => const TaskConstMeta(
+        debugName: "create_log_stream",
+        argNames: [],
+      );
+
+  @override
+  U8Array64 generateKeys({dynamic hint}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_u_8_array_64,
+        decodeErrorData: null,
+      ),
+      constMeta: kGenerateKeysConstMeta,
+      argValues: [],
+      apiImpl: this,
+      hint: hint,
+    ));
+  }
+
+  TaskConstMeta get kGenerateKeysConstMeta => const TaskConstMeta(
+        debugName: "generate_keys",
+        argNames: [],
+      );
+
+  @override
+  void rustSetUp({dynamic hint}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: null,
+      ),
+      constMeta: kRustSetUpConstMeta,
+      argValues: [],
+      apiImpl: this,
+      hint: hint,
+    ));
+  }
+
+  TaskConstMeta get kRustSetUpConstMeta => const TaskConstMeta(
+        debugName: "rust_set_up",
+        argNames: [],
       );
 
   RustArcIncrementStrongCountFnType
@@ -239,12 +529,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       get rust_arc_decrement_strong_count_AudioChat => wire
           .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat;
 
+  RustArcIncrementStrongCountFnType
+      get rust_arc_increment_strong_count_Contact => wire
+          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact;
+
+  RustArcDecrementStrongCountFnType
+      get rust_arc_decrement_strong_count_Contact => wire
+          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact;
+
   @protected
   AudioChat
       dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return AudioChat.dcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  Contact
+      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return Contact.dcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -256,11 +562,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  Contact
+      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return Contact.dcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
   AudioChat
       dco_decode_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return AudioChat.dcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  Contact
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return Contact.dcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -284,6 +606,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   List<String> dco_decode_list_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_String).toList();
+  }
+
+  @protected
+  List<int> dco_decode_list_prim_u_8_loose(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as List<int>;
   }
 
   @protected
@@ -319,6 +647,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  U8Array64 dco_decode_u_8_array_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return U8Array64(dco_decode_list_prim_u_8_strict(raw));
+  }
+
+  @protected
   void dco_decode_unit(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return;
@@ -340,6 +674,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  Contact
+      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return Contact.sseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
   AudioChat
       sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
           SseDeserializer deserializer) {
@@ -349,11 +692,29 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  Contact
+      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return Contact.sseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
   AudioChat
       sse_decode_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
           SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return AudioChat.sseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
+  Contact
+      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return Contact.sseDecode(
         sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
   }
 
@@ -384,6 +745,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var len_ = sse_decode_i_32(deserializer);
+    return deserializer.buffer.getUint8List(len_);
+  }
+
+  @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
@@ -409,6 +777,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   int sse_decode_u_8(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint8();
+  }
+
+  @protected
+  U8Array64 sse_decode_u_8_array_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_list_prim_u_8_strict(deserializer);
+    return U8Array64(inner);
   }
 
   @protected
@@ -444,6 +819,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
+          Contact self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(self.sseEncode(move: true), serializer);
+  }
+
+  @protected
+  void
       sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
           AudioChat self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -452,8 +835,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
+          Contact self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(self.sseEncode(move: false), serializer);
+  }
+
+  @protected
+  void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
           AudioChat self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(self.sseEncode(move: null), serializer);
+  }
+
+  @protected
+  void
+      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
+          Contact self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(self.sseEncode(move: null), serializer);
   }
@@ -477,6 +876,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     for (final item in self) {
       sse_encode_String(item, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_list_prim_u_8_loose(
+      List<int> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    serializer.buffer
+        .putUint8List(self is Uint8List ? self : Uint8List.fromList(self));
   }
 
   @protected
@@ -505,6 +913,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_u_8(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint8(self);
+  }
+
+  @protected
+  void sse_encode_u_8_array_64(U8Array64 self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_prim_u_8_strict(self.inner, serializer);
   }
 
   @protected

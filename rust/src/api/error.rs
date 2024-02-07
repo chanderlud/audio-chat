@@ -1,5 +1,6 @@
 use std::fmt::{Display, Formatter};
 use std::net::AddrParseError;
+use base64::DecodeError;
 use cpal::{BuildStreamError, DefaultStreamConfigError, DevicesError, PlayStreamError};
 use hkdf::InvalidLength;
 use rubato::{ResampleError, ResamplerConstructionError};
@@ -25,8 +26,10 @@ pub(crate) enum ErrorKind {
     HkdfLength(InvalidLength),
     Join(JoinError),
     AddrParse(AddrParseError),
+    Base64(DecodeError),
     NoOutputDevice,
     NoInputDevice,
+    InvalidContactFormat,
 }
 
 impl From<std::io::Error> for Error {
@@ -125,6 +128,14 @@ impl From<AddrParseError> for Error {
     }
 }
 
+impl From<DecodeError> for Error {
+    fn from(err: DecodeError) -> Self {
+        Self {
+            kind: ErrorKind::Base64(err),
+        }
+    }
+}
+
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", match self.kind {
@@ -139,9 +150,11 @@ impl Display for Error {
             ErrorKind::KanalSend(ref err) => format!("Kanal send error: {}", err),
             ErrorKind::HkdfLength(ref err) => format!("HKDF length error: {}", err),
             ErrorKind::Join(ref err) => format!("Join error: {}", err),
-            ErrorKind::AddrParse(ref err) => format!("Addr parse error: {}", err),
-            ErrorKind::NoOutputDevice => "No output device".to_string(),
-            ErrorKind::NoInputDevice => "No input device".to_string(),
+            ErrorKind::Base64(ref err) => format!("Base64 error: {}", err),
+            ErrorKind::AddrParse(ref err) => err.to_string(),
+            ErrorKind::NoOutputDevice => "No output device found".to_string(),
+            ErrorKind::NoInputDevice => "No input device found".to_string(),
+            ErrorKind::InvalidContactFormat => "Invalid contact format".to_string(),
         })
     }
 }
@@ -156,6 +169,12 @@ impl Error {
     pub(crate) fn no_input_device() -> Self {
         Self {
             kind: ErrorKind::NoInputDevice,
+        }
+    }
+
+    pub(crate) fn invalid_contact_format() -> Self {
+        Self {
+            kind: ErrorKind::InvalidContactFormat,
         }
     }
 }

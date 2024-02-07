@@ -1,19 +1,23 @@
 use std::mem;
 pub use std::net::{IpAddr, SocketAddr};
-use std::sync::atomic::Ordering::Relaxed;
+use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
 
-use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherCoreWrapper, StreamCipherSeek};
 use aes::Aes256;
+use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherCoreWrapper, StreamCipherSeek};
 use atomic_float::AtomicF32;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Host, Stream};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ctr::{Ctr128BE, CtrCore};
+use ed25519_dalek::{SecretKey, Signature, Signer, SigningKey, VerifyingKey};
+use flutter_rust_bridge::{frb, spawn, spawn_blocking_with};
 use hex_literal::hex;
 use hkdf::Hkdf;
-use kanal::{bounded, bounded_async, AsyncReceiver, AsyncSender, Receiver, Sender};
+use kanal::{AsyncReceiver, AsyncSender, bounded, bounded_async, Receiver, Sender};
 use log::{debug, error};
 use nnnoiseless::{DenoiseState, FRAME_SIZE};
+use rand::rngs::OsRng;
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelRefMutIterator;
 use rubato::{
@@ -25,12 +29,16 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::select;
 use tokio::sync::{Mutex, Notify};
 use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};
-
-use flutter_rust_bridge::{frb, spawn, spawn_blocking_with};
+use std::collections::HashMap;
+use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
+use itertools::Itertools;
+use rand::Rng;
 
 use crate::api::error::{DartError, Error, ErrorKind};
-use crate::api::items::{Hello, InputConfig};
-use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
+use crate::api::items::{Hello, InputConfig, Identity};
+use crate::api::logger;
+use crate::frb_generated::{FLUTTER_RUST_BRIDGE_HANDLER, StreamSink};
 
 type Result<T> = std::result::Result<T, Error>;
 type TransferBuffer = [u8; TRANSFER_BUFFER_SIZE];
@@ -61,7 +69,7 @@ pub struct AudioChat {
     receive_port: u16,
 
     /// The contacts that this chat knows about
-    contacts: Arc<Mutex<Vec<SocketAddr>>>,
+    contacts: Arc<Mutex<HashMap<String, Contact>>>,
 
     /// The audio host
     host: Arc<Host>,
@@ -83,11 +91,13 @@ pub struct AudioChat {
 
     /// Manually set the output device
     output_device: Arc<Mutex<Option<String>>>,
+
+    secret_key: SecretKey,
 }
 
 impl AudioChat {
     // this function must be async to use `spawn`
-    pub async fn new(listen_port: u16, receive_port: u16) -> AudioChat {
+    pub async fn new(listen_port: u16, receive_port: u16, signing_key: Vec<u8>) -> AudioChat {
         let chat = Self {
             listen_port,
             receive_port,
@@ -99,6 +109,7 @@ impl AudioChat {
             end_call: Default::default(),
             input_device: Default::default(),
             output_device: Default::default(),
+            secret_key: SecretKey::from(<Vec<u8> as TryInto<[u8; 32]>>::try_into(signing_key).unwrap())
         };
 
         let chat_clone = chat.clone();
@@ -111,13 +122,15 @@ impl AudioChat {
     }
 
     /// The public say_hello function
-    pub async fn say_hello(&self, address: String) -> std::result::Result<(), DartError> {
-        self._say_hello(address).await.map_err(DartError::from)
+    pub async fn say_hello(&self, contact: &Contact) -> std::result::Result<(), DartError> {
+        debug!("say hello called for {}", contact.nickname);
+        self._say_hello(contact).await.map_err(DartError::from)
     }
 
-    /// The public add_contact function
-    pub async fn add_contact(&self, contact: String) -> std::result::Result<(), DartError> {
-        self._add_contact(contact).await.map_err(DartError::from)
+    /// Adds add a contact to the known contacts
+    pub async fn add_contact(&self, contact: &Contact) {
+        let mut contacts = self.contacts.lock().await;
+        contacts.insert(contact.nickname.clone(), contact.clone());
     }
 
     /// Ends the call (if there is one)
@@ -126,18 +139,9 @@ impl AudioChat {
     }
 
     /// Initiate a call to the given address
-    async fn _say_hello(&self, address: String) -> Result<()> {
-        let address: SocketAddr = address.parse()?;
-        let mut stream = TcpStream::connect(address).await?;
-        self.handshake(&mut stream, address.ip(), true).await
-    }
-
-    /// Adds an address to the list of known contacts
-    async fn _add_contact(&self, contact: String) -> Result<()> {
-        let contact: SocketAddr = contact.parse()?;
-        let mut contacts = self.contacts.lock().await;
-        contacts.push(contact);
-        Ok(())
+    async fn _say_hello(&self, contact: &Contact) -> Result<()> {
+        let mut stream = TcpStream::connect(contact.address).await?;
+        self.handshake(&mut stream, contact.ip(), true, contact).await
     }
 
     /// Lists the input and output devices
@@ -162,19 +166,16 @@ impl AudioChat {
         while let Ok((mut stream, address)) = listener.accept().await {
             let remote_address = address.ip();
 
-            if !self
-                .contacts
-                .lock()
-                .await
-                .iter()
-                .any(|contact| contact.ip() == remote_address)
-            {
-                error!("Received call from unknown contact: {}", address);
-                continue;
-            }
+            let contact = {
+                self.contacts.lock().await.iter().find(|(_, contact)| contact.ip() == remote_address).map(|(_, contact)| contact.clone())
+            };
 
-            if let Err(error) = self.handshake(&mut stream, remote_address, false).await {
-                error!("Call failed: {:?}", error);
+            if let Some(contact) = contact {
+                if let Err(error) = self.handshake(&mut stream, remote_address, false, &contact).await {
+                    error!("Call failed: {:?}", error);
+                }
+            } else {
+                error!("Unknown contact: {}", remote_address);
             }
         }
 
@@ -187,6 +188,7 @@ impl AudioChat {
         stream: &mut TcpStream,
         remote_address: IpAddr,
         caller: bool,
+        contact: &Contact,
     ) -> Result<()> {
         // perform the key exchange
         let shared_secret = key_exchange(stream).await?;
@@ -198,24 +200,31 @@ impl AudioChat {
         let mut send_cipher = cipher_factory(&hk, b"send-key", b"send-iv")?;
         let mut receive_cipher = cipher_factory(&hk, b"receive-key", b"receive-iv")?;
 
+        // create a random nonce
+        let mut nonce = [0; 1024];
+        OsRng.fill(&mut nonce);
+
+        // sign the nonce
+        let signing_key = SigningKey::from(self.secret_key);
+        let signature = signing_key.sign(&nonce);
+
+        // create the identity message
+        let message = Identity::new(nonce, signature);
+
+        let identity = exchange_messages(stream, &message, &mut stream_cipher, caller).await?;
+
+        // verify the signature
+        let verifying_key = VerifyingKey::from_bytes(&contact.verifying_key).unwrap();
+        let signature = Signature::from_slice(&identity.signature).unwrap();
+        verifying_key.verify_strict(&identity.nonce, &signature).unwrap();
+
         // create the UDP socket
         let socket = Arc::new(UdpSocket::bind(("0.0.0.0", self.receive_port)).await?);
 
         // build the hello message
         let message = Hello::new(self.receive_port);
 
-        let hello = if caller {
-            // the caller sends the hello message first
-            write_message(stream, &message, &mut stream_cipher).await?;
-            // then receives the hello message from the callee
-            read_message::<Hello, _>(stream, &mut stream_cipher).await?
-        } else {
-            // callee receives the hello message from the caller
-            let hello = read_message::<Hello, _>(stream, &mut stream_cipher).await?;
-            // then sends the hello message
-            write_message(stream, &message, &mut stream_cipher).await?;
-            hello
-        };
+        let hello = exchange_messages(stream, &message, &mut stream_cipher, caller).await?;
 
         // connect to the remote address on the hello port
         socket.connect((remote_address, hello.port as u16)).await?;
@@ -305,19 +314,7 @@ impl AudioChat {
         let input_config = input_device.default_input_config()?;
         let message = InputConfig::from(&input_config);
 
-        let remote_input_config = if caller {
-            // caller sends the input config first
-            write_message(stream, &message, &mut stream_cipher).await?;
-            // then receive the input config from the callee
-            read_message::<InputConfig, _>(stream, &mut stream_cipher).await?
-        } else {
-            // callee receives the input config from the caller
-            let remote_input_config =
-                read_message::<InputConfig, _>(stream, &mut stream_cipher).await?;
-            // then sends the input config
-            write_message(stream, &message, &mut stream_cipher).await?;
-            remote_input_config
-        };
+        let remote_input_config = exchange_messages(stream, &message, &mut stream_cipher, caller).await?;
 
         // sends denoised data to the output socket
         let (input_sender, input_receiver) = bounded_async::<[f32; FRAME_SIZE]>(1_000);
@@ -462,6 +459,96 @@ enum EndReason {
     Error,
 }
 
+#[derive(Clone)]
+#[frb(opaque)]
+pub struct Contact {
+    nickname: String,
+    verifying_key: [u8; 32],
+    address: SocketAddr,
+}
+
+impl FromStr for Contact {
+    type Err = DartError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        let parts: (&str, &str, &str) = s.splitn(3, ',').collect_tuple().ok_or(Error::invalid_contact_format())?;
+
+        let nickname = parts.0.to_string();
+        let verifying_key = BASE64_STANDARD.decode(parts.1.as_bytes()).map_err(Error::from)?;
+        let address = parts.2.parse().map_err(Error::from)?;
+
+        Ok(Self {
+            nickname,
+            verifying_key: verifying_key.try_into().map_err(|_| Error::invalid_contact_format())?,
+            address,
+        })
+    }
+}
+
+impl Contact {
+    #[frb(sync)]
+    pub fn new(nickname: String, verifying_key: String, address: String) -> std::result::Result<Contact, DartError> {
+        let key = BASE64_STANDARD.decode(verifying_key.as_bytes()).map_err(Error::from)?;
+
+        Ok(Self {
+            nickname,
+            verifying_key: key.try_into().map_err(|_| Error::invalid_contact_format())?,
+            address: address.parse().map_err(Error::from)?,
+        })
+    }
+
+    #[frb(sync)]
+    pub fn parse(s: String) -> std::result::Result<Contact, DartError> {
+        Self::from_str(&s)
+    }
+
+    #[frb(sync)]
+    pub fn ip_str(&self) -> String {
+        self.address.ip().to_string()
+    }
+
+    #[frb(sync)]
+    pub fn verifying_key(&self) -> Vec<u8> {
+        self.verifying_key.to_vec()
+    }
+
+    #[frb(sync)]
+    pub fn verifying_key_str(&self) -> String {
+        BASE64_STANDARD.encode(&self.verifying_key)
+    }
+
+    #[frb(sync)]
+    pub fn nickname(&self) -> String {
+        self.nickname.clone()
+    }
+
+    #[frb(sync)]
+    pub fn address_str(&self) -> String {
+        self.address.to_string()
+    }
+
+    fn ip(&self) -> IpAddr {
+        self.address.ip()
+    }
+}
+
+#[frb(sync)]
+pub fn create_log_stream(s: StreamSink<String>) {
+    logger::SendToDartLogger::set_stream_sink(s);
+    error!("Logger set");
+}
+
+#[frb(sync)]
+pub fn rust_set_up() {
+    logger::init_logger();
+}
+
+#[frb(sync)]
+pub fn generate_keys() -> [u8; 64] {
+    let signing_key: SigningKey = SigningKey::generate(&mut OsRng);
+    signing_key.to_keypair_bytes()
+}
+
 /// Writes a protobuf message to the stream
 async fn write_message<M: prost::Message, C: StreamCipher>(
     stream: &mut TcpStream,
@@ -494,6 +581,27 @@ async fn read_message<M: prost::Message + Default, C: StreamCipher>(
     let message = M::decode(&buffer[..])?; // decode the message
 
     Ok(message)
+}
+
+/// A common message exchange pattern
+async fn exchange_messages<M: prost::Message + Default, C: StreamCipher>(
+    stream: &mut TcpStream,
+    message: &M,
+    cipher: &mut C,
+    caller: bool,
+) -> Result<M> {
+    if caller {
+        // the caller sends the message first
+        write_message(stream, message, cipher).await?;
+        // then receives the message from the callee
+        read_message(stream, cipher).await
+    } else {
+        // callee receives the message from the caller
+        let remote_identity = read_message(stream, cipher).await;
+        // then sends the message
+        write_message(stream, message, cipher).await?;
+        remote_identity
+    }
 }
 
 /// Processes the input data and sends it to the socket
