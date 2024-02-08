@@ -5,6 +5,7 @@
 
 import 'api/audio_chat.dart';
 import 'api/error.dart';
+import 'api/logger.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;

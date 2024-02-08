@@ -62,11 +62,29 @@ class AudioChat extends RustOpaque {
           signingKey: signingKey,
           hint: hint);
 
+  /// Restarts the listener
+  Future<void> restartListener({dynamic hint}) =>
+      RustLib.instance.api.audioChatRestartListener(
+        that: this,
+      );
+
   /// The public say_hello function
   Future<void> sayHello({required Contact contact, dynamic hint}) =>
       RustLib.instance.api.audioChatSayHello(
         that: this,
         contact: contact,
+      );
+
+  void setListenPort({required int port, dynamic hint}) =>
+      RustLib.instance.api.audioChatSetListenPort(
+        that: this,
+        port: port,
+      );
+
+  void setReceivePort({required int port, dynamic hint}) =>
+      RustLib.instance.api.audioChatSetReceivePort(
+        that: this,
+        port: port,
       );
 }
 

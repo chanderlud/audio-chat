@@ -1,9 +1,9 @@
-use std::fmt::{Display, Formatter};
-use std::net::AddrParseError;
 use base64::DecodeError;
 use cpal::{BuildStreamError, DefaultStreamConfigError, DevicesError, PlayStreamError};
 use hkdf::InvalidLength;
 use rubato::{ResampleError, ResamplerConstructionError};
+use std::fmt::{Display, Formatter};
+use std::net::AddrParseError;
 use tokio::task::JoinError;
 
 /// generic error type for audio chat
@@ -138,24 +138,29 @@ impl From<DecodeError> for Error {
 
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self.kind {
-            ErrorKind::Io(ref err) => format!("IO error: {}", err),
-            ErrorKind::Decode(ref err) => format!("Decode error: {}", err),
-            ErrorKind::StreamConfig(ref err) => format!("Stream config error: {}", err),
-            ErrorKind::BuildStream(ref err) => format!("Build stream error: {}", err),
-            ErrorKind::PlayStream(ref err) => format!("Play stream error: {}", err),
-            ErrorKind::Devices(ref err) => format!("Devices error: {}", err),
-            ErrorKind::ResamplerConstruction(ref err) => format!("Resampler construction error: {}", err),
-            ErrorKind::Resample(ref err) => format!("Resample error: {}", err),
-            ErrorKind::KanalSend(ref err) => format!("Kanal send error: {}", err),
-            ErrorKind::HkdfLength(ref err) => format!("HKDF length error: {}", err),
-            ErrorKind::Join(ref err) => format!("Join error: {}", err),
-            ErrorKind::Base64(ref err) => format!("Base64 error: {}", err),
-            ErrorKind::AddrParse(ref err) => err.to_string(),
-            ErrorKind::NoOutputDevice => "No output device found".to_string(),
-            ErrorKind::NoInputDevice => "No input device found".to_string(),
-            ErrorKind::InvalidContactFormat => "Invalid contact format".to_string(),
-        })
+        write!(
+            f,
+            "{}",
+            match self.kind {
+                ErrorKind::Io(ref err) => format!("IO error: {}", err),
+                ErrorKind::Decode(ref err) => format!("Decode error: {}", err),
+                ErrorKind::StreamConfig(ref err) => format!("Stream config error: {}", err),
+                ErrorKind::BuildStream(ref err) => format!("Build stream error: {}", err),
+                ErrorKind::PlayStream(ref err) => format!("Play stream error: {}", err),
+                ErrorKind::Devices(ref err) => format!("Devices error: {}", err),
+                ErrorKind::ResamplerConstruction(ref err) =>
+                    format!("Resampler construction error: {}", err),
+                ErrorKind::Resample(ref err) => format!("Resample error: {}", err),
+                ErrorKind::KanalSend(ref err) => format!("Kanal send error: {}", err),
+                ErrorKind::HkdfLength(ref err) => format!("HKDF length error: {}", err),
+                ErrorKind::Join(ref err) => format!("Join error: {}", err),
+                ErrorKind::Base64(ref err) => format!("Base64 error: {}", err),
+                ErrorKind::AddrParse(ref err) => err.to_string(),
+                ErrorKind::NoOutputDevice => "No output device found".to_string(),
+                ErrorKind::NoInputDevice => "No input device found".to_string(),
+                ErrorKind::InvalidContactFormat => "Invalid contact format".to_string(),
+            }
+        )
     }
 }
 

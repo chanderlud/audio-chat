@@ -1,7 +1,8 @@
+import 'package:audio_chat/settings/view.dart';
 import 'package:audio_chat/src/rust/api/audio_chat.dart';
 import 'package:audio_chat/src/rust/api/error.dart';
 import 'package:audio_chat/src/rust/frb_generated.dart';
-import 'package:audio_chat/settings.dart';
+import 'package:audio_chat/settings/controller.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -48,160 +49,229 @@ class AudioChatApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       theme: ThemeData(
+        dialogTheme: const DialogTheme(
+          surfaceTintColor: Color(0xFF27292A),
+        ),
         colorScheme: const ColorScheme.dark(
           primary: Color(0xFFFD6D6D),
+          secondary: Color(0xFF994747),
           brightness: Brightness.dark,
           background: Color(0xFF222425),
           secondaryContainer: Color(0xFF191919),
           tertiaryContainer: Color(0xFF27292A),
-          // cardColor: const Color(0xFF191919),
-          // backgroundColor: const Color.fromARGB(255, 34, 36, 37),
+          // onSurface: Colors.red,
+          // TODO surface is raised buttons
         ),
       ),
-      home: AudioChatView(
+      home: HomePage(
           audioChat: audioChat, settingsController: settingsController),
     );
   }
 }
 
-class AudioChatView extends StatefulWidget {
+class HomePage extends StatelessWidget {
   final AudioChat audioChat;
   final SettingsController settingsController;
 
-  const AudioChatView(
+  const HomePage(
       {super.key, required this.audioChat, required this.settingsController});
 
   @override
-  State<StatefulWidget> createState() => HomePage();
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                ContactForm(
+                    audioChat: audioChat,
+                    settingsController: settingsController),
+                const SizedBox(width: 20),
+                Expanded(
+                    child: ListenableBuilder(
+                        listenable: settingsController,
+                        builder: (BuildContext context, Widget? child) {
+                          return ContactsList(
+                              audioChat: audioChat,
+                              contacts:
+                                  settingsController.contacts.values.toList());
+                        }))
+              ],
+            ),
+            const SizedBox(height: 20),
+            Row(children: [
+              CallControls(
+                  audioChat: audioChat, settingsController: settingsController),
+            ]),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-class HomePage extends State<AudioChatView> {
+// ContactForm
+class ContactForm extends StatefulWidget {
+  final AudioChat audioChat;
+  final SettingsController settingsController;
+
+  const ContactForm(
+      {super.key, required this.audioChat, required this.settingsController});
+
+  @override
+  State<ContactForm> createState() => _ContactFormState();
+}
+
+class _ContactFormState extends State<ContactForm> {
   final TextEditingController _nicknameInput = TextEditingController();
   final TextEditingController _verifyingKeyInput = TextEditingController();
   final TextEditingController _contactAddressInput = TextEditingController();
 
   @override
   Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(15.0),
+      constraints: const BoxConstraints(maxWidth: 300),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(10.0),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("Add Contact", style: TextStyle(fontSize: 20)),
+          const SizedBox(height: 15),
+          TextInput(controller: _nicknameInput, labelText: 'Nickname'),
+          const SizedBox(height: 10),
+          TextInput(
+              controller: _contactAddressInput,
+              labelText: 'Address',
+              hintText: 'host:port or ip:port'),
+          const SizedBox(height: 10),
+          TextInput(
+              controller: _verifyingKeyInput,
+              labelText: 'Verifying Key',
+              hintText: 'base64 encoded verifying (public) key',
+              obscureText: true),
+          const SizedBox(height: 10),
+          Center(
+            child: Button(
+              text: 'Add Contact',
+              onPressed: () async {
+                try {
+                  if (_nicknameInput.text.isEmpty ||
+                      _verifyingKeyInput.text.isEmpty ||
+                      _contactAddressInput.text.isEmpty) {
+                    showErrorDialog(context, 'All fields are required');
+                    return;
+                  }
+
+                  var contact = await widget.settingsController.addContact(
+                      _nicknameInput.text,
+                      _verifyingKeyInput.text,
+                      _contactAddressInput.text);
+
+                  await widget.audioChat.addContact(contact: contact);
+
+                  _contactAddressInput.clear();
+                  _nicknameInput.clear();
+                  _verifyingKeyInput.clear();
+                } on DartError catch (e) {
+                  if (!context.mounted) return;
+                  showErrorDialog(context, e.message);
+                }
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ContactsList
+class ContactsList extends StatelessWidget {
+  final AudioChat audioChat;
+  final List<Contact> contacts;
+
+  const ContactsList(
+      {super.key, required this.audioChat, required this.contacts});
+
+  @override
+  Widget build(BuildContext context) {
     return LayoutBuilder(
-        builder: (BuildContext context, BoxConstraints viewportConstraints) {
-      return Scaffold(
-        body: Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: Wrap(
-            spacing: 20,
-            runSpacing: 20,
+      builder: (BuildContext context, BoxConstraints viewportConstraints) {
+        return Container(
+          constraints: const BoxConstraints(maxHeight: 280),
+          padding: const EdgeInsets.symmetric(vertical: 15.0, horizontal: 10.0),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.secondaryContainer,
+            borderRadius: BorderRadius.circular(10.0),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                constraints: const BoxConstraints(maxWidth: 350.0),
-                padding: const EdgeInsets.all(15.0),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.secondaryContainer,
-                  borderRadius: BorderRadius.circular(10.0),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text("Create Contact", style: TextStyle(fontSize: 20)),
-                    TextField(
-                      controller: _nicknameInput,
-                      decoration: const InputDecoration(
-                        labelText: 'Nickname',
-                      ),
-                    ),
-                    TextField(
-                      controller: _verifyingKeyInput,
-                      decoration: const InputDecoration(
-                        labelText: 'Verifying Key',
-                        hintText: 'base64 encoded verifying (public) key',
-                      ),
-                    ),
-                    TextField(
-                      controller: _contactAddressInput,
-                      decoration: const InputDecoration(
-                        labelText: 'Address',
-                        hintText: 'host:port or ip:port',
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    ElevatedButton(
-                      onPressed: () async {
-                        try {
-                          var contact = await widget.settingsController.addContact(
-                              _nicknameInput.text,
-                              _verifyingKeyInput.text,
-                              _contactAddressInput.text);
-
-                          await widget.audioChat.addContact(contact: contact);
-
-                          _contactAddressInput.clear();
-                          _nicknameInput.clear();
-                          _verifyingKeyInput.clear();
-                        } on DartError catch (e) {
-                          if (!context.mounted) return;
-                          showErrorDialog(context, e.message);
-                        }
-                      },
-                      child: const Text('Add Contact'),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                constraints: const BoxConstraints(maxWidth: 500.0, maxHeight: 270.0),
-                padding: const EdgeInsets.all(15.0),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.secondaryContainer,
-                  borderRadius: BorderRadius.circular(10.0),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text("Contacts", style: TextStyle(fontSize: 20)),
-                    const SizedBox(height: 10),
-                    Flexible(
-                      child: SingleChildScrollView(
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            minHeight: viewportConstraints.maxHeight,
-                          ),
-                          child: ListenableBuilder(
-                            listenable: widget.settingsController,
-                            builder: (BuildContext context, Widget? child) {
-                              return Column(
-                                children: widget.settingsController.contacts.values
-                                    .map((contact) => ContactWidget(
-                                    contact: contact,
-                                    audioChat: widget.audioChat))
-                                    .toList(),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                constraints: const BoxConstraints(maxWidth: 500.0, maxHeight: 300.0),
-                padding: const EdgeInsets.all(15.0),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.secondaryContainer,
-                  borderRadius: BorderRadius.circular(10.0),
-                ),
-                child: ElevatedButton(
-                  onPressed: () async {
-                    await widget.audioChat.endCall();
+              const Padding(
+                  padding: EdgeInsets.only(left: 8.0),
+                  child: Text("Contacts", style: TextStyle(fontSize: 20))),
+              const SizedBox(height: 10.0),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: contacts.length,
+                  itemBuilder: (BuildContext context, int index) {
+                    return ContactWidget(
+                        contact: contacts[index], audioChat: audioChat);
                   },
-                  child: const Text('Disconnect'),
                 ),
-              )
+              ),
             ],
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
+  }
+}
+
+// CallControls
+class CallControls extends StatelessWidget {
+  final AudioChat audioChat;
+  final SettingsController settingsController;
+
+  const CallControls(
+      {super.key, required this.audioChat, required this.settingsController});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 500.0, maxHeight: 300.0),
+      padding: const EdgeInsets.all(15.0),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(10.0),
+      ),
+      child: Row(
+        children: [
+          Button(
+              text: 'Disconnect',
+              onPressed: () async {
+                await audioChat.endCall();
+              }),
+          IconButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => SettingsPage(
+                          controller: settingsController,
+                          audioChat: audioChat)),
+                );
+              },
+              icon: const Icon(Icons.settings)),
+        ],
+      ),
+    );
   }
 }
 
@@ -213,10 +283,13 @@ class ContactWidget extends StatefulWidget {
       {super.key, required this.contact, required this.audioChat});
 
   @override
-  State<StatefulWidget> createState() => ContactWidgetState();
+  State<ContactWidget> createState() => _ContactWidgetState();
 }
 
-class ContactWidgetState extends State<ContactWidget> {
+// ContactWidget
+class _ContactWidgetState extends State<ContactWidget> {
+  late bool inCall = false;
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -226,20 +299,32 @@ class ContactWidgetState extends State<ContactWidget> {
         borderRadius: BorderRadius.circular(10.0),
       ),
       child: ListTile(
-        leading: const Icon(Icons.person),
+        leading: const CircleAvatar(
+          child: Icon(Icons.person),
+        ),
         title: Text(widget.contact.nickname()),
         subtitle: Text(widget.contact.ipStr()),
-        trailing: IconButton(
-          icon: const Icon(Icons.call),
-          onPressed: () async {
-            try {
-              await widget.audioChat.sayHello(contact: widget.contact);
-            } on DartError catch (e) {
-              if (!context.mounted) return;
-              showErrorDialog(context, e.message);
-            }
-          },
-        ),
+        trailing: inCall
+            ? IconButton(
+                icon: const Icon(Icons.call_end),
+                onPressed: () async {
+                  await widget.audioChat.endCall();
+                },
+              )
+            : IconButton(
+                icon: const Icon(Icons.call),
+                onPressed: () async {
+                  try {
+                    await widget.audioChat.sayHello(contact: widget.contact);
+                    setState(() {
+                      inCall = true;
+                    });
+                  } on DartError catch (e) {
+                    if (!context.mounted) return;
+                    showErrorDialog(context, e.message);
+                  }
+                },
+              ),
       ),
     );
   }
@@ -251,17 +336,80 @@ void showErrorDialog(BuildContext context, String errorMessage) {
     context: context,
     builder: (BuildContext context) {
       return AlertDialog(
-        title: const Text('Error Occurred'),
+        title: const Text('An Error Occurred'),
         content: Text(errorMessage),
         actions: <Widget>[
-          FloatingActionButton(
+          TextButton(
             child: const Text('Close'),
             onPressed: () {
               Navigator.of(context).pop(); // Dismiss the dialog
             },
           ),
         ],
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
       );
     },
   );
+}
+
+/// Custom Button Widget
+class Button extends StatelessWidget {
+  final String text;
+  final VoidCallback onPressed;
+
+  const Button({super.key, required this.text, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return ElevatedButton(
+      onPressed: onPressed,
+      style: ButtonStyle(
+        backgroundColor:
+            MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
+        foregroundColor: MaterialStateProperty.all(Colors.white),
+        overlayColor:
+            MaterialStateProperty.all(Theme.of(context).colorScheme.secondary),
+      ),
+      child: Text(text),
+    );
+  }
+}
+
+/// Custom TextInput Widget
+class TextInput extends StatelessWidget {
+  final String labelText;
+  final String? hintText;
+  final TextEditingController controller;
+  final bool? obscureText;
+  final void Function()? onEditingComplete;
+
+  const TextInput(
+      {super.key,
+      required this.labelText,
+      this.hintText,
+      required this.controller,
+      this.obscureText,
+      this.onEditingComplete});
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      obscureText: obscureText ?? false,
+      onEditingComplete: onEditingComplete,
+      decoration: InputDecoration(
+        labelText: labelText,
+        hintText: hintText,
+        hintStyle: const TextStyle(fontSize: 13, fontStyle: FontStyle.normal),
+        fillColor: Theme.of(context).colorScheme.tertiaryContainer,
+        filled: true,
+        border: const OutlineInputBorder(
+          borderRadius: BorderRadius.all(Radius.circular(10.0)),
+        ),
+        contentPadding: const EdgeInsets.all(10.0),
+      ),
+    );
+  }
 }

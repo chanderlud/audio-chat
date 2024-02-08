@@ -21,6 +21,9 @@ impl From<&SupportedStreamConfig> for InputConfig {
 
 impl Identity {
     pub(crate) fn new(nonce: [u8; 1024], signature: Signature) -> Self {
-        Self { nonce: nonce.to_vec(), signature: signature.to_bytes().to_vec() }
+        Self {
+            nonce: nonce.to_vec(),
+            signature: signature.to_bytes().to_vec(),
+        }
     }
 }

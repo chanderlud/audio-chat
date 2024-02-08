@@ -1,44 +1,45 @@
 use std::mem;
 pub use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
-use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
+use std::sync::Arc;
 
-use aes::Aes256;
 use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherCoreWrapper, StreamCipherSeek};
+use aes::Aes256;
 use atomic_float::AtomicF32;
-use cpal::{Host, Stream};
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::{Host, Stream};
 use ctr::{Ctr128BE, CtrCore};
 use ed25519_dalek::{SecretKey, Signature, Signer, SigningKey, VerifyingKey};
 use flutter_rust_bridge::{frb, spawn, spawn_blocking_with};
 use hex_literal::hex;
 use hkdf::Hkdf;
-use kanal::{AsyncReceiver, AsyncSender, bounded, bounded_async, Receiver, Sender};
+use itertools::Itertools;
+use kanal::{bounded, bounded_async, AsyncReceiver, AsyncSender, Receiver, Sender};
 use log::{debug, error};
 use nnnoiseless::{DenoiseState, FRAME_SIZE};
 use rand::rngs::OsRng;
+use rand::Rng;
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelRefMutIterator;
 use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
 use sha2::Sha256;
+use std::collections::HashMap;
+use std::sync::atomic::AtomicU16;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::select;
 use tokio::sync::{Mutex, Notify};
 use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};
-use std::collections::HashMap;
-use base64::Engine;
-use base64::prelude::BASE64_STANDARD;
-use itertools::Itertools;
-use rand::Rng;
 
 use crate::api::error::{DartError, Error, ErrorKind};
-use crate::api::items::{Hello, InputConfig, Identity};
+use crate::api::items::{Hello, Identity, InputConfig};
 use crate::api::logger;
-use crate::frb_generated::{FLUTTER_RUST_BRIDGE_HANDLER, StreamSink};
+use crate::frb_generated::{StreamSink, FLUTTER_RUST_BRIDGE_HANDLER};
 
 type Result<T> = std::result::Result<T, Error>;
 type TransferBuffer = [u8; TRANSFER_BUFFER_SIZE];
@@ -63,10 +64,10 @@ const SALT: [u8; 32] = hex!("04acee810b938239a6d2a09c109af6e3eaedc961fc66b9b6935
 #[derive(Clone)]
 pub struct AudioChat {
     /// The port to listen for incoming TCP connections
-    listen_port: u16,
+    listen_port: Arc<AtomicU16>,
 
     /// The port to which the UDP socket binds to
-    receive_port: u16,
+    receive_port: Arc<AtomicU16>,
 
     /// The contacts that this chat knows about
     contacts: Arc<Mutex<HashMap<String, Contact>>>,
@@ -86,6 +87,9 @@ pub struct AudioChat {
     /// Notifies the call to end
     end_call: Arc<Notify>,
 
+    /// Notifies the listener to stop
+    stop_listener: Arc<Notify>,
+
     /// Manually set the input device
     input_device: Arc<Mutex<Option<String>>>,
 
@@ -99,23 +103,28 @@ impl AudioChat {
     // this function must be async to use `spawn`
     pub async fn new(listen_port: u16, receive_port: u16, signing_key: Vec<u8>) -> AudioChat {
         let chat = Self {
-            listen_port,
-            receive_port,
+            listen_port: Arc::new(AtomicU16::new(listen_port)),
+            receive_port: Arc::new(AtomicU16::new(receive_port)),
             contacts: Default::default(),
             host: Arc::new(cpal::default_host()),
             rms_threshold: Arc::new(AtomicF32::new(0.002)),
             input_volume: Arc::new(AtomicF32::new(1.0)),
             output_volume: Arc::new(AtomicF32::new(1.0)),
             end_call: Default::default(),
+            stop_listener: Default::default(),
             input_device: Default::default(),
             output_device: Default::default(),
-            secret_key: SecretKey::from(<Vec<u8> as TryInto<[u8; 32]>>::try_into(signing_key).unwrap())
+            secret_key: SecretKey::from(
+                <Vec<u8> as TryInto<[u8; 32]>>::try_into(signing_key).unwrap(),
+            ),
         };
 
         let chat_clone = chat.clone();
 
         spawn(async move {
-            chat_clone.listener().await.unwrap();
+            if let Err(error) = chat_clone.listener().await {
+                error!("Listener failed: {:?}", error);
+            }
         });
 
         chat
@@ -138,10 +147,45 @@ impl AudioChat {
         self.end_call.notify_waiters();
     }
 
+    /// Restarts the listener
+    pub async fn restart_listener(&self) {
+        self.stop_listener.notify_waiters();
+
+        let chat_clone = self.clone();
+        spawn(async move {
+            if let Err(error) = chat_clone.listener().await {
+                error!("Listener failed: {:?}", error);
+            }
+        });
+    }
+
+    #[frb(sync)]
+    pub fn set_listen_port(&self, port: u16) {
+        self.listen_port.store(port, Relaxed);
+    }
+
+    #[frb(sync)]
+    pub fn set_receive_port(&self, port: u16) {
+        self.receive_port.store(port, Relaxed);
+    }
+
     /// Initiate a call to the given address
     async fn _say_hello(&self, contact: &Contact) -> Result<()> {
-        let mut stream = TcpStream::connect(contact.address).await?;
-        self.handshake(&mut stream, contact.ip(), true, contact).await
+        let stream = TcpStream::connect(contact.address).await?;
+
+        let chat_clone = self.clone();
+        let contact = contact.clone();
+
+        spawn(async move {
+            if let Err(error) = chat_clone
+                .handshake(stream, contact.address.ip(), true, contact)
+                .await
+            {
+                error!("Call failed [caller]: {:?}", error);
+            }
+        });
+
+        Ok(())
     }
 
     /// Lists the input and output devices
@@ -161,37 +205,51 @@ impl AudioChat {
     }
 
     async fn listener(&self) -> Result<()> {
-        let listener = TcpListener::bind(("0.0.0.0", self.listen_port)).await?;
+        let listener = TcpListener::bind(("0.0.0.0", self.listen_port.load(Relaxed))).await?;
 
-        while let Ok((mut stream, address)) = listener.accept().await {
-            let remote_address = address.ip();
+        let listener_loop = async {
+            while let Ok((stream, address)) = listener.accept().await {
+                let remote_address = address.ip();
 
-            let contact = {
-                self.contacts.lock().await.iter().find(|(_, contact)| contact.ip() == remote_address).map(|(_, contact)| contact.clone())
-            };
+                let contact = {
+                    self.contacts
+                        .lock()
+                        .await
+                        .iter()
+                        .find(|(_, contact)| contact.ip() == remote_address)
+                        .map(|(_, contact)| contact.clone())
+                };
 
-            if let Some(contact) = contact {
-                if let Err(error) = self.handshake(&mut stream, remote_address, false, &contact).await {
-                    error!("Call failed: {:?}", error);
+                if let Some(contact) = contact {
+                    if let Err(error) = self.handshake(stream, remote_address, false, contact).await
+                    {
+                        error!("Call failed [callee]: {:?}", error);
+                    }
+                } else {
+                    error!("Unknown contact: {}", remote_address);
                 }
-            } else {
-                error!("Unknown contact: {}", remote_address);
+            }
+        };
+
+        select! {
+            result = listener_loop => Ok(result),
+            _ = self.stop_listener.notified() => {
+                debug!("Listener stopped");
+                Ok(())
             }
         }
-
-        Ok(())
     }
 
     /// Set up the cryptography and negotiate the audio ports
     async fn handshake(
         &self,
-        stream: &mut TcpStream,
+        mut stream: TcpStream,
         remote_address: IpAddr,
         caller: bool,
-        contact: &Contact,
+        contact: Contact,
     ) -> Result<()> {
         // perform the key exchange
-        let shared_secret = key_exchange(stream).await?;
+        let shared_secret = key_exchange(&mut stream).await?;
         // HKDF for the key derivation
         let hk = Hkdf::<Sha256>::new(Some(&SALT), shared_secret.as_bytes());
 
@@ -211,20 +269,24 @@ impl AudioChat {
         // create the identity message
         let message = Identity::new(nonce, signature);
 
-        let identity = exchange_messages(stream, &message, &mut stream_cipher, caller).await?;
+        let identity = exchange_messages(&mut stream, &message, &mut stream_cipher, caller).await?;
 
         // verify the signature
         let verifying_key = VerifyingKey::from_bytes(&contact.verifying_key).unwrap();
         let signature = Signature::from_slice(&identity.signature).unwrap();
-        verifying_key.verify_strict(&identity.nonce, &signature).unwrap();
+        verifying_key
+            .verify_strict(&identity.nonce, &signature)
+            .unwrap();
+
+        let receive_port = self.receive_port.load(Relaxed);
 
         // create the UDP socket
-        let socket = Arc::new(UdpSocket::bind(("0.0.0.0", self.receive_port)).await?);
+        let socket = Arc::new(UdpSocket::bind(("0.0.0.0", receive_port)).await?);
 
         // build the hello message
-        let message = Hello::new(self.receive_port);
+        let message = Hello::new(receive_port);
 
-        let hello = exchange_messages(stream, &message, &mut stream_cipher, caller).await?;
+        let hello = exchange_messages(&mut stream, &message, &mut stream_cipher, caller).await?;
 
         // connect to the remote address on the hello port
         socket.connect((remote_address, hello.port as u16)).await?;
@@ -237,7 +299,7 @@ impl AudioChat {
         let result = self
             .call(
                 Arc::clone(&socket),
-                stream,
+                &mut stream,
                 stream_cipher,
                 receive_cipher,
                 send_cipher,
@@ -314,7 +376,8 @@ impl AudioChat {
         let input_config = input_device.default_input_config()?;
         let message = InputConfig::from(&input_config);
 
-        let remote_input_config = exchange_messages(stream, &message, &mut stream_cipher, caller).await?;
+        let remote_input_config =
+            exchange_messages(stream, &message, &mut stream_cipher, caller).await?;
 
         // sends denoised data to the output socket
         let (input_sender, input_receiver) = bounded_async::<[f32; FRAME_SIZE]>(1_000);
@@ -424,7 +487,10 @@ impl AudioChat {
             receive_cipher,
         ));
 
-        let processor_future = spawn_blocking_with(move || processor_handle.join(), FLUTTER_RUST_BRIDGE_HANDLER.thread_pool());
+        let processor_future = spawn_blocking_with(
+            move || processor_handle.join(),
+            FLUTTER_RUST_BRIDGE_HANDLER.thread_pool(),
+        );
 
         select! {
             result = input_handle => result??,
@@ -471,15 +537,22 @@ impl FromStr for Contact {
     type Err = DartError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        let parts: (&str, &str, &str) = s.splitn(3, ',').collect_tuple().ok_or(Error::invalid_contact_format())?;
+        let parts: (&str, &str, &str) = s
+            .splitn(3, ',')
+            .collect_tuple()
+            .ok_or(Error::invalid_contact_format())?;
 
         let nickname = parts.0.to_string();
-        let verifying_key = BASE64_STANDARD.decode(parts.1.as_bytes()).map_err(Error::from)?;
+        let verifying_key = BASE64_STANDARD
+            .decode(parts.1.as_bytes())
+            .map_err(Error::from)?;
         let address = parts.2.parse().map_err(Error::from)?;
 
         Ok(Self {
             nickname,
-            verifying_key: verifying_key.try_into().map_err(|_| Error::invalid_contact_format())?,
+            verifying_key: verifying_key
+                .try_into()
+                .map_err(|_| Error::invalid_contact_format())?,
             address,
         })
     }
@@ -487,12 +560,20 @@ impl FromStr for Contact {
 
 impl Contact {
     #[frb(sync)]
-    pub fn new(nickname: String, verifying_key: String, address: String) -> std::result::Result<Contact, DartError> {
-        let key = BASE64_STANDARD.decode(verifying_key.as_bytes()).map_err(Error::from)?;
+    pub fn new(
+        nickname: String,
+        verifying_key: String,
+        address: String,
+    ) -> std::result::Result<Contact, DartError> {
+        let key = BASE64_STANDARD
+            .decode(verifying_key.as_bytes())
+            .map_err(Error::from)?;
 
         Ok(Self {
             nickname,
-            verifying_key: key.try_into().map_err(|_| Error::invalid_contact_format())?,
+            verifying_key: key
+                .try_into()
+                .map_err(|_| Error::invalid_contact_format())?,
             address: address.parse().map_err(Error::from)?,
         })
     }

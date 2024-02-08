@@ -68,6 +68,18 @@ class SettingsController with ChangeNotifier {
     return contacts[nickname]!;
   }
 
+  Future<void> updateListenPort(int port) async {
+    listenPort = port;
+    await options.setInt('listenPort', port);
+    notifyListeners();
+  }
+
+  Future<void> updateReceivePort(int port) async {
+    receivePort = port;
+    await options.setInt('receivePort', port);
+    notifyListeners();
+  }
+
   Future<void> writeSecureData(String key, String value) async {
     try {
       await storage.write(key: key, value: value);

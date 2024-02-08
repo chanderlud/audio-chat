@@ -6,7 +6,7 @@ use std::sync::Once;
 use fast_log::appender::{FastLogRecord, LogAppender};
 use fast_log::Config;
 use lazy_static::lazy_static;
-use log::{info, LevelFilter, warn};
+use log::{info, warn, LevelFilter};
 use parking_lot::RwLock;
 
 use crate::frb_generated::StreamSink;
@@ -30,7 +30,13 @@ pub fn init_logger() {
             level
         );
 
-        fast_log::init(Config::new().custom(SendToDartLogger {}).chan_len(Some(100)).level(level)).unwrap();
+        fast_log::init(
+            Config::new()
+                .custom(SendToDartLogger {})
+                .chan_len(Some(100))
+                .level(level),
+        )
+        .unwrap();
 
         info!("init_logger (inside 'once') finished");
 
@@ -40,7 +46,6 @@ pub fn init_logger() {
         );
     });
 }
-
 
 pub struct SendToDartLogger {}
 
@@ -62,7 +67,7 @@ impl SendToDartLogger {
     }
 
     fn record_to_formatted(record: &FastLogRecord) -> String {
-        record.formated.replace("\n", "")
+        record.formated.replace('\n', "")
     }
 }
 
