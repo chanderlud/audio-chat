@@ -41,7 +41,7 @@ class SettingsController with ChangeNotifier {
 
     options.getStringList('contacts')?.forEach((contactStr) async {
       try {
-        var contact = Contact.parse(s: contactStr);
+        Contact contact = Contact.parse(s: contactStr);
         contacts[contact.nickname()] = contact;
       } on DartError catch (e) {
         debugPrint('error adding contact: $e');

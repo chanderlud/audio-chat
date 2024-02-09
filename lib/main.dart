@@ -25,37 +25,60 @@ Future<void> main() async {
 
   const storage = FlutterSecureStorage();
   final SharedPreferences options = await SharedPreferences.getInstance();
+
   final SettingsController settingsController =
       SettingsController(storage: storage, options: options);
   await settingsController.init();
+
+  final CallStateController callStateController = CallStateController();
 
   final audioChat = await AudioChat.newAudioChat(
       listenPort: settingsController.listenPort,
       receivePort: settingsController.receivePort,
       signingKey: settingsController.signingKey,
-      acceptCall: (contact) {
+      rmsThreshold: settingsController.inputSensitivity,
+      inputVolume: settingsController.inputVolume,
+      outputVolume: settingsController.outputVolume,
+      acceptCall: (contact) async {
         debugPrint('acceptCall: ${contact.nickname()}');
-        return acceptCallPrompt(navigatorKey.currentState!.context, contact);
+
+        if (callStateController.isCallActive) {
+          return false;
+        } else if (navigatorKey.currentState == null) {
+          debugPrint('navigatorKey.currentState is null');
+          return false;
+        }
+
+        bool accepted =
+            await acceptCallPrompt(navigatorKey.currentState!.context, contact);
+
+        if (accepted) {
+          callStateController.setActiveContact(contact);
+        }
+
+        return accepted;
       });
 
-  for (var contact in settingsController.contacts.values) {
+  for (Contact contact in settingsController.contacts.values) {
     await audioChat.addContact(contact: contact);
   }
 
-  audioChat.setInputVolume(decibel: settingsController.inputVolume);
-  audioChat.setOutputVolume(decibel: settingsController.outputVolume);
-  audioChat.setRmsThreshold(decimal: settingsController.inputSensitivity);
-
   runApp(AudioChatApp(
-      audioChat: audioChat, settingsController: settingsController));
+      audioChat: audioChat,
+      settingsController: settingsController,
+      callStateController: callStateController));
 }
 
 class AudioChatApp extends StatelessWidget {
   final AudioChat audioChat;
   final SettingsController settingsController;
+  final CallStateController callStateController;
 
   const AudioChatApp(
-      {super.key, required this.audioChat, required this.settingsController});
+      {super.key,
+      required this.audioChat,
+      required this.settingsController,
+      required this.callStateController});
 
   @override
   Widget build(BuildContext context) {
@@ -79,7 +102,9 @@ class AudioChatApp extends StatelessWidget {
         ),
       ),
       home: HomePage(
-          audioChat: audioChat, settingsController: settingsController),
+          audioChat: audioChat,
+          settingsController: settingsController,
+          callStateController: callStateController),
     );
   }
 }
@@ -87,9 +112,13 @@ class AudioChatApp extends StatelessWidget {
 class HomePage extends StatelessWidget {
   final AudioChat audioChat;
   final SettingsController settingsController;
+  final CallStateController callStateController;
 
   const HomePage(
-      {super.key, required this.audioChat, required this.settingsController});
+      {super.key,
+      required this.audioChat,
+      required this.settingsController,
+      required this.callStateController});
 
   @override
   Widget build(BuildContext context) {
@@ -111,7 +140,8 @@ class HomePage extends StatelessWidget {
                           return ContactsList(
                               audioChat: audioChat,
                               contacts:
-                                  settingsController.contacts.values.toList());
+                                  settingsController.contacts.values.toList(),
+                              controller: callStateController);
                         }))
               ],
             ),
@@ -119,7 +149,7 @@ class HomePage extends StatelessWidget {
             Expanded(
                 child: Row(children: [
               CallControls(
-                  audioChat: audioChat, settingsController: settingsController),
+                  audioChat: audioChat, settingsController: settingsController, controller: callStateController),
             ])),
           ],
         ),
@@ -128,7 +158,7 @@ class HomePage extends StatelessWidget {
   }
 }
 
-// ContactForm
+/// ContactForm
 class ContactForm extends StatefulWidget {
   final AudioChat audioChat;
   final SettingsController settingsController;
@@ -207,13 +237,17 @@ class _ContactFormState extends State<ContactForm> {
   }
 }
 
-// ContactsList
+/// ContactsList
 class ContactsList extends StatelessWidget {
   final AudioChat audioChat;
+  final CallStateController controller;
   final List<Contact> contacts;
 
   const ContactsList(
-      {super.key, required this.audioChat, required this.contacts});
+      {super.key,
+      required this.audioChat,
+      required this.contacts,
+      required this.controller});
 
   @override
   Widget build(BuildContext context) {
@@ -237,8 +271,14 @@ class ContactsList extends StatelessWidget {
                 child: ListView.builder(
                   itemCount: contacts.length,
                   itemBuilder: (BuildContext context, int index) {
-                    return ContactWidget(
-                        contact: contacts[index], audioChat: audioChat);
+                    return ListenableBuilder(
+                        listenable: controller,
+                        builder: (BuildContext context, Widget? child) {
+                          return ContactWidget(
+                              contact: contacts[index],
+                              audioChat: audioChat,
+                              controller: controller);
+                        });
                   },
                 ),
               ),
@@ -254,9 +294,10 @@ class ContactsList extends StatelessWidget {
 class CallControls extends StatelessWidget {
   final AudioChat audioChat;
   final SettingsController settingsController;
+  final CallStateController controller;
 
   const CallControls(
-      {super.key, required this.audioChat, required this.settingsController});
+      {super.key, required this.audioChat, required this.settingsController, required this.controller});
 
   @override
   Widget build(BuildContext context) {
@@ -269,11 +310,11 @@ class CallControls extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(
-              padding: EdgeInsets.only(top: 10),
+          Padding(
+              padding: const EdgeInsets.only(top: 10),
               child: Center(
-                  child: Text('Call Status: ...',
-                      style: TextStyle(fontSize: 18)))),
+                  child: Text('Call Status: ${controller.isCallActive ? 'Active' : 'Inactive'}',
+                      style: const TextStyle(fontSize: 18)))),
           const SizedBox(height: 20),
           const Padding(
               padding: EdgeInsets.only(left: 25),
@@ -352,7 +393,7 @@ class CallControls extends StatelessWidget {
                               MaterialPageRoute(
                                 builder: (context) => SettingsPage(
                                     controller: settingsController,
-                                    audioChat: audioChat),
+                                    audioChat: audioChat, callStateController: controller),
                               ));
                         },
                         icon: const Icon(Icons.settings)),
@@ -367,20 +408,17 @@ class CallControls extends StatelessWidget {
   }
 }
 
-class ContactWidget extends StatefulWidget {
+/// ContactWidget
+class ContactWidget extends StatelessWidget {
   final Contact contact;
   final AudioChat audioChat;
+  final CallStateController controller;
 
   const ContactWidget(
-      {super.key, required this.contact, required this.audioChat});
-
-  @override
-  State<ContactWidget> createState() => _ContactWidgetState();
-}
-
-/// ContactWidget
-class _ContactWidgetState extends State<ContactWidget> {
-  late bool inCall = false;
+      {super.key,
+      required this.contact,
+      required this.audioChat,
+      required this.controller});
 
   @override
   Widget build(BuildContext context) {
@@ -394,26 +432,22 @@ class _ContactWidgetState extends State<ContactWidget> {
         leading: const CircleAvatar(
           child: Icon(Icons.person),
         ),
-        title: Text(widget.contact.nickname()),
-        subtitle: Text(widget.contact.addressStr()),
-        trailing: inCall
+        title: Text(contact.nickname()),
+        subtitle: Text(contact.addressStr()),
+        trailing: controller.isCallActive
             ? IconButton(
                 icon: const Icon(Icons.call_end),
                 onPressed: () async {
-                  await widget.audioChat.endCall();
-                  setState(() {
-                    inCall = false;
-                  });
+                  await audioChat.endCall();
+                  controller.setActiveContact(null);
                 },
               )
             : IconButton(
                 icon: const Icon(Icons.call),
                 onPressed: () async {
                   try {
-                    await widget.audioChat.sayHello(contact: widget.contact);
-                    setState(() {
-                      inCall = true;
-                    });
+                    await audioChat.sayHello(contact: contact);
+                    controller.setActiveContact(contact);
                   } on DartError catch (e) {
                     if (!context.mounted) return;
                     showErrorDialog(context, e.message);
@@ -454,6 +488,7 @@ class TextInput extends StatelessWidget {
   final String? hintText;
   final TextEditingController controller;
   final bool? obscureText;
+  final bool? enabled;
   final void Function()? onEditingComplete;
 
   const TextInput(
@@ -462,13 +497,15 @@ class TextInput extends StatelessWidget {
       this.hintText,
       required this.controller,
       this.obscureText,
-      this.onEditingComplete});
+      this.onEditingComplete,
+      this.enabled});
 
   @override
   Widget build(BuildContext context) {
     return TextField(
       controller: controller,
       obscureText: obscureText ?? false,
+      enabled: enabled,
       onEditingComplete: onEditingComplete,
       decoration: InputDecoration(
         labelText: labelText,
@@ -482,6 +519,18 @@ class TextInput extends StatelessWidget {
         contentPadding: const EdgeInsets.all(10.0),
       ),
     );
+  }
+}
+
+class CallStateController extends ChangeNotifier {
+  Contact? _activeContact;
+
+  Contact? get activeContact => _activeContact;
+  bool get isCallActive => _activeContact != null;
+
+  void setActiveContact(Contact? contact) {
+    _activeContact = contact;
+    notifyListeners();
   }
 }
 

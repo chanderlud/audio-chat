@@ -5,13 +5,18 @@ import 'package:flutter/material.dart';
 
 import '../main.dart';
 import '../src/rust/api/audio_chat.dart';
+import '../src/rust/api/error.dart';
 
 class SettingsPage extends StatefulWidget {
   final SettingsController controller;
   final AudioChat audioChat;
+  final CallStateController callStateController;
 
   const SettingsPage(
-      {Key? key, required this.controller, required this.audioChat})
+      {Key? key,
+      required this.controller,
+      required this.audioChat,
+      required this.callStateController})
       : super(key: key);
 
   @override
@@ -62,25 +67,37 @@ class SettingsPageState extends State<SettingsPage> {
                     );
                   }),
               const SizedBox(height: 20),
-              TextInput(
-                  labelText: 'Listen Port',
-                  controller: _listenPortInput,
-                  onEditingComplete: () {
-                    var port = int.tryParse(_listenPortInput.text);
+              ListenableBuilder(
+                  listenable: widget.callStateController,
+                  builder: (BuildContext context, Widget? child) {
+                    return TextInput(
+                        // disable ths input when a call is active
+                        enabled: !widget.callStateController.isCallActive,
+                        labelText: 'Listen Port',
+                        controller: _listenPortInput,
+                        onEditingComplete: () {
+                          var port = int.tryParse(_listenPortInput.text);
 
-                    if (port != null) {
-                      if (port < 0 || port > 65535) {
-                        _listenPortInput.text =
-                            widget.controller.listenPort.toString();
-                      } else {
-                        widget.controller.updateListenPort(port);
-                        widget.audioChat.setListenPort(port: port);
-                        widget.audioChat.restartListener();
-                      }
-                    } else {
-                      _listenPortInput.text =
-                          widget.controller.listenPort.toString();
-                    }
+                          if (port != null) {
+                            if (port < 0 || port > 65535) {
+                              _listenPortInput.text =
+                                  widget.controller.listenPort.toString();
+                            } else {
+                              widget.controller.updateListenPort(port);
+                              widget.audioChat.setListenPort(port: port);
+
+                              try {
+                                widget.audioChat.restartListener();
+                              } on DartError catch (e) {
+                                // if there is an active call, the listener cannot be restarted
+                                showErrorDialog(context, e.message);
+                              }
+                            }
+                          } else {
+                            _listenPortInput.text =
+                                widget.controller.listenPort.toString();
+                          }
+                        });
                   }),
               const SizedBox(height: 20),
               TextInput(

@@ -110,6 +110,9 @@ impl AudioChat {
         listen_port: u16,
         receive_port: u16,
         signing_key: Vec<u8>,
+        rms_threshold: f32,
+        input_volume: f32,
+        output_volume: f32,
         accept_call: impl Fn(Contact) -> DartFnFuture<bool> + Send + 'static,
     ) -> AudioChat {
         let chat = Self {
@@ -117,9 +120,9 @@ impl AudioChat {
             receive_port: Arc::new(AtomicU16::new(receive_port)),
             contacts: Default::default(),
             host: Arc::new(cpal::default_host()),
-            rms_threshold: Arc::new(AtomicF32::new(0.002)),
-            input_volume: Arc::new(AtomicF32::new(1.0)),
-            output_volume: Arc::new(AtomicF32::new(1.0)),
+            rms_threshold: Arc::new(AtomicF32::new(decibel_to_multiplier(rms_threshold))),
+            input_volume: Arc::new(AtomicF32::new(decibel_to_multiplier(input_volume)),
+            output_volume: Arc::new(AtomicF32::new(decibel_to_multiplier(output_volume))),
             end_call: Default::default(),
             stop_listener: Default::default(),
             input_device: Default::default(),
