@@ -13,7 +13,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Host, Stream};
 use ctr::{Ctr128BE, CtrCore};
 use ed25519_dalek::{SecretKey, Signature, Signer, SigningKey, VerifyingKey};
-use flutter_rust_bridge::{frb, spawn, spawn_blocking_with};
+use flutter_rust_bridge::{frb, spawn, spawn_blocking_with, DartFnFuture};
 use hex_literal::hex;
 use hkdf::Hkdf;
 use itertools::Itertools;
@@ -29,7 +29,7 @@ use rubato::{
 };
 use sha2::Sha256;
 use std::collections::HashMap;
-use std::sync::atomic::AtomicU16;
+use std::sync::atomic::{AtomicBool, AtomicU16};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::select;
@@ -97,11 +97,21 @@ pub struct AudioChat {
     output_device: Arc<Mutex<Option<String>>>,
 
     secret_key: SecretKey,
+
+    in_call: Arc<AtomicBool>,
+
+    /// Prompts the user to accept or reject the call
+    accept_call: Arc<Mutex<dyn Fn(Contact) -> DartFnFuture<bool> + Send>>,
 }
 
 impl AudioChat {
     // this function must be async to use `spawn`
-    pub async fn new(listen_port: u16, receive_port: u16, signing_key: Vec<u8>) -> AudioChat {
+    pub async fn new(
+        listen_port: u16,
+        receive_port: u16,
+        signing_key: Vec<u8>,
+        accept_call: impl Fn(Contact) -> DartFnFuture<bool> + Send + 'static,
+    ) -> AudioChat {
         let chat = Self {
             listen_port: Arc::new(AtomicU16::new(listen_port)),
             receive_port: Arc::new(AtomicU16::new(receive_port)),
@@ -117,6 +127,8 @@ impl AudioChat {
             secret_key: SecretKey::from(
                 <Vec<u8> as TryInto<[u8; 32]>>::try_into(signing_key).unwrap(),
             ),
+            in_call: Default::default(),
+            accept_call: Arc::new(Mutex::new(accept_call)),
         };
 
         let chat_clone = chat.clone();
@@ -148,7 +160,11 @@ impl AudioChat {
     }
 
     /// Restarts the listener
-    pub async fn restart_listener(&self) {
+    pub async fn restart_listener(&self) -> std::result::Result<(), DartError> {
+        if self.in_call.load(Relaxed) {
+            return Err(Error::in_call().into());
+        }
+
         self.stop_listener.notify_waiters();
 
         let chat_clone = self.clone();
@@ -157,6 +173,7 @@ impl AudioChat {
                 error!("Listener failed: {:?}", error);
             }
         });
+        Ok(())
     }
 
     #[frb(sync)]
@@ -169,29 +186,29 @@ impl AudioChat {
         self.receive_port.store(port, Relaxed);
     }
 
-    /// Initiate a call to the given address
-    async fn _say_hello(&self, contact: &Contact) -> Result<()> {
-        let stream = TcpStream::connect(contact.address).await?;
+    #[frb(sync)]
+    pub fn set_rms_threshold(&self, decimal: f32) {
+        let threshold = db_to_multiplier(decimal);
+        self.rms_threshold.store(threshold, Relaxed);
+    }
 
-        let chat_clone = self.clone();
-        let contact = contact.clone();
+    #[frb(sync)]
+    pub fn set_input_volume(&self, decibel: f32) {
+        let multiplier = db_to_multiplier(decibel);
+        self.input_volume.store(multiplier, Relaxed);
+    }
 
-        spawn(async move {
-            if let Err(error) = chat_clone
-                .handshake(stream, contact.address.ip(), true, contact)
-                .await
-            {
-                error!("Call failed [caller]: {:?}", error);
-            }
-        });
-
-        Ok(())
+    #[frb(sync)]
+    pub fn set_output_volume(&self, decibel: f32) {
+        let multiplier = db_to_multiplier(decibel);
+        self.output_volume.store(multiplier, Relaxed);
     }
 
     /// Lists the input and output devices
-    pub fn list_devices(&self) -> (Vec<String>, Vec<String>) {
-        let input_devices = self.host.input_devices().unwrap();
-        let output_devices = self.host.output_devices().unwrap();
+    #[frb(sync)]
+    pub fn list_devices(&self) -> std::result::Result<(Vec<String>, Vec<String>), DartError> {
+        let input_devices = self.host.input_devices().map_err(Error::from)?;
+        let output_devices = self.host.output_devices().map_err(Error::from)?;
 
         let input_devices = input_devices
             .filter_map(|device| device.name().ok())
@@ -201,14 +218,48 @@ impl AudioChat {
             .filter_map(|device| device.name().ok())
             .collect();
 
-        (input_devices, output_devices)
+        Ok((input_devices, output_devices))
+    }
+
+    /// Initiate a call to the given address
+    async fn _say_hello(&self, contact: &Contact) -> Result<()> {
+        let mut stream = TcpStream::connect(contact.address).await?;
+        // this signal lets the callee know that the caller wants to start a handshake
+        stream.write(&[255]).await?;
+
+        let chat_clone = self.clone();
+        let contact = contact.clone();
+        self.in_call.store(true, Relaxed);
+
+        spawn(async move {
+            if let Err(error) = chat_clone
+                .handshake(stream, contact.address.ip(), true, contact)
+                .await
+            {
+                error!("Call failed [caller]: {:?}", error);
+            }
+            chat_clone.in_call.store(false, Relaxed);
+        });
+
+        Ok(())
     }
 
     async fn listener(&self) -> Result<()> {
         let listener = TcpListener::bind(("0.0.0.0", self.listen_port.load(Relaxed))).await?;
 
         let listener_loop = async {
-            while let Ok((stream, address)) = listener.accept().await {
+            while let Ok((mut stream, address)) = listener.accept().await {
+                // TODO this signaling thing is maybe not super ideal
+                let mut buf = [0; 1];
+
+                if stream.read(&mut buf).await.is_err() {
+                    debug!("Stream closed before handshake");
+                    continue;
+                } else if buf != [255] {
+                    debug!("Unknown signal: {:?}", buf);
+                    continue;
+                }
+
                 let remote_address = address.ip();
 
                 let contact = {
@@ -221,10 +272,17 @@ impl AudioChat {
                 };
 
                 if let Some(contact) = contact {
+                    debug!("Prompting for call from {}", contact.nickname);
+                    if !(self.accept_call.lock().await)(contact.clone()).await {
+                        continue;
+                    }
+
+                    self.in_call.store(true, Relaxed);
                     if let Err(error) = self.handshake(stream, remote_address, false, contact).await
                     {
                         error!("Call failed [callee]: {:?}", error);
                     }
+                    self.in_call.store(false, Relaxed);
                 } else {
                     error!("Unknown contact: {}", remote_address);
                 }
@@ -272,11 +330,9 @@ impl AudioChat {
         let identity = exchange_messages(&mut stream, &message, &mut stream_cipher, caller).await?;
 
         // verify the signature
-        let verifying_key = VerifyingKey::from_bytes(&contact.verifying_key).unwrap();
-        let signature = Signature::from_slice(&identity.signature).unwrap();
-        verifying_key
-            .verify_strict(&identity.nonce, &signature)
-            .unwrap();
+        let verifying_key = VerifyingKey::from_bytes(&contact.verifying_key)?;
+        let signature = Signature::from_slice(&identity.signature)?;
+        verifying_key.verify_strict(&identity.nonce, &signature)?;
 
         let receive_port = self.receive_port.load(Relaxed);
 
@@ -584,11 +640,6 @@ impl Contact {
     }
 
     #[frb(sync)]
-    pub fn ip_str(&self) -> String {
-        self.address.ip().to_string()
-    }
-
-    #[frb(sync)]
     pub fn verifying_key(&self) -> Vec<u8> {
         self.verifying_key.to_vec()
     }
@@ -606,6 +657,16 @@ impl Contact {
     #[frb(sync)]
     pub fn address_str(&self) -> String {
         self.address.to_string()
+    }
+
+    #[frb(sync)]
+    pub fn store(&self) -> String {
+        format!(
+            "{},{},{}",
+            self.nickname,
+            self.verifying_key_str(),
+            self.address
+        )
     }
 
     fn ip(&self) -> IpAddr {
@@ -700,7 +761,7 @@ fn process_input_data(
             denoise_state.process_frame(out_buffer, frame);
 
             if calculate_rms(out_buffer) < rms_threshold {
-                if *silence_length < 40 {
+                if *silence_length < 80 {
                     *silence_length += 1;
                 } else {
                     _ = sender.try_send(FLOAT_SILENCE);
@@ -894,4 +955,9 @@ fn calculate_rms(data: &[f32]) -> f32 {
 /// Multiplies each element in the slice by the factor
 fn mul(vec: &mut [f32], factor: f32) {
     vec.par_iter_mut().for_each(|p| *p *= factor);
+}
+
+/// Converts a decibel value to a multiplier
+fn db_to_multiplier(db: f32) -> f32 {
+    10f32.powf(db / 20.0)
 }

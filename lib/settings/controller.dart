@@ -17,6 +17,9 @@ class SettingsController with ChangeNotifier {
   late Map<String, Contact> contacts;
   late int listenPort;
   late int receivePort;
+  late double outputVolume;
+  late double inputVolume;
+  late double inputSensitivity;
 
   Future<void> init() async {
     final signingKey = await readSecureData('signingKey');
@@ -34,7 +37,6 @@ class SettingsController with ChangeNotifier {
       await writeSecureData('signingKey', base64Encode(this.signingKey));
     }
 
-    // await options.remove('contacts');
     contacts = {};
 
     options.getStringList('contacts')?.forEach((contactStr) async {
@@ -49,6 +51,9 @@ class SettingsController with ChangeNotifier {
 
     listenPort = options.getInt('listenPort') ?? 45000;
     receivePort = options.getInt('receivePort') ?? 45001;
+    outputVolume = options.getDouble('outputVolume') ?? 0;
+    inputVolume = options.getDouble('inputVolume') ?? 0;
+    inputSensitivity = options.getDouble('inputSensitivity') ?? 0;
 
     notifyListeners();
   }
@@ -60,12 +65,22 @@ class SettingsController with ChangeNotifier {
 
     await options.setStringList(
         'contacts',
-        contacts.entries.map((entry) {
-          return '${entry.key},${entry.value.verifyingKeyStr()},${entry.value.addressStr()}';
+        contacts.values.map((entry) {
+          return entry.store();
         }).toList());
 
     notifyListeners();
     return contacts[nickname]!;
+  }
+
+  Future<void> removeContact(String nickname) async {
+    contacts.remove(nickname);
+    await options.setStringList(
+        'contacts',
+        contacts.values.map((entry) {
+          return entry.store();
+        }).toList());
+    notifyListeners();
   }
 
   Future<void> updateListenPort(int port) async {
@@ -77,6 +92,24 @@ class SettingsController with ChangeNotifier {
   Future<void> updateReceivePort(int port) async {
     receivePort = port;
     await options.setInt('receivePort', port);
+    notifyListeners();
+  }
+
+  Future<void> updateOutputVolume(double volume) async {
+    outputVolume = volume;
+    await options.setDouble('outputVolume', volume);
+    notifyListeners();
+  }
+
+  Future<void> updateInputVolume(double volume) async {
+    inputVolume = volume;
+    await options.setDouble('inputVolume', volume);
+    notifyListeners();
+  }
+
+  Future<void> updateInputSensitivity(double sensitivity) async {
+    inputSensitivity = sensitivity;
+    await options.setDouble('inputSensitivity', sensitivity);
     notifyListeners();
   }
 

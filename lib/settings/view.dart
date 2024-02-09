@@ -101,7 +101,7 @@ class SettingsPageState extends State<SettingsPage> {
                       _receivePortInput.text =
                           widget.controller.receivePort.toString();
                     }
-                  })
+                  }),
             ],
           )),
     );

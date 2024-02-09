@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:audio_chat/settings/view.dart';
 import 'package:audio_chat/src/rust/api/audio_chat.dart';
 import 'package:audio_chat/src/rust/api/error.dart';
@@ -7,6 +9,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   await RustLib.init();
@@ -28,11 +32,19 @@ Future<void> main() async {
   final audioChat = await AudioChat.newAudioChat(
       listenPort: settingsController.listenPort,
       receivePort: settingsController.receivePort,
-      signingKey: settingsController.signingKey);
+      signingKey: settingsController.signingKey,
+      acceptCall: (contact) {
+        debugPrint('acceptCall: ${contact.nickname()}');
+        return acceptCallPrompt(navigatorKey.currentState!.context, contact);
+      });
 
   for (var contact in settingsController.contacts.values) {
     await audioChat.addContact(contact: contact);
   }
+
+  audioChat.setInputVolume(decibel: settingsController.inputVolume);
+  audioChat.setOutputVolume(decibel: settingsController.outputVolume);
+  audioChat.setRmsThreshold(decimal: settingsController.inputSensitivity);
 
   runApp(AudioChatApp(
       audioChat: audioChat, settingsController: settingsController));
@@ -48,9 +60,14 @@ class AudioChatApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       theme: ThemeData(
         dialogTheme: const DialogTheme(
           surfaceTintColor: Color(0xFF27292A),
+        ),
+        sliderTheme: const SliderThemeData(
+          showValueIndicator: ShowValueIndicator.always,
+          overlayColor: Colors.transparent,
         ),
         colorScheme: const ColorScheme.dark(
           primary: Color(0xFFFD6D6D),
@@ -59,8 +76,6 @@ class AudioChatApp extends StatelessWidget {
           background: Color(0xFF222425),
           secondaryContainer: Color(0xFF191919),
           tertiaryContainer: Color(0xFF27292A),
-          // onSurface: Colors.red,
-          // TODO surface is raised buttons
         ),
       ),
       home: HomePage(
@@ -101,10 +116,11 @@ class HomePage extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 20),
-            Row(children: [
+            Expanded(
+                child: Row(children: [
               CallControls(
                   audioChat: audioChat, settingsController: settingsController),
-            ]),
+            ])),
           ],
         ),
       ),
@@ -132,7 +148,7 @@ class _ContactFormState extends State<ContactForm> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(15.0),
+      padding: const EdgeInsets.symmetric(vertical: 15.0, horizontal: 20.0),
       constraints: const BoxConstraints(maxWidth: 300),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.secondaryContainer,
@@ -205,7 +221,7 @@ class ContactsList extends StatelessWidget {
       builder: (BuildContext context, BoxConstraints viewportConstraints) {
         return Container(
           constraints: const BoxConstraints(maxHeight: 280),
-          padding: const EdgeInsets.symmetric(vertical: 15.0, horizontal: 10.0),
+          padding: const EdgeInsets.symmetric(vertical: 15.0, horizontal: 12.0),
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.secondaryContainer,
             borderRadius: BorderRadius.circular(10.0),
@@ -234,7 +250,7 @@ class ContactsList extends StatelessWidget {
   }
 }
 
-// CallControls
+/// CallControls
 class CallControls extends StatelessWidget {
   final AudioChat audioChat;
   final SettingsController settingsController;
@@ -245,30 +261,106 @@ class CallControls extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      constraints: const BoxConstraints(maxWidth: 500.0, maxHeight: 300.0),
-      padding: const EdgeInsets.all(15.0),
+      constraints: const BoxConstraints(maxWidth: 250.0),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.secondaryContainer,
+        color: Theme.of(context).colorScheme.tertiaryContainer,
         borderRadius: BorderRadius.circular(10.0),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Button(
-              text: 'Disconnect',
-              onPressed: () async {
-                await audioChat.endCall();
+          const Padding(
+              padding: EdgeInsets.only(top: 10),
+              child: Center(
+                  child: Text('Call Status: ...',
+                      style: TextStyle(fontSize: 18)))),
+          const SizedBox(height: 20),
+          const Padding(
+              padding: EdgeInsets.only(left: 25),
+              child: Text('Output Volume', style: TextStyle(fontSize: 15))),
+          ListenableBuilder(
+              listenable: settingsController,
+              builder: (BuildContext context, Widget? child) {
+                return Slider(
+                    value: settingsController.outputVolume,
+                    onChanged: (value) async {
+                      await settingsController.updateOutputVolume(value);
+                      audioChat.setOutputVolume(decibel: value);
+                    },
+                    min: -20,
+                    max: 25,
+                    label:
+                        '${settingsController.outputVolume.toStringAsFixed(2)} db');
               }),
-          IconButton(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) => SettingsPage(
-                          controller: settingsController,
-                          audioChat: audioChat)),
-                );
-              },
-              icon: const Icon(Icons.settings)),
+          const SizedBox(height: 2),
+          const Padding(
+              padding: EdgeInsets.only(left: 25),
+              child: Text('Input Volume', style: TextStyle(fontSize: 15))),
+          ListenableBuilder(
+              listenable: settingsController,
+              builder: (BuildContext context, Widget? child) {
+                return Slider(
+                    value: settingsController.inputVolume,
+                    onChanged: (value) async {
+                      await settingsController.updateInputVolume(value);
+                      audioChat.setInputVolume(decibel: value);
+                    },
+                    min: -20,
+                    max: 25,
+                    label:
+                        '${settingsController.inputVolume.toStringAsFixed(2)} db');
+              }),
+          const SizedBox(height: 2),
+          const Padding(
+              padding: EdgeInsets.only(left: 25),
+              child: Text('Input Sensitivity', style: TextStyle(fontSize: 15))),
+          ListenableBuilder(
+              listenable: settingsController,
+              builder: (BuildContext context, Widget? child) {
+                return Slider(
+                    value: settingsController.inputSensitivity,
+                    onChanged: (value) async {
+                      await settingsController.updateInputSensitivity(value);
+                      audioChat.setRmsThreshold(decimal: value);
+                    },
+                    min: -15,
+                    max: 50,
+                    label:
+                        '${settingsController.inputSensitivity.toStringAsFixed(2)} db');
+              }),
+          const Spacer(),
+          Container(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.secondaryContainer,
+                borderRadius: const BorderRadius.only(
+                    bottomLeft: Radius.circular(10.0),
+                    bottomRight: Radius.circular(10.0)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(5.0),
+                child: Center(
+                    child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(onPressed: () {}, icon: const Icon(Icons.mic)),
+                    IconButton(
+                        onPressed: () {}, icon: const Icon(Icons.headphones)),
+                    IconButton(
+                        onPressed: () {
+                          Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => SettingsPage(
+                                    controller: settingsController,
+                                    audioChat: audioChat),
+                              ));
+                        },
+                        icon: const Icon(Icons.settings)),
+                    IconButton(
+                        onPressed: () {}, icon: const Icon(Icons.screen_share)),
+                  ],
+                )),
+              ))
         ],
       ),
     );
@@ -286,7 +378,7 @@ class ContactWidget extends StatefulWidget {
   State<ContactWidget> createState() => _ContactWidgetState();
 }
 
-// ContactWidget
+/// ContactWidget
 class _ContactWidgetState extends State<ContactWidget> {
   late bool inCall = false;
 
@@ -303,12 +395,15 @@ class _ContactWidgetState extends State<ContactWidget> {
           child: Icon(Icons.person),
         ),
         title: Text(widget.contact.nickname()),
-        subtitle: Text(widget.contact.ipStr()),
+        subtitle: Text(widget.contact.addressStr()),
         trailing: inCall
             ? IconButton(
                 icon: const Icon(Icons.call_end),
                 onPressed: () async {
                   await widget.audioChat.endCall();
+                  setState(() {
+                    inCall = false;
+                  });
                 },
               )
             : IconButton(
@@ -328,30 +423,6 @@ class _ContactWidgetState extends State<ContactWidget> {
       ),
     );
   }
-}
-
-// Function to show error modal dialog
-void showErrorDialog(BuildContext context, String errorMessage) {
-  showDialog(
-    context: context,
-    builder: (BuildContext context) {
-      return AlertDialog(
-        title: const Text('An Error Occurred'),
-        content: Text(errorMessage),
-        actions: <Widget>[
-          TextButton(
-            child: const Text('Close'),
-            onPressed: () {
-              Navigator.of(context).pop(); // Dismiss the dialog
-            },
-          ),
-        ],
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-        ),
-      );
-    },
-  );
 }
 
 /// Custom Button Widget
@@ -412,4 +483,61 @@ class TextInput extends StatelessWidget {
       ),
     );
   }
+}
+
+// Function to show error modal dialog
+void showErrorDialog(BuildContext context, String errorMessage) {
+  showDialog(
+    context: context,
+    builder: (BuildContext context) {
+      return AlertDialog(
+        title: const Text('An Error Occurred'),
+        content: Text(errorMessage),
+        actions: <Widget>[
+          TextButton(
+            child: const Text('Close'),
+            onPressed: () {
+              Navigator.of(context).pop(); // Dismiss the dialog
+            },
+          ),
+        ],
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      );
+    },
+  );
+}
+
+Future<bool> acceptCallPrompt(BuildContext context, Contact contact) async {
+  const timeout = Duration(seconds: 10);
+  bool? result = await showDialog<bool>(
+    context: context,
+    builder: (BuildContext context) {
+      Timer(timeout, () {
+        if (context.mounted) {
+          Navigator.of(context).pop(false);
+        }
+      });
+
+      return AlertDialog(
+        title: Text('Accept call from ${contact.nickname()}?'),
+        actions: <Widget>[
+          TextButton(
+            child: const Text('Deny'),
+            onPressed: () =>
+                Navigator.of(context).pop(false), // Return false (deny)
+          ),
+          TextButton(
+            child: const Text('Accept'),
+            onPressed: () =>
+                Navigator.of(context).pop(true), // Return true (accept)
+          ),
+        ],
+      );
+    },
+  );
+
+  // If the dialog is dismissed by the timeout, result will be null. Treating null as false here.
+  return result ?? false;
 }

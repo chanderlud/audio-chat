@@ -27,9 +27,11 @@ pub(crate) enum ErrorKind {
     Join(JoinError),
     AddrParse(AddrParseError),
     Base64(DecodeError),
+    Ed25519(ed25519_dalek::ed25519::Error),
     NoOutputDevice,
     NoInputDevice,
     InvalidContactFormat,
+    InCall,
 }
 
 impl From<std::io::Error> for Error {
@@ -136,6 +138,14 @@ impl From<DecodeError> for Error {
     }
 }
 
+impl From<ed25519_dalek::ed25519::Error> for Error {
+    fn from(err: ed25519_dalek::ed25519::Error) -> Self {
+        Self {
+            kind: ErrorKind::Ed25519(err),
+        }
+    }
+}
+
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -155,10 +165,12 @@ impl Display for Error {
                 ErrorKind::HkdfLength(ref err) => format!("HKDF length error: {}", err),
                 ErrorKind::Join(ref err) => format!("Join error: {}", err),
                 ErrorKind::Base64(ref err) => format!("Base64 error: {}", err),
+                ErrorKind::Ed25519(ref err) => format!("Ed25519 error: {}", err),
                 ErrorKind::AddrParse(ref err) => err.to_string(),
                 ErrorKind::NoOutputDevice => "No output device found".to_string(),
                 ErrorKind::NoInputDevice => "No input device found".to_string(),
                 ErrorKind::InvalidContactFormat => "Invalid contact format".to_string(),
+                ErrorKind::InCall => "Cannot change this option while a call is active".to_string(),
             }
         )
     }
@@ -180,6 +192,12 @@ impl Error {
     pub(crate) fn invalid_contact_format() -> Self {
         Self {
             kind: ErrorKind::InvalidContactFormat,
+        }
+    }
+
+    pub(crate) fn in_call() -> Self {
+        Self {
+            kind: ErrorKind::InCall,
         }
     }
 }

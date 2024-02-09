@@ -46,7 +46,7 @@ class AudioChat extends RustOpaque {
       );
 
   /// Lists the input and output devices
-  Future<(List<String>, List<String>)> listDevices({dynamic hint}) =>
+  (List<String>, List<String>) listDevices({dynamic hint}) =>
       RustLib.instance.api.audioChatListDevices(
         that: this,
       );
@@ -55,11 +55,13 @@ class AudioChat extends RustOpaque {
           {required int listenPort,
           required int receivePort,
           required List<int> signingKey,
+          required FutureOr<bool> Function(Contact) acceptCall,
           dynamic hint}) =>
       RustLib.instance.api.audioChatNew(
           listenPort: listenPort,
           receivePort: receivePort,
           signingKey: signingKey,
+          acceptCall: acceptCall,
           hint: hint);
 
   /// Restarts the listener
@@ -75,16 +77,34 @@ class AudioChat extends RustOpaque {
         contact: contact,
       );
 
+  void setInputVolume({required double decibel, dynamic hint}) =>
+      RustLib.instance.api.audioChatSetInputVolume(
+        that: this,
+        decibel: decibel,
+      );
+
   void setListenPort({required int port, dynamic hint}) =>
       RustLib.instance.api.audioChatSetListenPort(
         that: this,
         port: port,
       );
 
+  void setOutputVolume({required double decibel, dynamic hint}) =>
+      RustLib.instance.api.audioChatSetOutputVolume(
+        that: this,
+        decibel: decibel,
+      );
+
   void setReceivePort({required int port, dynamic hint}) =>
       RustLib.instance.api.audioChatSetReceivePort(
         that: this,
         port: port,
+      );
+
+  void setRmsThreshold({required double decimal, dynamic hint}) =>
+      RustLib.instance.api.audioChatSetRmsThreshold(
+        that: this,
+        decimal: decimal,
       );
 }
 
@@ -109,10 +129,6 @@ class Contact extends RustOpaque {
         that: this,
       );
 
-  String ipStr({dynamic hint}) => RustLib.instance.api.contactIpStr(
-        that: this,
-      );
-
   static Contact newContact(
           {required String nickname,
           required String verifyingKey,
@@ -130,6 +146,10 @@ class Contact extends RustOpaque {
 
   static Contact parse({required String s, dynamic hint}) =>
       RustLib.instance.api.contactParse(s: s, hint: hint);
+
+  String store({dynamic hint}) => RustLib.instance.api.contactStore(
+        that: this,
+      );
 
   Uint8List verifyingKey({dynamic hint}) =>
       RustLib.instance.api.contactVerifyingKey(
