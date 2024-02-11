@@ -10,7 +10,7 @@ use atomic_float::AtomicF32;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Host, Stream};
+use cpal::{Device, Host, Stream};
 use ctr::{Ctr128BE, CtrCore};
 use ed25519_dalek::{SecretKey, Signature, Signer, SigningKey, VerifyingKey};
 use flutter_rust_bridge::{frb, spawn, spawn_blocking_with, DartFnFuture};
@@ -18,7 +18,7 @@ use hex_literal::hex;
 use hkdf::Hkdf;
 use itertools::Itertools;
 use kanal::{bounded, bounded_async, AsyncReceiver, AsyncSender, Receiver, Sender};
-use log::{debug, error};
+use log::{debug, error, warn};
 use nnnoiseless::{DenoiseState, FRAME_SIZE};
 use rand::rngs::OsRng;
 use rand::Rng;
@@ -28,12 +28,12 @@ use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
 use sha2::Sha256;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU16};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::select;
 use tokio::sync::{Mutex, Notify};
+use uuid::Uuid;
 use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};
 
 use crate::api::error::{DartError, Error, ErrorKind};
@@ -69,9 +69,6 @@ pub struct AudioChat {
     /// The port to which the UDP socket binds to
     receive_port: Arc<AtomicU16>,
 
-    /// The contacts that this chat knows about
-    contacts: Arc<Mutex<HashMap<String, Contact>>>,
-
     /// The audio host
     host: Arc<Host>,
 
@@ -102,6 +99,12 @@ pub struct AudioChat {
 
     /// Prompts the user to accept or reject the call
     accept_call: Arc<Mutex<dyn Fn(Contact) -> DartFnFuture<bool> + Send>>,
+
+    /// Alerts the UI that a call has ended
+    call_ended: Arc<Mutex<dyn Fn(String) -> DartFnFuture<()> + Send>>,
+
+    /// Fetches a contact from the front end
+    get_contact: Arc<Mutex<dyn Fn(String) -> DartFnFuture<Option<Contact>> + Send>>,
 }
 
 impl AudioChat {
@@ -114,15 +117,16 @@ impl AudioChat {
         input_volume: f32,
         output_volume: f32,
         accept_call: impl Fn(Contact) -> DartFnFuture<bool> + Send + 'static,
+        call_ended: impl Fn(String) -> DartFnFuture<()> + Send + 'static,
+        get_contact: impl Fn(String) -> DartFnFuture<Option<Contact>> + Send + 'static,
     ) -> AudioChat {
         let chat = Self {
             listen_port: Arc::new(AtomicU16::new(listen_port)),
             receive_port: Arc::new(AtomicU16::new(receive_port)),
-            contacts: Default::default(),
             host: Arc::new(cpal::default_host()),
-            rms_threshold: Arc::new(AtomicF32::new(decibel_to_multiplier(rms_threshold))),
-            input_volume: Arc::new(AtomicF32::new(decibel_to_multiplier(input_volume)),
-            output_volume: Arc::new(AtomicF32::new(decibel_to_multiplier(output_volume))),
+            rms_threshold: Arc::new(AtomicF32::new(db_to_multiplier(rms_threshold))),
+            input_volume: Arc::new(AtomicF32::new(db_to_multiplier(input_volume))),
+            output_volume: Arc::new(AtomicF32::new(db_to_multiplier(output_volume))),
             end_call: Default::default(),
             stop_listener: Default::default(),
             input_device: Default::default(),
@@ -132,6 +136,8 @@ impl AudioChat {
             ),
             in_call: Default::default(),
             accept_call: Arc::new(Mutex::new(accept_call)),
+            call_ended: Arc::new(Mutex::new(call_ended)),
+            get_contact: Arc::new(Mutex::new(get_contact)),
         };
 
         let chat_clone = chat.clone();
@@ -146,15 +152,9 @@ impl AudioChat {
     }
 
     /// The public say_hello function
-    pub async fn say_hello(&self, contact: &Contact) -> std::result::Result<(), DartError> {
+    pub async fn say_hello(&self, contact: &Contact) -> std::result::Result<bool, DartError> {
         debug!("say hello called for {}", contact.nickname);
         self._say_hello(contact).await.map_err(DartError::from)
-    }
-
-    /// Adds add a contact to the known contacts
-    pub async fn add_contact(&self, contact: &Contact) {
-        let mut contacts = self.contacts.lock().await;
-        contacts.insert(contact.nickname.clone(), contact.clone());
     }
 
     /// Ends the call (if there is one)
@@ -177,6 +177,26 @@ impl AudioChat {
             }
         });
         Ok(())
+    }
+
+    /// Public play sound function
+    pub async fn play_sound(&self, file_path: String) -> SoundHandle {
+        let cancel = Arc::new(Notify::new());
+        let chat_clone = self.clone();
+        let cancel_clone = cancel.clone();
+
+        spawn(async move {
+            select! {
+                _ = cancel_clone.notified() => (),
+                result = chat_clone._play_sound(file_path) => {
+                    if let Err(error) = result {
+                        error!("Play sound failed: {:?}", error);
+                    }
+                }
+            }
+        });
+
+        SoundHandle { cancel }
     }
 
     #[frb(sync)]
@@ -224,15 +244,28 @@ impl AudioChat {
         Ok((input_devices, output_devices))
     }
 
+    /// Internal play sound function
+    async fn _play_sound(&self, file_path: String) -> Result<()> {
+        let output_device = self.get_output_device().await?;
+        let output_config = output_device.default_output_config()?;
+        Ok(())
+    }
+
     /// Initiate a call to the given address
-    async fn _say_hello(&self, contact: &Contact) -> Result<()> {
+    async fn _say_hello(&self, contact: &Contact) -> Result<bool> {
+        let mut buf = [255; 1];
         let mut stream = TcpStream::connect(contact.address).await?;
         // this signal lets the callee know that the caller wants to start a handshake
-        stream.write(&[255]).await?;
+        stream.write(&buf).await?;
+        // this signal lets the caller know that the callee wants to start a handshake
+        stream.read(&mut buf).await?;
+
+        if buf != [0] {
+            return Ok(false);
+        }
 
         let chat_clone = self.clone();
         let contact = contact.clone();
-        self.in_call.store(true, Relaxed);
 
         spawn(async move {
             if let Err(error) = chat_clone
@@ -244,7 +277,7 @@ impl AudioChat {
             chat_clone.in_call.store(false, Relaxed);
         });
 
-        Ok(())
+        Ok(true)
     }
 
     async fn listener(&self) -> Result<()> {
@@ -252,42 +285,36 @@ impl AudioChat {
 
         let listener_loop = async {
             while let Ok((mut stream, address)) = listener.accept().await {
-                // TODO this signaling thing is maybe not super ideal
                 let mut buf = [0; 1];
 
                 if stream.read(&mut buf).await.is_err() {
-                    debug!("Stream closed before handshake");
+                    error!("Stream closed before handshake");
                     continue;
                 } else if buf != [255] {
-                    debug!("Unknown signal: {:?}", buf);
                     continue;
                 }
 
                 let remote_address = address.ip();
-
-                let contact = {
-                    self.contacts
-                        .lock()
-                        .await
-                        .iter()
-                        .find(|(_, contact)| contact.ip() == remote_address)
-                        .map(|(_, contact)| contact.clone())
-                };
+                let contact = (self.get_contact.lock().await)(remote_address.to_string()).await;
 
                 if let Some(contact) = contact {
                     debug!("Prompting for call from {}", contact.nickname);
+
                     if !(self.accept_call.lock().await)(contact.clone()).await {
+                        debug!("Call rejected");
+                        continue;
+                    } else if let Err(error) = stream.write(&[0]).await {
+                        error!("Error writing to stream: {}", error);
                         continue;
                     }
 
-                    self.in_call.store(true, Relaxed);
                     if let Err(error) = self.handshake(stream, remote_address, false, contact).await
                     {
                         error!("Call failed [callee]: {:?}", error);
                     }
                     self.in_call.store(false, Relaxed);
                 } else {
-                    error!("Unknown contact: {}", remote_address);
+                    warn!("Unknown contact: {}", remote_address);
                 }
             }
         };
@@ -309,6 +336,8 @@ impl AudioChat {
         caller: bool,
         contact: Contact,
     ) -> Result<()> {
+        self.in_call.store(true, Relaxed);
+
         // perform the key exchange
         let shared_secret = key_exchange(&mut stream).await?;
         // HKDF for the key derivation
@@ -391,44 +420,10 @@ impl AudioChat {
         receive_cipher: AesCipher,
         caller: bool,
     ) -> Result<()> {
-        let output_device = match *self.output_device.lock().await {
-            Some(ref name) => self
-                .host
-                .output_devices()?
-                .find(|device| {
-                    if let Ok(ref device_name) = device.name() {
-                        name == device_name
-                    } else {
-                        false
-                    }
-                })
-                .ok_or(Error::no_output_device())?,
-            None => self
-                .host
-                .default_output_device()
-                .ok_or(Error::no_output_device())?,
-        };
-
+        let output_device = self.get_output_device().await?;
         debug!("output_device: {:?}", output_device.name());
 
-        let input_device = match *self.input_device.lock().await {
-            Some(ref name) => self
-                .host
-                .input_devices()?
-                .find(|device| {
-                    if let Ok(ref device_name) = device.name() {
-                        name == device_name
-                    } else {
-                        false
-                    }
-                })
-                .ok_or(Error::no_input_device())?,
-            None => self
-                .host
-                .default_input_device()
-                .ok_or(Error::no_input_device())?,
-        };
-
+        let input_device = self.get_input_device().await?;
         debug!("input_device: {:?}", input_device.name());
 
         let output_config = output_device.default_output_config()?;
@@ -538,12 +533,14 @@ impl AudioChat {
             input_receiver,
             Arc::clone(&socket),
             send_cipher,
+            Arc::clone(&self.end_call),
         ));
 
         let output_handle = spawn(socket_output(
             output_sender,
             Arc::clone(&socket),
             receive_cipher,
+            Arc::clone(&self.end_call),
         ));
 
         let processor_future = spawn_blocking_with(
@@ -554,41 +551,93 @@ impl AudioChat {
         select! {
             result = input_handle => result??,
             reason = output_handle => match reason? {
-                // TODO UI prompts
-                EndReason::Ended => (),
-                EndReason::MissingDevice => error!("The other party is missing a device"),
-                EndReason::Error => error!("The other party encountered an error"),
-            },
+                    EndReason::Ended => (self.call_ended.lock().await)("".to_string()).await,
+                    EndReason::MissingDevice => (self.call_ended.lock().await)("The other party is missing an audio device".to_string()).await,
+                    EndReason::Error => (self.call_ended.lock().await)("The other party encountered an error".to_string()).await,
+                },
             // this unwrap is safe because the processor thread will not panic
             result = processor_future => result?.unwrap()?,
-            _ = self.end_call.notified() => (),
+            _ = self.end_call.notified() => {
+                (self.call_ended.lock().await)("".to_string()).await;
+            },
         }
 
-        // send the end signal
+        // no matter what, send the end signal
+        debug!("Sending end call signal");
         socket.send(&[1]).await?;
 
+        // TODO play call ended sound
         Ok(())
+    }
+
+    async fn get_output_device(&self) -> Result<Device> {
+        match *self.output_device.lock().await {
+            Some(ref name) => self
+                .host
+                .output_devices()?
+                .find(|device| {
+                    if let Ok(ref device_name) = device.name() {
+                        name == device_name
+                    } else {
+                        false
+                    }
+                })
+                .ok_or(Error::no_output_device()),
+            None => self
+                .host
+                .default_output_device()
+                .ok_or(Error::no_output_device()),
+        }
+    }
+
+    async fn get_input_device(&self) -> Result<Device> {
+        match *self.input_device.lock().await {
+            Some(ref name) => self
+                .host
+                .input_devices()?
+                .find(|device| {
+                    if let Ok(ref device_name) = device.name() {
+                        name == device_name
+                    } else {
+                        false
+                    }
+                })
+                .ok_or(Error::no_input_device()),
+            None => self
+                .host
+                .default_input_device()
+                .ok_or(Error::no_input_device()),
+        }
     }
 }
 
-// TODO the whole SendStream shenanigans seems like a bad idea
+/// Wraps a cpal stream to unsafely make it send
 struct SendStream {
     stream: Stream,
 }
 
 unsafe impl Send for SendStream {}
 
+#[derive(Debug)]
 enum EndReason {
     Ended,
     MissingDevice,
     Error,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 #[frb(opaque)]
 pub struct Contact {
+    /// A random ID to identify the contact
+    id: String,
+
+    /// The nickname of the contact
     nickname: String,
+
+    /// The public/verifying key for the contact
     verifying_key: [u8; 32],
+
+    /// The address of the contact
     address: SocketAddr,
 }
 
@@ -596,18 +645,20 @@ impl FromStr for Contact {
     type Err = DartError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        let parts: (&str, &str, &str) = s
-            .splitn(3, ',')
+        let parts: (&str, &str, &str, &str) = s
+            .splitn(4, ',')
             .collect_tuple()
             .ok_or(Error::invalid_contact_format())?;
 
-        let nickname = parts.0.to_string();
+        let id = parts.0.to_string();
+        let nickname = parts.1.to_string();
         let verifying_key = BASE64_STANDARD
-            .decode(parts.1.as_bytes())
+            .decode(parts.2.as_bytes())
             .map_err(Error::from)?;
-        let address = parts.2.parse().map_err(Error::from)?;
+        let address = parts.3.parse().map_err(Error::from)?;
 
         Ok(Self {
+            id,
             nickname,
             verifying_key: verifying_key
                 .try_into()
@@ -629,6 +680,7 @@ impl Contact {
             .map_err(Error::from)?;
 
         Ok(Self {
+            id: Uuid::new_v4().to_string(),
             nickname,
             verifying_key: key
                 .try_into()
@@ -663,24 +715,63 @@ impl Contact {
     }
 
     #[frb(sync)]
+    pub fn ip_str(&self) -> String {
+        self.address.ip().to_string()
+    }
+
+    #[frb(sync)]
     pub fn store(&self) -> String {
         format!(
-            "{},{},{}",
+            "{},{},{},{}",
+            self.id,
             self.nickname,
             self.verifying_key_str(),
             self.address
         )
     }
 
-    fn ip(&self) -> IpAddr {
-        self.address.ip()
+    #[frb(sync)]
+    pub fn equals(&self, other: &Contact) -> bool {
+        self == other
+    }
+
+    #[frb(sync)]
+    pub fn id(&self) -> String {
+        self.id.clone()
+    }
+
+    #[frb(sync)]
+    pub fn set_address(&mut self, address: String) -> std::result::Result<(), DartError> {
+        self.address = address.parse().map_err(Error::from)?;
+        Ok(())
+    }
+
+    #[frb(sync)]
+    pub fn set_nickname(&mut self, nickname: String) {
+        self.nickname = nickname;
+    }
+
+    #[frb(sync)]
+    pub fn pub_clone(&self) -> Contact {
+        self.clone()
+    }
+}
+
+#[frb(opaque)]
+pub struct SoundHandle {
+    cancel: Arc<Notify>,
+}
+
+impl SoundHandle {
+    #[frb(sync)]
+    pub fn cancel(&self) {
+        self.cancel.notify_waiters();
     }
 }
 
 #[frb(sync)]
 pub fn create_log_stream(s: StreamSink<String>) {
     logger::SendToDartLogger::set_stream_sink(s);
-    error!("Logger set");
 }
 
 #[frb(sync)]
@@ -771,8 +862,8 @@ fn process_input_data(
                 }
             } else {
                 *silence_length = 0;
-                // this unwrap is safe because we know the length of the frame is FRAME_SIZE
                 mul(out_buffer, input_factor);
+                // this unwrap is safe because we know the length of the frame is FRAME_SIZE
                 _ = sender.send(out_buffer.as_slice().try_into().unwrap());
             }
         } else {
@@ -788,33 +879,44 @@ async fn input_to_socket<C: StreamCipher>(
     input_receiver: AsyncReceiver<[f32; FRAME_SIZE]>,
     socket: Arc<UdpSocket>,
     mut cipher: C,
+    notify: Arc<Notify>,
 ) -> Result<()> {
     let mut buffer = [0; TRANSFER_BUFFER_SIZE + 8];
     let mut sequence_number = 0_u64;
 
-    while let Ok(frame) = input_receiver.recv().await {
-        let bytes = unsafe {
-            std::slice::from_raw_parts(
-                frame.as_ptr() as *const u8,
-                frame.len() * mem::size_of::<f32>(),
-            )
-        };
+    let future = async {
+        while let Ok(frame) = input_receiver.recv().await {
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    frame.as_ptr() as *const u8,
+                    frame.len() * mem::size_of::<f32>(),
+                )
+            };
 
-        for chunk in bytes.chunks(TRANSFER_BUFFER_SIZE) {
-            if chunk == BYTE_SILENCE {
-                socket.send(&[0]).await?;
-            } else {
-                cipher.apply_keystream_b2b(chunk, &mut buffer[8..]).unwrap();
+            for chunk in bytes.chunks(TRANSFER_BUFFER_SIZE) {
+                if chunk == BYTE_SILENCE {
+                    socket.send(&[0]).await?;
+                } else {
+                    cipher.apply_keystream_b2b(chunk, &mut buffer[8..]).unwrap();
 
-                buffer[..8].copy_from_slice(&sequence_number.to_be_bytes());
-                sequence_number += TRANSFER_BUFFER_SIZE as u64; // advance the sequence number
+                    buffer[..8].copy_from_slice(&sequence_number.to_be_bytes());
+                    sequence_number += TRANSFER_BUFFER_SIZE as u64; // advance the sequence number
 
-                socket.send(&buffer).await?;
+                    socket.send(&buffer).await?;
+                }
             }
         }
-    }
 
-    Ok(())
+        Ok::<(), Error>(())
+    };
+
+    select! {
+        result = future => result,
+        _ = notify.notified() => {
+            debug!("Input to socket ended");
+            Ok(())
+        },
+    }
 }
 
 /// Receives audio data from the socket and sends it to the output processor
@@ -822,37 +924,50 @@ async fn socket_output<C: StreamCipher + StreamCipherSeek>(
     output_sender: AsyncSender<TransferBuffer>,
     socket: Arc<UdpSocket>,
     mut cipher: C,
+    notify: Arc<Notify>,
 ) -> EndReason {
     let mut buffer = [0; TRANSFER_BUFFER_SIZE + 8];
     let mut out = [0; TRANSFER_BUFFER_SIZE];
 
-    loop {
-        match socket.recv(&mut buffer).await {
-            // normal chunk of audio data
-            Ok(len) if len == TRANSFER_BUFFER_SIZE + 8 => {
-                // unwrap is safe because we know the buffer is the correct length
-                let sequence_number = u64::from_be_bytes(buffer[..8].try_into().unwrap());
+    let future = async {
+        loop {
+            match socket.recv(&mut buffer).await {
+                // normal chunk of audio data
+                Ok(len) if len == TRANSFER_BUFFER_SIZE + 8 => {
+                    // unwrap is safe because we know the buffer is the correct length
+                    let sequence_number = u64::from_be_bytes(buffer[..8].try_into().unwrap());
+                    let position = cipher.current_pos::<u64>();
 
-                // seek the cipher if needed
-                if cipher.current_pos::<u64>() != sequence_number {
-                    cipher.seek(sequence_number);
+                    // seek the cipher if needed
+                    if position != sequence_number {
+                        debug!("Seeking cipher by {:?}", sequence_number.checked_sub(position));
+                        cipher.seek(sequence_number);
+                    }
+
+                    // unwrap is safe because we know the buffer is the correct length
+                    cipher.apply_keystream_b2b(&buffer[8..], &mut out).unwrap();
+                    _ = output_sender.try_send(out);
                 }
-
-                // unwrap is safe because we know the buffer is the correct length
-                cipher.apply_keystream_b2b(&buffer[8..], &mut out).unwrap();
-                _ = output_sender.try_send(out);
+                // control signals
+                Ok(1) => match buffer[0] {
+                    0 => _ = output_sender.try_send(BYTE_SILENCE), // silence
+                    1 => break EndReason::Ended,                   // end of call
+                    2 => break EndReason::MissingDevice, // the other party is missing a device
+                    3 => break EndReason::Error,         // the other party encountered an error
+                    _ => unreachable!("received unknown control signal {}", buffer[0]),
+                },
+                Ok(len) => error!("Received {} < {} data", len, TRANSFER_BUFFER_SIZE + 8),
+                Err(error) => error!("Error receiving {}", error),
             }
-            // control signals
-            Ok(1) => match buffer[0] {
-                0 => _ = output_sender.try_send(BYTE_SILENCE), // silence
-                1 => break EndReason::Ended,                   // end of call
-                2 => break EndReason::MissingDevice, // the other party is missing a device
-                3 => break EndReason::Error,         // the other party encountered an error
-                _ => unreachable!("received unknown control signal {}", buffer[0]),
-            },
-            Ok(len) => error!("Received {} < {} data", len, TRANSFER_BUFFER_SIZE + 8),
-            Err(error) => error!("Error receiving {}", error),
         }
+    };
+
+    select! {
+        result = future => result,
+        _ = notify.notified() => {
+            debug!("Socket output ended");
+            EndReason::Ended
+        },
     }
 }
 
@@ -917,6 +1032,7 @@ fn processor(
         }
     }
 
+    debug!("Processor ended");
     Ok(())
 }
 
@@ -962,5 +1078,5 @@ fn mul(vec: &mut [f32], factor: f32) {
 
 /// Converts a decibel value to a multiplier
 fn db_to_multiplier(db: f32) -> f32 {
-    10f32.powf(db / 20.0)
+    10_f32.powf(db / 20.0)
 }

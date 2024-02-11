@@ -40,3 +40,17 @@ pub extern "C" fn frbgen_audio_chat_rust_arc_decrement_strong_count_RustOpaque_f
 ) {
     MoiArc::<flutter_rust_bridge::for_generated::rust_async::RwLock<Contact>>::decrement_strong_count(ptr as _);
 }
+
+#[no_mangle]
+pub extern "C" fn frbgen_audio_chat_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundHandle(
+    ptr: *const std::ffi::c_void,
+) {
+    MoiArc::<flutter_rust_bridge::for_generated::rust_async::RwLock<SoundHandle>>::increment_strong_count(ptr as _);
+}
+
+#[no_mangle]
+pub extern "C" fn frbgen_audio_chat_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundHandle(
+    ptr: *const std::ffi::c_void,
+) {
+    MoiArc::<flutter_rust_bridge::for_generated::rust_async::RwLock<SoundHandle>>::decrement_strong_count(ptr as _);
+}

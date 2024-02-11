@@ -22,19 +22,21 @@ class SettingsController with ChangeNotifier {
   late double inputSensitivity;
 
   Future<void> init() async {
-    final signingKey = await readSecureData('signingKey');
-    final verifyingKey = await readSecureData('verifyingKey');
+    final signingKey = await storage.read(key: 'signingKey');
+    final verifyingKey = await storage.read(key: 'verifyingKey');
 
     if (signingKey != null && verifyingKey != null) {
       this.signingKey = base64Decode(signingKey);
       this.verifyingKey = base64Decode(verifyingKey);
     } else {
-      var keypair = generateKeys();
+      U8Array64 keypair = generateKeys();
       this.signingKey = keypair.getRange(0, 32).toList();
       this.verifyingKey = keypair.getRange(32, 64).toList();
 
-      await writeSecureData('verifyingKey', base64Encode(this.verifyingKey));
-      await writeSecureData('signingKey', base64Encode(this.signingKey));
+      await storage.write(
+          key: 'verifyingKey', value: base64Encode(this.verifyingKey));
+      await storage.write(
+          key: 'signingKey', value: base64Encode(this.signingKey));
     }
 
     contacts = {};
@@ -42,7 +44,7 @@ class SettingsController with ChangeNotifier {
     options.getStringList('contacts')?.forEach((contactStr) async {
       try {
         Contact contact = Contact.parse(s: contactStr);
-        contacts[contact.nickname()] = contact;
+        contacts[contact.id()] = contact;
       } on DartError catch (e) {
         debugPrint('error adding contact: $e');
         return;
@@ -51,36 +53,50 @@ class SettingsController with ChangeNotifier {
 
     listenPort = options.getInt('listenPort') ?? 45000;
     receivePort = options.getInt('receivePort') ?? 45001;
-    outputVolume = options.getDouble('outputVolume') ?? 0;
-    inputVolume = options.getDouble('inputVolume') ?? 0;
-    inputSensitivity = options.getDouble('inputSensitivity') ?? 0;
+    outputVolume = options.getDouble('outputVolume') ?? 1;
+    inputVolume = options.getDouble('inputVolume') ?? 1;
+    inputSensitivity = options.getDouble('inputSensitivity') ?? -50;
 
     notifyListeners();
   }
 
-  Future<Contact> addContact(
-      String nickname, String verifyingKey, String address) async {
-    contacts[nickname] = Contact.newContact(
+  Future<void> addContact(
+    String nickname,
+    String verifyingKey,
+    String address,
+  ) async {
+    Contact contact = Contact.newContact(
         nickname: nickname, verifyingKey: verifyingKey, address: address);
+    contacts[contact.id()] = contact;
 
-    await options.setStringList(
-        'contacts',
-        contacts.values.map((entry) {
-          return entry.store();
-        }).toList());
-
+    await saveContacts();
     notifyListeners();
-    return contacts[nickname]!;
   }
 
-  Future<void> removeContact(String nickname) async {
-    contacts.remove(nickname);
+  Future<void> updateContactNickname(Contact contact, String nickname) async {
+    contact.setNickname(nickname: nickname);
+    await saveContacts();
+    notifyListeners();
+  }
+
+  Future<void> updateContactAddress(Contact contact, String address) async {
+    contact.setAddress(address: address);
+    await saveContacts();
+    notifyListeners();
+  }
+
+  Future<void> removeContact(Contact contact) async {
+    contacts.remove(contact.id());
+    await saveContacts();
+    notifyListeners();
+  }
+
+  Future<void> saveContacts() async {
     await options.setStringList(
         'contacts',
         contacts.values.map((entry) {
           return entry.store();
         }).toList());
-    notifyListeners();
   }
 
   Future<void> updateListenPort(int port) async {
@@ -111,22 +127,5 @@ class SettingsController with ChangeNotifier {
     inputSensitivity = sensitivity;
     await options.setDouble('inputSensitivity', sensitivity);
     notifyListeners();
-  }
-
-  Future<void> writeSecureData(String key, String value) async {
-    try {
-      await storage.write(key: key, value: value);
-    } catch (e) {
-      // Handle the exception, maybe log it or show a user-friendly error message
-    }
-  }
-
-  Future<String?> readSecureData(String key) async {
-    try {
-      return await storage.read(key: key);
-    } catch (e) {
-      // Handle the exception
-      return null;
-    }
   }
 }

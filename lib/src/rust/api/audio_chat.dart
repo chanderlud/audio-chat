@@ -33,13 +33,6 @@ class AudioChat extends RustOpaque {
         RustLib.instance.api.rust_arc_decrement_strong_count_AudioChatPtr,
   );
 
-  /// Adds add a contact to the known contacts
-  Future<void> addContact({required Contact contact, dynamic hint}) =>
-      RustLib.instance.api.audioChatAddContact(
-        that: this,
-        contact: contact,
-      );
-
   /// Ends the call (if there is one)
   Future<void> endCall({dynamic hint}) => RustLib.instance.api.audioChatEndCall(
         that: this,
@@ -55,14 +48,31 @@ class AudioChat extends RustOpaque {
           {required int listenPort,
           required int receivePort,
           required List<int> signingKey,
+          required double rmsThreshold,
+          required double inputVolume,
+          required double outputVolume,
           required FutureOr<bool> Function(Contact) acceptCall,
+          required FutureOr<void> Function(String) callEnded,
+          required FutureOr<Contact?> Function(String) getContact,
           dynamic hint}) =>
       RustLib.instance.api.audioChatNew(
           listenPort: listenPort,
           receivePort: receivePort,
           signingKey: signingKey,
+          rmsThreshold: rmsThreshold,
+          inputVolume: inputVolume,
+          outputVolume: outputVolume,
           acceptCall: acceptCall,
+          callEnded: callEnded,
+          getContact: getContact,
           hint: hint);
+
+  /// Public play sound function
+  Future<SoundHandle> playSound({required String filePath, dynamic hint}) =>
+      RustLib.instance.api.audioChatPlaySound(
+        that: this,
+        filePath: filePath,
+      );
 
   /// Restarts the listener
   Future<void> restartListener({dynamic hint}) =>
@@ -71,7 +81,7 @@ class AudioChat extends RustOpaque {
       );
 
   /// The public say_hello function
-  Future<void> sayHello({required Contact contact, dynamic hint}) =>
+  Future<bool> sayHello({required Contact contact, dynamic hint}) =>
       RustLib.instance.api.audioChatSayHello(
         that: this,
         contact: contact,
@@ -129,6 +139,20 @@ class Contact extends RustOpaque {
         that: this,
       );
 
+  bool equals({required Contact other, dynamic hint}) =>
+      RustLib.instance.api.contactEquals(
+        that: this,
+        other: other,
+      );
+
+  String id({dynamic hint}) => RustLib.instance.api.contactId(
+        that: this,
+      );
+
+  String ipStr({dynamic hint}) => RustLib.instance.api.contactIpStr(
+        that: this,
+      );
+
   static Contact newContact(
           {required String nickname,
           required String verifyingKey,
@@ -147,6 +171,22 @@ class Contact extends RustOpaque {
   static Contact parse({required String s, dynamic hint}) =>
       RustLib.instance.api.contactParse(s: s, hint: hint);
 
+  Contact pubClone({dynamic hint}) => RustLib.instance.api.contactPubClone(
+        that: this,
+      );
+
+  void setAddress({required String address, dynamic hint}) =>
+      RustLib.instance.api.contactSetAddress(
+        that: this,
+        address: address,
+      );
+
+  void setNickname({required String nickname, dynamic hint}) =>
+      RustLib.instance.api.contactSetNickname(
+        that: this,
+        nickname: nickname,
+      );
+
   String store({dynamic hint}) => RustLib.instance.api.contactStore(
         that: this,
       );
@@ -158,6 +198,29 @@ class Contact extends RustOpaque {
 
   String verifyingKeyStr({dynamic hint}) =>
       RustLib.instance.api.contactVerifyingKeyStr(
+        that: this,
+      );
+}
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::rust_async::RwLock<SoundHandle>>
+@sealed
+class SoundHandle extends RustOpaque {
+  SoundHandle.dcoDecode(List<dynamic> wire)
+      : super.dcoDecode(wire, _kStaticData);
+
+  SoundHandle.sseDecode(int ptr, int externalSizeOnNative)
+      : super.sseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        RustLib.instance.api.rust_arc_increment_strong_count_SoundHandle,
+    rustArcDecrementStrongCount:
+        RustLib.instance.api.rust_arc_decrement_strong_count_SoundHandle,
+    rustArcDecrementStrongCountPtr:
+        RustLib.instance.api.rust_arc_decrement_strong_count_SoundHandlePtr,
+  );
+
+  void cancel({dynamic hint}) => RustLib.instance.api.soundHandleCancel(
         that: this,
       );
 }
