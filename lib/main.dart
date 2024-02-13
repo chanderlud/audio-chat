@@ -5,6 +5,7 @@ import 'package:audio_chat/src/rust/api/audio_chat.dart';
 import 'package:audio_chat/src/rust/api/error.dart';
 import 'package:audio_chat/src/rust/frb_generated.dart';
 import 'package:audio_chat/settings/controller.dart';
+import 'package:debug_console/debug_console.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -17,7 +18,7 @@ Future<void> main() async {
   // get logs from rust
   rustSetUp();
   createLogStream().listen((message) {
-    debugPrint(message);
+    DebugConsole.log(message);
   });
 
   const storage = FlutterSecureStorage();
@@ -27,7 +28,7 @@ Future<void> main() async {
       SettingsController(storage: storage, options: options);
   await settingsController.init();
 
-  final CallStateController callStateController = CallStateController();
+  final StateController callStateController = StateController();
 
   final audioChat = await AudioChat.newAudioChat(
       listenPort: settingsController.listenPort,
@@ -40,7 +41,7 @@ Future<void> main() async {
         if (callStateController.isCallActive) {
           return false;
         } else if (navigatorKey.currentState == null) {
-          debugPrint('navigatorKey.currentState is null');
+          DebugConsole.warning('navigatorKey.currentState is null');
           return false;
         }
 
@@ -61,7 +62,7 @@ Future<void> main() async {
         if (message.isNotEmpty && navigatorKey.currentState != null) {
           showErrorDialog(navigatorKey.currentState!.context, message);
         } else {
-          debugPrint('call ended, not showing popup');
+          DebugConsole.debug('call ended, not showing popup');
         }
       },
       getContact: (ipStr) {
@@ -79,7 +80,7 @@ Future<void> main() async {
 class AudioChatApp extends StatelessWidget {
   final AudioChat audioChat;
   final SettingsController settingsController;
-  final CallStateController callStateController;
+  final StateController callStateController;
 
   const AudioChatApp(
       {super.key,
@@ -119,7 +120,7 @@ class AudioChatApp extends StatelessWidget {
 class HomePage extends StatelessWidget {
   final AudioChat audioChat;
   final SettingsController settingsController;
-  final CallStateController callStateController;
+  final StateController callStateController;
 
   const HomePage(
       {super.key,
@@ -129,7 +130,7 @@ class HomePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return DebugConsolePopup(child: Scaffold(
       body: Padding(
         padding: const EdgeInsets.all(20.0),
         child: Column(
@@ -147,7 +148,7 @@ class HomePage extends StatelessWidget {
                           return ContactsList(
                               audioChat: audioChat,
                               contacts:
-                                  settingsController.contacts.values.toList(),
+                              settingsController.contacts.values.toList(),
                               stateController: callStateController,
                               settingsController: settingsController);
                         }))
@@ -156,15 +157,15 @@ class HomePage extends StatelessWidget {
             const SizedBox(height: 20),
             Expanded(
                 child: Row(children: [
-              CallControls(
-                  audioChat: audioChat,
-                  settingsController: settingsController,
-                  stateController: callStateController),
-            ])),
+                  CallControls(
+                      audioChat: audioChat,
+                      settingsController: settingsController,
+                      stateController: callStateController),
+                ])),
           ],
         ),
       ),
-    );
+    ));
   }
 }
 
@@ -248,7 +249,7 @@ class _ContactFormState extends State<ContactForm> {
 /// ContactsList
 class ContactsList extends StatelessWidget {
   final AudioChat audioChat;
-  final CallStateController stateController;
+  final StateController stateController;
   final SettingsController settingsController;
   final List<Contact> contacts;
 
@@ -328,7 +329,7 @@ class ContactsList extends StatelessWidget {
 class CallControls extends StatelessWidget {
   final AudioChat audioChat;
   final SettingsController settingsController;
-  final CallStateController stateController;
+  final StateController stateController;
 
   const CallControls(
       {super.key,
@@ -426,7 +427,11 @@ class CallControls extends StatelessWidget {
                   children: [
                     IconButton(onPressed: () {}, icon: const Icon(Icons.mic)),
                     IconButton(
-                        onPressed: () {}, icon: const Icon(Icons.headphones)),
+                        onPressed: () {
+                          // TODO get this working
+                          // stateController.deafen();
+                          // audioChat.setDeafened(deafened: stateController.isDeafened);
+                        }, icon: stateController.isDeafened ? const Icon(Icons.volume_off) : const Icon(Icons.volume_up)),
                     IconButton(
                         onPressed: () {
                           Navigator.push(
@@ -454,7 +459,7 @@ class CallControls extends StatelessWidget {
 class ContactWidget extends StatelessWidget {
   final Contact contact;
   final AudioChat audioChat;
-  final CallStateController controller;
+  final StateController controller;
 
   const ContactWidget(
       {super.key,
@@ -487,15 +492,19 @@ class ContactWidget extends StatelessWidget {
             : IconButton(
                 icon: const Icon(Icons.call),
                 onPressed: () async {
+                  if (controller.isCallActive) {
+                    showErrorDialog(context, 'There is a call already active');
+                    return;
+                  }
+
                   controller.setStatus('Connecting');
-                  SoundHandle handle = await audioChat.playSound(
-                      filePath: 'assets/sounds/outgoing_call.mp3');
+                  SoundHandle handle = await audioChat.playSound(name: 'outgoing');
 
                   try {
                     if (await audioChat.sayHello(contact: contact)) {
                       controller.setActiveContact(contact);
-                      handle.cancel();
                       controller.setStatus('Active');
+                      handle.cancel();
                     } else {
                       controller.setStatus('Inactive');
                       handle.cancel();
@@ -518,7 +527,7 @@ class ContactWidget extends StatelessWidget {
 class EditContactWidget extends StatefulWidget {
   final Contact contact;
   final SettingsController settingsController;
-  final CallStateController stateController;
+  final StateController stateController;
   final AudioChat audioChat;
 
   const EditContactWidget(
@@ -569,7 +578,7 @@ class _EditContactWidgetState extends State<EditContactWidget> {
                 onChanged: (value) {
                   widget.settingsController
                       .updateContactNickname(widget.contact, value);
-                  debugPrint('nickname updated ${widget.contact.nickname()}');
+                  DebugConsole.debug('nickname updated ${widget.contact.nickname()}');
                 }),
           ),
           subtitle: TextInput(
@@ -661,13 +670,16 @@ class TextInput extends StatelessWidget {
   }
 }
 
-class CallStateController extends ChangeNotifier {
+/// A controller which helps bridge the gap between the UI and the audio chat
+class StateController extends ChangeNotifier {
   Contact? _activeContact;
   String _status = 'Inactive';
+  bool deafened = false;
 
   Contact? get activeContact => _activeContact;
   String get status => _status;
   bool get isCallActive => _activeContact != null;
+  bool get isDeafened => deafened;
 
   void setActiveContact(Contact? contact) {
     _activeContact = contact;
@@ -682,11 +694,16 @@ class CallStateController extends ChangeNotifier {
   bool isActiveContact(Contact contact) {
     return _activeContact?.equals(other: contact) ?? false;
   }
+
+  void deafen() {
+    deafened = !deafened;
+    notifyListeners();
+  }
 }
 
 class EditContacts extends StatelessWidget {
   final SettingsController settingsController;
-  final CallStateController stateController;
+  final StateController stateController;
   final AudioChat audioChat;
   final List<Contact> contacts;
 

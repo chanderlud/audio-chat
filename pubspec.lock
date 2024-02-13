@@ -65,6 +65,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.6"
+  debug_console:
+    dependency: "direct main"
+    description:
+      name: debug_console
+      sha256: "85a43612dc73ae52db7f52a94b0705182ade42aacaa2db2e89608b40e83a7a26"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.0.1"
+  expandable:
+    dependency: transitive
+    description:
+      name: expandable
+      sha256: "9604d612d4d1146dafa96c6d8eec9c2ff0994658d6d09fed720ab788c7f5afc2"
+      url: "https://pub.dev"
+    source: hosted
+    version: "5.0.1"
   fake_async:
     dependency: transitive
     description:
@@ -111,10 +127,10 @@ packages:
     dependency: "direct main"
     description:
       name: flutter_rust_bridge
-      sha256: ae0dfd1741ec0b647148c88cef6d010124f3b9a77650b50ab74623e2572ea74b
+      sha256: "7bdcbe0dc20a85f743bfc1a8ee940656d57beeccb0da44b0e2c8271535b61ae5"
       url: "https://pub.dev"
     source: hosted
-    version: "2.0.0-dev.22"
+    version: "2.0.0-dev.24"
   flutter_secure_storage:
     dependency: "direct main"
     description:
@@ -310,6 +326,14 @@ packages:
       relative: true
     source: path
     version: "0.0.1"
+  rxdart:
+    dependency: transitive
+    description:
+      name: rxdart
+      sha256: "0c7c0cedd93788d996e33041ffecda924cc54389199cde4e6a34b440f50044cb"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.27.7"
   shared_preferences:
     dependency: "direct main"
     description:

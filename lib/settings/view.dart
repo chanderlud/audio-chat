@@ -10,7 +10,7 @@ import '../src/rust/api/error.dart';
 class SettingsPage extends StatefulWidget {
   final SettingsController controller;
   final AudioChat audioChat;
-  final CallStateController callStateController;
+  final StateController callStateController;
 
   const SettingsPage(
       {Key? key,
