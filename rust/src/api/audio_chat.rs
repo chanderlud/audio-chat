@@ -1,4 +1,6 @@
+use std::collections::VecDeque;
 use std::mem;
+use std::time::Instant;
 pub use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::sync::atomic::Ordering::Relaxed;
@@ -437,6 +439,9 @@ impl AudioChat {
         let remote_input_config =
             exchange_messages(stream, &message, &mut stream_cipher, caller).await?;
 
+        // expected packet input rate per second
+        let input_rate = remote_input_config.sample_rate as f64 / FRAME_SIZE as f64;
+
         // sends denoised data to the output socket
         let (input_sender, input_receiver) = bounded_async::<[f32; FRAME_SIZE]>(1_000);
         // sends raw data from the socket to the processor
@@ -563,6 +568,7 @@ impl AudioChat {
             Arc::clone(&socket),
             receive_cipher,
             Arc::clone(&self.end_call),
+            input_rate,
         ));
 
         let processor_future = spawn_blocking_with(
@@ -995,20 +1001,47 @@ async fn socket_output<C: StreamCipher + StreamCipherSeek>(
     socket: Arc<UdpSocket>,
     mut cipher: C,
     notify: Arc<Notify>,
+    rate: f64,
 ) -> EndReason {
     let mut in_buffer = [0; TRANSFER_BUFFER_SIZE + 8];
     let mut out_buffer = [0; TRANSFER_BUFFER_SIZE];
+
+    let mut last_packet = Instant::now(); // track the time between packets
+    // let mut packet_times = VecDeque::with_capacity(1_000);
+    let expected_time = 1_f64 / rate;
+    debug!("expected packet time: {:.5}s", expected_time);
 
     let future = async {
         loop {
             match timeout(RECEIVE_TIMEOUT, socket.recv(&mut in_buffer)).await {
                 // normal chunk of audio data
                 Ok(Ok(len)) if len == TRANSFER_BUFFER_SIZE + 8 => {
+                    let elapsed = last_packet.elapsed().as_secs_f64();
+
+                    // if packet_times.len() > 1_000 {
+                    //     packet_times.pop_front();
+                    // }
+
+                    // packet_times.push_back(elapsed);
+                    last_packet = Instant::now();
+
+                    if expected_time - elapsed > expected_time / 3_f64 {
+                        debug!("potential packed burst: {:.5}s", elapsed);
+                    } else if elapsed - expected_time > expected_time / 3_f64 {
+                        debug!("potential packet delay: {:.5}s", elapsed);
+                    }
+
                     // unwrap is safe because we know the buffer is the correct length
                     let sequence_number = u64::from_be_bytes(in_buffer[..8].try_into().unwrap());
                     let position = cipher.current_pos::<u64>();
 
                     if position != sequence_number {
+                        if position > sequence_number {
+                            debug!("[cipher] seeking backward by {}", position - sequence_number);
+                        } else {
+                            debug!("[cipher] seeking forward by {}", sequence_number - position);
+                        }
+
                         cipher.seek(sequence_number);
                     }
 
