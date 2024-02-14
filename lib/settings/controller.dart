@@ -12,13 +12,31 @@ class SettingsController with ChangeNotifier {
 
   SettingsController({required this.storage, required this.options});
 
+  /// public key
   late List<int> verifyingKey;
+
+  /// private key
   late List<int> signingKey;
+
+  /// contacts
   late Map<String, Contact> contacts;
+
+  /// the listen port (TCP)
   late int listenPort;
+
+  /// the receive port (UDP)
   late int receivePort;
+
+  /// the output volume for calls (applies to output device)
   late double outputVolume;
+
+  /// the input volume for calls (applies to input device)
   late double inputVolume;
+
+  /// the output volume for sound effects
+  late double soundVolume;
+
+  /// the input sensitivity for calls
   late double inputSensitivity;
 
   Future<void> init() async {
@@ -53,8 +71,9 @@ class SettingsController with ChangeNotifier {
 
     listenPort = options.getInt('listenPort') ?? 45000;
     receivePort = options.getInt('receivePort') ?? 45001;
-    outputVolume = options.getDouble('outputVolume') ?? 1;
-    inputVolume = options.getDouble('inputVolume') ?? 1;
+    outputVolume = options.getDouble('outputVolume') ?? 0;
+    inputVolume = options.getDouble('inputVolume') ?? 0;
+    soundVolume = options.getDouble('soundVolume') ?? -10;
     inputSensitivity = options.getDouble('inputSensitivity') ?? -50;
 
     notifyListeners();
@@ -120,6 +139,12 @@ class SettingsController with ChangeNotifier {
   Future<void> updateInputVolume(double volume) async {
     inputVolume = volume;
     await options.setDouble('inputVolume', volume);
+    notifyListeners();
+  }
+
+  Future<void> updateSoundVolume(double volume) async {
+    soundVolume = volume;
+    await options.setDouble('soundVolume', volume);
     notifyListeners();
   }
 

@@ -5,7 +5,7 @@ package audio_chat.items;
 message Message {
   oneof message {
     Hello hello = 1;
-    InputConfig input_config = 2;
+    AudioHeader input_config = 2;
   }
 }
 
@@ -13,10 +13,10 @@ message Hello {
   required uint32 port = 1;
 }
 
-message InputConfig {
+message AudioHeader {
   required uint32 channels = 1;
   required uint32 sample_rate = 2;
-  required string sample_format = 4;
+  required string sample_format = 3;
 }
 
 message Identity {

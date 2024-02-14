@@ -30,7 +30,6 @@ use rubato::{
 use sha2::Sha256;
 use std::sync::atomic::{AtomicBool, AtomicU16};
 use std::time::Duration;
-use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::select;
@@ -40,18 +39,19 @@ use uuid::Uuid;
 use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};
 
 use crate::api::error::{DartError, Error, ErrorKind};
-use crate::api::items::{Hello, Identity, InputConfig};
+use crate::api::items::{AudioHeader, Hello, Identity};
 use crate::api::logger;
 use crate::frb_generated::{StreamSink, FLUTTER_RUST_BRIDGE_HANDLER};
 
 type Result<T> = std::result::Result<T, Error>;
+pub(crate) type DeviceName = Arc<Mutex<Option<String>>>;
 type TransferBuffer = [u8; TRANSFER_BUFFER_SIZE];
 type AesCipher = StreamCipherCoreWrapper<CtrCore<Aes256, ctr::flavors::Ctr128BE>>;
 
 /// The number of bytes in a single UDP packet
 const TRANSFER_BUFFER_SIZE: usize = FRAME_SIZE * 2;
 /// The number of f32 samples in a single packet
-const FLOAT_CHUNK_SIZE: usize = TRANSFER_BUFFER_SIZE / mem::size_of::<f32>();
+const CHUNK_SIZE: usize = TRANSFER_BUFFER_SIZE / mem::size_of::<f32>();
 const FLOAT_SILENCE: [f32; FRAME_SIZE] = [0_f32; FRAME_SIZE];
 const BYTE_SILENCE: TransferBuffer = [0; TRANSFER_BUFFER_SIZE];
 const RESAMPLER_PARAMETERS: SincInterpolationParameters = SincInterpolationParameters {
@@ -61,7 +61,8 @@ const RESAMPLER_PARAMETERS: SincInterpolationParameters = SincInterpolationParam
     oversampling_factor: 256,
     window: WindowFunction::BlackmanHarris2,
 };
-const TIMEOUT: Duration = Duration::from_secs(1);
+const RECEIVE_TIMEOUT: Duration = Duration::from_secs(1);
+const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 const SALT: [u8; 32] = hex!("04acee810b938239a6d2a09c109af6e3eaedc961fc66b9b6935a441c2690e336");
 
 #[frb(opaque)]
@@ -92,16 +93,22 @@ pub struct AudioChat {
     stop_listener: Arc<Notify>,
 
     /// Manually set the input device
-    input_device: Arc<Mutex<Option<String>>>,
+    input_device: DeviceName,
 
     /// Manually set the output device
-    output_device: Arc<Mutex<Option<String>>>,
+    output_device: DeviceName,
 
+    /// Private key for signing the handshake
     secret_key: SecretKey,
 
+    /// Keeps track of whether the user is in a call
     in_call: Arc<AtomicBool>,
 
+    /// Disables the output stream
     deafened: Arc<AtomicBool>,
+
+    /// Disables the input stream
+    muted: Arc<AtomicBool>,
 
     /// Prompts the user to accept or reject the call
     accept_call: Arc<Mutex<dyn Fn(Contact) -> DartFnFuture<bool> + Send>>,
@@ -111,6 +118,9 @@ pub struct AudioChat {
 
     /// Fetches a contact from the front end
     get_contact: Arc<Mutex<dyn Fn(String) -> DartFnFuture<Option<Contact>> + Send>>,
+
+    /// Alerts the UI that the call has connected
+    connected: Arc<Mutex<dyn Fn() -> DartFnFuture<()> + Send>>,
 }
 
 impl AudioChat {
@@ -125,6 +135,7 @@ impl AudioChat {
         accept_call: impl Fn(Contact) -> DartFnFuture<bool> + Send + 'static,
         call_ended: impl Fn(String) -> DartFnFuture<()> + Send + 'static,
         get_contact: impl Fn(String) -> DartFnFuture<Option<Contact>> + Send + 'static,
+        connected: impl Fn() -> DartFnFuture<()> + Send + 'static,
     ) -> AudioChat {
         let chat = Self {
             listen_port: Arc::new(AtomicU16::new(listen_port)),
@@ -142,9 +153,11 @@ impl AudioChat {
             ),
             in_call: Default::default(),
             deafened: Default::default(),
+            muted: Default::default(),
             accept_call: Arc::new(Mutex::new(accept_call)),
             call_ended: Arc::new(Mutex::new(call_ended)),
             get_contact: Arc::new(Mutex::new(get_contact)),
+            connected: Arc::new(Mutex::new(connected)),
         };
 
         let chat_clone = chat.clone();
@@ -186,21 +199,6 @@ impl AudioChat {
         Ok(())
     }
 
-    /// Public play sound function
-    pub async fn play_sound(&self, name: String) -> SoundHandle {
-        let cancel = Arc::new(Notify::new());
-        let chat_clone = self.clone();
-        let cancel_clone = cancel.clone();
-
-        spawn(async move {
-            if let Err(error) = chat_clone._play_sound(name, cancel_clone).await {
-                error!("Play sound failed: {:?}", error);
-            }
-        });
-
-        SoundHandle { cancel }
-    }
-
     #[frb(sync)]
     pub fn set_listen_port(&self, port: u16) {
         self.listen_port.store(port, Relaxed);
@@ -234,6 +232,11 @@ impl AudioChat {
         self.deafened.store(deafened, Relaxed);
     }
 
+    #[frb(sync)]
+    pub fn set_muted(&self, muted: bool) {
+        self.muted.store(muted, Relaxed);
+    }
+
     /// Lists the input and output devices
     #[frb(sync)]
     pub fn list_devices(&self) -> std::result::Result<(Vec<String>, Vec<String>), DartError> {
@@ -251,96 +254,10 @@ impl AudioChat {
         Ok((input_devices, output_devices))
     }
 
-    /// Internal play sound function
-    async fn _play_sound(&self, name: String, cancel: Arc<Notify>) -> Result<()> {
-        debug!("Playing sound: {}", name);
-
-        let output_device = self.get_output_device().await?;
-        let output_config = output_device.default_output_config()?;
-
-        let ratio = output_config.sample_rate().0 as f64 / 44_100_f64;
-
-        let (processed_sender, processed_receiver) = bounded_async::<f32>(1_000);
-        let (input_sender, input_receiver) = bounded_async::<TransferBuffer>(1_000);
-
-        let output_volume = Arc::clone(&self.output_volume);
-
-        std::thread::spawn(move || processor(
-            input_receiver.to_sync(),
-            processed_sender.to_sync(),
-            ratio,
-            output_volume,
-        ));
-
-        let mut file = File::open(name).await?;
-        let mut buffer = [0; TRANSFER_BUFFER_SIZE];
-
-        let output_channels = output_config.channels() as usize;
-        let sync_receiver = processed_receiver.to_sync();
-
-        let output_stream = SendStream {
-            stream: output_device.build_output_stream(
-                &output_config.into(),
-                move |output: &mut [f32], _: &_| {
-                    for frame in output.chunks_mut(output_channels) {
-                        // get the next sample from the input
-                        let sample = sync_receiver.recv().unwrap_or_else(|_| 0_f32);
-
-                        // write the sample to all the channels
-                        for channel in frame.iter_mut() {
-                            *channel = sample;
-                        }
-                    }
-                },
-                move |err| {
-                    error!("Error in output stream: {}", err);
-                },
-                None,
-            )?,
-        };
-
-        output_stream.stream.play()?;
-
-        let future = async {
-            loop {
-                let read = file.read(&mut buffer).await?;
-
-                if read == 0 {
-                    break;
-                }
-
-                input_sender.send(buffer).await?;
-            }
-
-            Ok(())
-        };
-
-        select! {
-            result = future => result,
-            _ = cancel.notified() => {
-                let volume = self.output_volume.load(Relaxed);
-
-                for i in 0..100 {
-                    let read = file.read(&mut buffer).await?;
-
-                    if read == 0 {
-                        break;
-                    }
-
-                    self.output_volume.fetch_sub(0.01 * i as f32, Relaxed);
-                }
-
-                debug!("Sound cancelled {}", self.output_volume.load(Relaxed));
-                self.output_volume.store(volume, Relaxed);
-                Ok(())
-            },
-        }
-    }
-
     /// Initiate a call with the contact
     async fn _say_hello(&self, contact: &Contact) -> Result<bool> {
         let mut buf = [255; 1];
-        let mut stream = TcpStream::connect(contact.address).await?;
+        let mut stream = timeout(HELLO_TIMEOUT, TcpStream::connect(contact.address)).await??;
         // this signal lets the callee know that the caller wants to start a handshake
         stream.write(&buf).await?;
         // this signal lets the caller know that the callee wants to start a handshake
@@ -466,6 +383,8 @@ impl AudioChat {
             // the caller always has the ciphers reversed
             mem::swap(&mut send_cipher, &mut receive_cipher);
         }
+        
+        (self.connected.lock().await)().await;
 
         let result = self
             .call(
@@ -504,7 +423,7 @@ impl AudioChat {
         caller: bool,
     ) -> Result<()> {
         // get the output device and its default configuration
-        let output_device = self.get_output_device().await?;
+        let output_device = get_output_device(&self.output_device, &self.host).await?;
         let output_config = output_device.default_output_config()?;
         debug!("output_device: {:?}", output_device.name());
 
@@ -514,7 +433,7 @@ impl AudioChat {
         debug!("input_device: {:?}", input_device.name());
 
         // exchange input configurations
-        let message = InputConfig::from(&input_config);
+        let message = AudioHeader::from(&input_config);
         let remote_input_config =
             exchange_messages(stream, &message, &mut stream_cipher, caller).await?;
 
@@ -556,11 +475,19 @@ impl AudioChat {
         let mut out_buf = [0_f32; FRAME_SIZE];
         // short silences are ignored to prevent popping
         let mut silence_length = 0;
+        // get a reference to the muted flag
+        let muted = Arc::clone(&self.muted);
 
         let input_stream = SendStream {
             stream: input_device.build_input_stream(
                 &input_config.into(),
                 move |input, _: &_| {
+                    if muted.load(Relaxed) {
+                        // don't want to leave old samples to be played when unmuted
+                        remaining_samples.clear();
+                        return;
+                    }
+
                     // add the samples for the first channel for this frame to the remaining samples
                     for frame in input.chunks(input_channels) {
                         remaining_samples.push(frame[0]);
@@ -663,28 +590,7 @@ impl AudioChat {
         debug!("Sending end call signal");
         socket.send(&[1]).await?;
 
-        // TODO play call ended sound
         Ok(())
-    }
-
-    async fn get_output_device(&self) -> Result<Device> {
-        match *self.output_device.lock().await {
-            Some(ref name) => self
-                .host
-                .output_devices()?
-                .find(|device| {
-                    if let Ok(ref device_name) = device.name() {
-                        name == device_name
-                    } else {
-                        false
-                    }
-                })
-                .ok_or(Error::no_output_device()),
-            None => self
-                .host
-                .default_output_device()
-                .ok_or(Error::no_output_device()),
-        }
     }
 
     async fn get_input_device(&self) -> Result<Device> {
@@ -709,8 +615,8 @@ impl AudioChat {
 }
 
 /// Wraps a cpal stream to unsafely make it send
-struct SendStream {
-    stream: Stream,
+pub(crate) struct SendStream {
+    pub(crate) stream: Stream,
 }
 
 unsafe impl Send for SendStream {}
@@ -788,7 +694,6 @@ impl Contact {
 
     #[frb(sync)]
     pub fn parse(s: String) -> std::result::Result<Contact, DartError> {
-        println!("Parsing: {}", s);
         Self::from_str(&s)
     }
 
@@ -854,19 +759,6 @@ impl Contact {
         self.clone()
     }
 }
-
-#[frb(opaque)]
-pub struct SoundHandle {
-    cancel: Arc<Notify>,
-}
-
-impl SoundHandle {
-    #[frb(sync)]
-    pub fn cancel(&self) {
-        self.cancel.notify_waiters();
-    }
-}
-
 
 // struct SlidingWindow {
 //     window: VecDeque<f32>,
@@ -939,6 +831,8 @@ impl SoundHandle {
 //         }
 //     }
 // }
+
+// pub fn test() {}
 
 #[frb(sync)]
 pub fn create_log_stream(s: StreamSink<String>) {
@@ -1059,7 +953,10 @@ async fn socket_input<C: StreamCipher>(
 
     let future = async {
         while let Ok(frame) = input_receiver.recv().await {
-            frame.iter().enumerate().for_each(|(i, &x)| int_buffer[i] = (x * i16::MAX as f32) as i16);
+            frame
+                .iter()
+                .enumerate()
+                .for_each(|(i, &x)| int_buffer[i] = (x * i16::MAX as f32) as i16);
 
             let bytes = unsafe {
                 std::slice::from_raw_parts(
@@ -1104,7 +1001,7 @@ async fn socket_output<C: StreamCipher + StreamCipherSeek>(
 
     let future = async {
         loop {
-            match timeout(TIMEOUT, socket.recv(&mut in_buffer)).await {
+            match timeout(RECEIVE_TIMEOUT, socket.recv(&mut in_buffer)).await {
                 // normal chunk of audio data
                 Ok(Ok(len)) if len == TRANSFER_BUFFER_SIZE + 8 => {
                     // unwrap is safe because we know the buffer is the correct length
@@ -1116,7 +1013,9 @@ async fn socket_output<C: StreamCipher + StreamCipherSeek>(
                     }
 
                     // unwrap is safe because we know the buffer is the correct length
-                    cipher.apply_keystream_b2b(&in_buffer[8..], &mut out_buffer).unwrap();
+                    cipher
+                        .apply_keystream_b2b(&in_buffer[8..], &mut out_buffer)
+                        .unwrap();
                     _ = output_sender.try_send(out_buffer);
                 }
                 // control signals
@@ -1150,29 +1049,15 @@ fn processor(
     ratio: f64,
     output_volume: Arc<AtomicF32>,
 ) -> Result<()> {
-    let mut resampler = if ratio == 1_f64 {
-        debug!("No resampling needed");
-        None
-    } else {
-        debug!("Resampling at {:.2}%", ratio * 100_f64);
-
-        // create the resampler if needed
-        Some(SincFixedIn::<f32>::new(
-            ratio,
-            2.0,
-            RESAMPLER_PARAMETERS,
-            FLOAT_CHUNK_SIZE,
-            1,
-        )?)
-    };
+    let mut resampler = resampler_factory(ratio, 1)?;
 
     // rubato requires 10 extra bytes in the output buffer as a safety margin
-    let post_len = (FLOAT_CHUNK_SIZE as f64 * ratio + 10.0) as usize;
+    let post_len = (CHUNK_SIZE as f64 * ratio + 10.0) as usize;
 
     // the output for the resampler
     let mut post_buf = [vec![0_f32; post_len]];
     // the input for the resampler
-    let mut pre_buf = [&mut [0_f32; FLOAT_CHUNK_SIZE]];
+    let mut pre_buf = [&mut [0_f32; CHUNK_SIZE]];
 
     while let Ok(bytes) = receiver.recv() {
         // convert the bytes to floats
@@ -1183,8 +1068,11 @@ fn processor(
             )
         };
 
-        for chunk in ints.chunks(FLOAT_CHUNK_SIZE) {
-            chunk.iter().enumerate().for_each(|(i, &x)| pre_buf[0][i] = x as f32 / i16::MAX as f32);
+        for chunk in ints.chunks(CHUNK_SIZE) {
+            chunk
+                .iter()
+                .enumerate()
+                .for_each(|(i, &x)| pre_buf[0][i] = x as f32 / i16::MAX as f32);
 
             let factor = output_volume.load(Relaxed);
 
@@ -1247,11 +1135,50 @@ fn calculate_rms(data: &[f32]) -> f32 {
 }
 
 /// Multiplies each element in the slice by the factor
-fn mul(vec: &mut [f32], factor: f32) {
+pub(crate) fn mul(vec: &mut [f32], factor: f32) {
     vec.par_iter_mut().for_each(|p| *p *= factor);
 }
 
 /// Converts a decibel value to a multiplier
-fn db_to_multiplier(db: f32) -> f32 {
+pub(crate) fn db_to_multiplier(db: f32) -> f32 {
     10_f32.powf(db / 20.0)
+}
+
+pub(crate) fn resampler_factory(ratio: f64, channels: usize) -> Result<Option<SincFixedIn<f32>>> {
+    if ratio == 1_f64 {
+        debug!("No resampling needed");
+        Ok(None)
+    } else {
+        debug!("Resampling at {:.2}%", ratio * 100_f64);
+
+        // create the resampler if needed
+        Ok(Some(SincFixedIn::<f32>::new(
+            ratio,
+            2.0,
+            RESAMPLER_PARAMETERS,
+            CHUNK_SIZE,
+            channels,
+        )?))
+    }
+}
+
+pub(crate) async fn get_output_device(
+    output_device: &DeviceName,
+    host: &Arc<Host>,
+) -> Result<Device> {
+    match *output_device.lock().await {
+        Some(ref name) => host
+            .output_devices()?
+            .find(|device| {
+                if let Ok(ref device_name) = device.name() {
+                    name == device_name
+                } else {
+                    false
+                }
+            })
+            .ok_or(Error::no_output_device()),
+        None => host
+            .default_output_device()
+            .ok_or(Error::no_output_device()),
+    }
 }

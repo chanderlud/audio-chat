@@ -5,6 +5,7 @@ use rubato::{ResampleError, ResamplerConstructionError};
 use std::fmt::{Display, Formatter};
 use std::net::AddrParseError;
 use tokio::task::JoinError;
+use tokio::time::error::Elapsed;
 
 /// generic error type for audio chat
 #[derive(Debug)]
@@ -28,6 +29,7 @@ pub(crate) enum ErrorKind {
     AddrParse(AddrParseError),
     Base64(DecodeError),
     Ed25519(ed25519_dalek::ed25519::Error),
+    Timeout(Elapsed),
     NoOutputDevice,
     NoInputDevice,
     InvalidContactFormat,
@@ -146,6 +148,15 @@ impl From<ed25519_dalek::ed25519::Error> for Error {
     }
 }
 
+impl From<Elapsed> for Error {
+    fn from(err: Elapsed) -> Self {
+        Self {
+            kind: ErrorKind::Timeout(err
+            ),
+        }
+    }
+}
+
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -166,6 +177,7 @@ impl Display for Error {
                 ErrorKind::Join(ref err) => format!("Join error: {}", err),
                 ErrorKind::Base64(ref err) => format!("Base64 error: {}", err),
                 ErrorKind::Ed25519(ref err) => format!("Ed25519 error: {}", err),
+                ErrorKind::Timeout(_) => "The connection timed out".to_string(),
                 ErrorKind::AddrParse(ref err) => err.to_string(),
                 ErrorKind::NoOutputDevice => "No output device found".to_string(),
                 ErrorKind::NoInputDevice => "No input device found".to_string(),

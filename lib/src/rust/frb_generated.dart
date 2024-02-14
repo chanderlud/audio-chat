@@ -6,6 +6,7 @@
 import 'api/audio_chat.dart';
 import 'api/error.dart';
 import 'api/logger.dart';
+import 'api/player.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'frb_generated.io.dart' if (dart.library.html) 'frb_generated.web.dart';
@@ -79,10 +80,8 @@ abstract class RustLibApi extends BaseApi {
       required FutureOr<bool> Function(Contact) acceptCall,
       required FutureOr<void> Function(String) callEnded,
       required FutureOr<Contact?> Function(String) getContact,
+      required FutureOr<void> Function() connected,
       dynamic hint});
-
-  Future<SoundHandle> audioChatPlaySound(
-      {required AudioChat that, required String name, dynamic hint});
 
   Future<void> audioChatRestartListener(
       {required AudioChat that, dynamic hint});
@@ -98,6 +97,9 @@ abstract class RustLibApi extends BaseApi {
 
   void audioChatSetListenPort(
       {required AudioChat that, required int port, dynamic hint});
+
+  void audioChatSetMuted(
+      {required AudioChat that, required bool muted, dynamic hint});
 
   void audioChatSetOutputVolume(
       {required AudioChat that, required double decibel, dynamic hint});
@@ -141,8 +143,6 @@ abstract class RustLibApi extends BaseApi {
 
   String contactVerifyingKeyStr({required Contact that, dynamic hint});
 
-  void soundHandleCancel({required SoundHandle that, dynamic hint});
-
   Stream<String> createLogStream({dynamic hint});
 
   U8Array64 generateKeys({dynamic hint});
@@ -152,6 +152,16 @@ abstract class RustLibApi extends BaseApi {
   Stream<String> sendToDartLoggerSetStreamSink({dynamic hint});
 
   Future<void> initLogger({dynamic hint});
+
+  void soundHandleCancel({required SoundHandle that, dynamic hint});
+
+  SoundPlayer soundPlayerNew({required double outputVolume, dynamic hint});
+
+  Future<SoundHandle> soundPlayerPlay(
+      {required SoundPlayer that, required List<int> bytes, dynamic hint});
+
+  void soundPlayerUpdateOutputVolume(
+      {required SoundPlayer that, required double volume, dynamic hint});
 
   RustArcIncrementStrongCountFnType
       get rust_arc_increment_strong_count_AudioChat;
@@ -174,6 +184,14 @@ abstract class RustLibApi extends BaseApi {
       get rust_arc_decrement_strong_count_SoundHandle;
 
   CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_SoundHandlePtr;
+
+  RustArcIncrementStrongCountFnType
+      get rust_arc_increment_strong_count_SoundPlayer;
+
+  RustArcDecrementStrongCountFnType
+      get rust_arc_decrement_strong_count_SoundPlayer;
+
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_SoundPlayerPtr;
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -247,6 +265,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       required FutureOr<bool> Function(Contact) acceptCall,
       required FutureOr<void> Function(String) callEnded,
       required FutureOr<Contact?> Function(String) getContact,
+      required FutureOr<void> Function() connected,
       dynamic hint}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
@@ -262,6 +281,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_DartFn_Inputs_String_Output_unit(callEnded, serializer);
         sse_encode_DartFn_Inputs_String_Output_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
             getContact, serializer);
+        sse_encode_DartFn_Inputs__Output_unit(connected, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
             funcId: 4, port: port_);
       },
@@ -280,7 +300,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         outputVolume,
         acceptCall,
         callEnded,
-        getContact
+        getContact,
+        connected
       ],
       apiImpl: this,
       hint: hint,
@@ -298,37 +319,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "outputVolume",
           "acceptCall",
           "callEnded",
-          "getContact"
+          "getContact",
+          "connected"
         ],
-      );
-
-  @override
-  Future<SoundHandle> audioChatPlaySound(
-      {required AudioChat that, required String name, dynamic hint}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
-            that, serializer);
-        sse_encode_String(name, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 8, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData:
-            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundHandle,
-        decodeErrorData: null,
-      ),
-      constMeta: kAudioChatPlaySoundConstMeta,
-      argValues: [that, name],
-      apiImpl: this,
-      hint: hint,
-    ));
-  }
-
-  TaskConstMeta get kAudioChatPlaySoundConstMeta => const TaskConstMeta(
-        debugName: "AudioChat_play_sound",
-        argNames: ["that", "name"],
       );
 
   @override
@@ -396,7 +389,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
             that, serializer);
         sse_encode_bool(deafened, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -423,7 +416,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
             that, serializer);
         sse_encode_f_32(decibel, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -450,7 +443,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
             that, serializer);
         sse_encode_u_16(port, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -469,6 +462,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  void audioChatSetMuted(
+      {required AudioChat that, required bool muted, dynamic hint}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
+            that, serializer);
+        sse_encode_bool(muted, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: null,
+      ),
+      constMeta: kAudioChatSetMutedConstMeta,
+      argValues: [that, muted],
+      apiImpl: this,
+      hint: hint,
+    ));
+  }
+
+  TaskConstMeta get kAudioChatSetMutedConstMeta => const TaskConstMeta(
+        debugName: "AudioChat_set_muted",
+        argNames: ["that", "muted"],
+      );
+
+  @override
   void audioChatSetOutputVolume(
       {required AudioChat that, required double decibel, dynamic hint}) {
     return handler.executeSync(SyncTask(
@@ -477,7 +497,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
             that, serializer);
         sse_encode_f_32(decibel, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -504,7 +524,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
             that, serializer);
         sse_encode_u_16(port, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -531,7 +551,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
             that, serializer);
         sse_encode_f_32(decimal, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -889,31 +909,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void soundHandleCancel({required SoundHandle that, dynamic hint}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundHandle(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 29)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
-      ),
-      constMeta: kSoundHandleCancelConstMeta,
-      argValues: [that],
-      apiImpl: this,
-      hint: hint,
-    ));
-  }
-
-  TaskConstMeta get kSoundHandleCancelConstMeta => const TaskConstMeta(
-        debugName: "SoundHandle_cancel",
-        argNames: ["that"],
-      );
-
-  @override
   Stream<String> createLogStream({dynamic hint}) {
     return handler.executeStream(StreamTask(
       callFfi: (port_) {
@@ -989,7 +984,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 31, port: port_);
+            funcId: 30, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_String,
@@ -1014,7 +1009,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 30, port: port_);
+            funcId: 29, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1030,6 +1025,113 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kInitLoggerConstMeta => const TaskConstMeta(
         debugName: "init_logger",
         argNames: [],
+      );
+
+  @override
+  void soundHandleCancel({required SoundHandle that, dynamic hint}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundHandle(
+            that, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 34)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: null,
+      ),
+      constMeta: kSoundHandleCancelConstMeta,
+      argValues: [that],
+      apiImpl: this,
+      hint: hint,
+    ));
+  }
+
+  TaskConstMeta get kSoundHandleCancelConstMeta => const TaskConstMeta(
+        debugName: "SoundHandle_cancel",
+        argNames: ["that"],
+      );
+
+  @override
+  SoundPlayer soundPlayerNew({required double outputVolume, dynamic hint}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_f_32(outputVolume, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 31)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundPlayer,
+        decodeErrorData: null,
+      ),
+      constMeta: kSoundPlayerNewConstMeta,
+      argValues: [outputVolume],
+      apiImpl: this,
+      hint: hint,
+    ));
+  }
+
+  TaskConstMeta get kSoundPlayerNewConstMeta => const TaskConstMeta(
+        debugName: "SoundPlayer_new",
+        argNames: ["outputVolume"],
+      );
+
+  @override
+  Future<SoundHandle> soundPlayerPlay(
+      {required SoundPlayer that, required List<int> bytes, dynamic hint}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundPlayer(
+            that, serializer);
+        sse_encode_list_prim_u_8_loose(bytes, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 32, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundHandle,
+        decodeErrorData: null,
+      ),
+      constMeta: kSoundPlayerPlayConstMeta,
+      argValues: [that, bytes],
+      apiImpl: this,
+      hint: hint,
+    ));
+  }
+
+  TaskConstMeta get kSoundPlayerPlayConstMeta => const TaskConstMeta(
+        debugName: "SoundPlayer_play",
+        argNames: ["that", "bytes"],
+      );
+
+  @override
+  void soundPlayerUpdateOutputVolume(
+      {required SoundPlayer that, required double volume, dynamic hint}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundPlayer(
+            that, serializer);
+        sse_encode_f_32(volume, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: null,
+      ),
+      constMeta: kSoundPlayerUpdateOutputVolumeConstMeta,
+      argValues: [that, volume],
+      apiImpl: this,
+      hint: hint,
+    ));
+  }
+
+  TaskConstMeta get kSoundPlayerUpdateOutputVolumeConstMeta =>
+      const TaskConstMeta(
+        debugName: "SoundPlayer_update_output_volume",
+        argNames: ["that", "volume"],
       );
 
   Future<void> Function(int, dynamic)
@@ -1094,6 +1196,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     };
   }
 
+  Future<void> Function(
+    int,
+  ) encode_DartFn_Inputs__Output_unit(FutureOr<void> Function() raw) {
+    return (
+      callId,
+    ) async {
+      final rawOutput = await raw();
+
+      final serializer = SseSerializer(generalizedFrbRustBinding);
+      sse_encode_unit(rawOutput, serializer);
+      final output = serializer.intoRaw();
+
+      generalizedFrbRustBinding.dartFnDeliverOutput(
+          callId: callId,
+          ptr: output.ptr,
+          rustVecLen: output.rustVecLen,
+          dataLen: output.dataLen);
+    };
+  }
+
   RustArcIncrementStrongCountFnType
       get rust_arc_increment_strong_count_AudioChat => wire
           .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat;
@@ -1118,6 +1240,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       get rust_arc_decrement_strong_count_SoundHandle => wire
           .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundHandle;
 
+  RustArcIncrementStrongCountFnType
+      get rust_arc_increment_strong_count_SoundPlayer => wire
+          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundPlayer;
+
+  RustArcDecrementStrongCountFnType
+      get rust_arc_decrement_strong_count_SoundPlayer => wire
+          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundPlayer;
+
   @protected
   AudioChat
       dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
@@ -1140,6 +1270,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return SoundHandle.dcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  SoundPlayer
+      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundPlayer(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return SoundPlayer.dcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -1175,6 +1313,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SoundPlayer
+      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundPlayer(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return SoundPlayer.dcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
   FutureOr<bool> Function(Contact)
       dco_decode_DartFn_Inputs_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact_Output_bool(
           dynamic raw) {
@@ -1193,6 +1339,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   FutureOr<void> Function(String) dco_decode_DartFn_Inputs_String_Output_unit(
       dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    throw UnimplementedError('');
+  }
+
+  @protected
+  FutureOr<void> Function() dco_decode_DartFn_Inputs__Output_unit(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     throw UnimplementedError('');
   }
@@ -1225,6 +1377,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return SoundHandle.dcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  SoundPlayer
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundPlayer(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return SoundPlayer.dcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -1365,6 +1525,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SoundPlayer
+      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundPlayer(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return SoundPlayer.sseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
   Contact
       sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
           SseDeserializer deserializer) {
@@ -1401,6 +1570,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SoundPlayer
+      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundPlayer(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return SoundPlayer.sseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
   Object sse_decode_DartOpaque(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_usize(deserializer);
@@ -1431,6 +1609,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return SoundHandle.sseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
+  SoundPlayer
+      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundPlayer(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return SoundPlayer.sseDecode(
         sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
   }
 
@@ -1580,6 +1767,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundPlayer(
+          SoundPlayer self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(self.sseEncode(move: true), serializer);
+  }
+
+  @protected
+  void
       sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
           Contact self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -1606,6 +1801,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void
       sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundHandle(
           SoundHandle self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(self.sseEncode(move: false), serializer);
+  }
+
+  @protected
+  void
+      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundPlayer(
+          SoundPlayer self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(self.sseEncode(move: false), serializer);
   }
@@ -1641,6 +1844,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_DartFn_Inputs__Output_unit(
+      FutureOr<void> Function() self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_DartOpaque(encode_DartFn_Inputs__Output_unit(self), serializer);
+  }
+
+  @protected
   void sse_encode_DartOpaque(Object self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
@@ -1669,6 +1879,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundHandle(
           SoundHandle self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(self.sseEncode(move: null), serializer);
+  }
+
+  @protected
+  void
+      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundPlayer(
+          SoundPlayer self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(self.sseEncode(move: null), serializer);
   }

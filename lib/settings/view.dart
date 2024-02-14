@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:audio_chat/settings/controller.dart';
+import 'package:audio_chat/src/rust/api/player.dart';
 import 'package:flutter/material.dart';
 
 import '../main.dart';
@@ -11,12 +12,14 @@ class SettingsPage extends StatefulWidget {
   final SettingsController controller;
   final AudioChat audioChat;
   final StateController callStateController;
+  final SoundPlayer player;
 
   const SettingsPage(
       {Key? key,
       required this.controller,
       required this.audioChat,
-      required this.callStateController})
+      required this.callStateController,
+      required this.player})
       : super(key: key);
 
   @override
@@ -174,6 +177,20 @@ class SettingsPageState extends State<SettingsPage> {
                     setState(() {
                       _unsavedChanges = true;
                     });
+                  }),
+              ListenableBuilder(
+                  listenable: widget.controller,
+                  builder: (BuildContext context, Widget? child) {
+                    return Slider(
+                        value: widget.controller.soundVolume,
+                        onChanged: (value) {
+                          widget.controller.updateSoundVolume(value);
+                          widget.player.updateOutputVolume(volume: value);
+                        },
+                        min: -20,
+                        max: 20,
+                        label:
+                            '${widget.controller.soundVolume.toStringAsFixed(2)} db');
                   }),
               const Spacer(),
               Button(
