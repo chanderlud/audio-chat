@@ -112,7 +112,10 @@ async fn play_sound(
     let (processed_sender, processed_receiver) = bounded_async::<f32>(10_000);
 
     let output_channels = output_config.channels() as usize;
-    debug!("Output channels: {} | Input channels: {}", output_channels, spec.channels);
+    debug!(
+        "Output channels: {} | Input channels: {}",
+        output_channels, spec.channels
+    );
     let sync_receiver = processed_receiver.to_sync();
 
     let output_stream = SendStream {
@@ -162,7 +165,7 @@ async fn play_sound(
 
                 for i in 0..processed.1 {
                     for j in 0..spec.channels as usize {
-                         processed_sender.send(post_buf[j][i]).await?;
+                        processed_sender.send(post_buf[j][i]).await?;
                     }
                 }
             } else {

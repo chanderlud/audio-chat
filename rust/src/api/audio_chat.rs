@@ -1,10 +1,10 @@
 use std::collections::VecDeque;
 use std::mem;
-use std::time::Instant;
 pub use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
+use std::time::Instant;
 
 use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherCoreWrapper, StreamCipherSeek};
 use aes::Aes256;
@@ -385,7 +385,7 @@ impl AudioChat {
             // the caller always has the ciphers reversed
             mem::swap(&mut send_cipher, &mut receive_cipher);
         }
-        
+
         (self.connected.lock().await)().await;
 
         let result = self
@@ -519,7 +519,7 @@ impl AudioChat {
         // get the output channels for chunking the output
         let output_channels = output_config.channels() as usize;
         let deafened = Arc::clone(&self.deafened);
-        // let mut sample_generator = SlidingWindow::new(FRAME_SIZE, 10);
+        let mut sample_generator = SlidingWindow::new(FRAME_SIZE * 2);
 
         let output_stream = SendStream {
             stream: output_device.build_output_stream(
@@ -533,10 +533,11 @@ impl AudioChat {
                     for frame in output.chunks_mut(output_channels) {
                         // get the next sample from the processor
                         let sample = match processed_receiver.try_recv() {
-                            Ok(Some(sample)) => sample,
+                            // if the processor has a sample, process it through the sliding window
+                            Ok(Some(sample)) => sample_generator.process_sample(sample),
                             // if the processor is empty, generate a sample
-                            // Ok(None) | Err(_) => sample_generator.generate_sample(),
-                            Ok(None) | Err(_) => 0_f32,
+                            Ok(None) | Err(_) => sample_generator.generate_sample(),
+                            // Ok(None) | Err(_) => 0_f32,
                         };
 
                         // write the sample to all the channels
@@ -766,79 +767,67 @@ impl Contact {
     }
 }
 
-// struct SlidingWindow {
-//     window: VecDeque<f32>,
-//     capacity: usize,
-//     generated_count: usize,
-//     crossfade_samples: usize,
-//     crossfade_progress: usize, // Tracks progress of crossfade over multiple frames
-// }
-//
-// impl SlidingWindow {
-//     pub fn new(capacity: usize, crossfade_samples: usize) -> Self {
-//         Self {
-//             window: VecDeque::with_capacity(capacity),
-//             capacity,
-//             generated_count: 0,
-//             crossfade_samples,
-//             crossfade_progress: 0,
-//         }
-//     }
-//
-//     pub fn process_sample(&mut self, sample: f32) -> f32 {
-//         if self.crossfade_progress > 0 {
-//             self.crossfade(sample)
-//         } else {
-//             self._add_sample(sample);
-//             sample
-//         }
-//     }
-//
-//     pub fn generate_sample(&mut self) -> f32 {
-//         if self.window.is_empty() {
-//             return 0.0;
-//         }
-//
-//         let generated_sample = self.interpolate_sample();
-//         self._add_sample(generated_sample);
-//         self.generated_count += 1;
-//         if self.generated_count == 1 { // Start crossfade on first generated sample after real samples
-//             self.crossfade_progress = self.crossfade_samples;
-//         }
-//         generated_sample
-//     }
-//
-//     fn _add_sample(&mut self, sample: f32) {
-//         if self.window.len() == self.capacity {
-//             self.window.pop_front();
-//         }
-//         self.window.push_back(sample);
-//     }
-//
-//     fn interpolate_sample(&self) -> f32 {
-//         // Implement interpolation logic here
-//         let sum: f32 = self.window.iter().sum();
-//         let avg = sum / self.window.len() as f32;
-//         avg
-//     }
-//
-//     fn crossfade(&mut self, real_sample: f32) -> f32 {
-//         if self.crossfade_progress > 0 {
-//             let fade_in_ratio = 1.0 - (self.crossfade_progress as f32 / self.crossfade_samples as f32);
-//             let fade_out_ratio = self.crossfade_progress as f32 / self.crossfade_samples as f32;
-//             let generated_sample = *self.window.back().unwrap_or(&0.0); // Last generated sample
-//             let crossfaded_sample = generated_sample * fade_out_ratio + real_sample * fade_in_ratio;
-//             self._add_sample(crossfaded_sample);
-//             self.crossfade_progress -= 1;
-//             crossfaded_sample
-//         } else {
-//             self._add_sample(real_sample);
-//             real_sample
-//         }
-//     }
-// }
+struct SlidingWindow {
+    window: VecDeque<f32>,
+    capacity: usize,
+    generated_count: usize,
+}
 
-// pub fn test() {}
+impl SlidingWindow {
+    fn new(capacity: usize) -> Self {
+        Self {
+            window: VecDeque::with_capacity(capacity),
+            capacity,
+            generated_count: 0,
+        }
+    }
+
+    /// Processes a real sample
+    fn process_sample(&mut self, mut sample: f32) -> f32 {
+        if self.generated_count > 0 {
+            self.generated_count -= 1;
+
+            if let Some(last) = self.window.back() {
+                let difference = sample - last;
+                sample = *last + difference * (self.generated_count as f32 / self.capacity as f32);
+            }
+        }
+
+        self._add_sample(sample);
+        sample
+    }
+
+    /// Generates a sample
+    fn generate_sample(&mut self) -> f32 {
+        if self.window.is_empty() {
+            return 0_f32;
+        }
+
+        let mut sample = self.interpolate_sample();
+        sample -= sample * (self.generated_count as f32 / self.capacity as f32);
+
+        self._add_sample(sample);
+        self.generated_count += 1;
+
+        sample
+    }
+
+    // TODO a more sophisticated interpolation method
+    fn interpolate_sample(&self) -> f32 {
+        let sum: f32 = self.window.iter().sum();
+        let average = sum / self.window.len() as f32;
+        average
+    }
+
+    /// Adds a sample to the window and removes the oldest sample if the window is full
+    fn _add_sample(&mut self, sample: f32) {
+        if self.window.len() == self.capacity {
+            self.window.pop_front();
+        }
+
+        self.window.push_back(sample);
+    }
+}
 
 #[frb(sync)]
 pub fn create_log_stream(s: StreamSink<String>) {
@@ -955,7 +944,6 @@ async fn socket_input<C: StreamCipher>(
     let mut buffer = [0; TRANSFER_BUFFER_SIZE + 8];
     let mut sequence_number = 0_u64;
     let mut int_buffer = [0; FRAME_SIZE];
-    // let mut c = 0;
 
     let future = async {
         while let Ok(frame) = input_receiver.recv().await {
@@ -1007,7 +995,7 @@ async fn socket_output<C: StreamCipher + StreamCipherSeek>(
     let mut out_buffer = [0; TRANSFER_BUFFER_SIZE];
 
     let mut last_packet = Instant::now(); // track the time between packets
-    // let mut packet_times = VecDeque::with_capacity(1_000);
+                                          // let mut packet_times = VecDeque::with_capacity(1_000);
     let expected_time = 1_f64 / rate;
     debug!("expected packet time: {:.5}s", expected_time);
 
@@ -1037,7 +1025,10 @@ async fn socket_output<C: StreamCipher + StreamCipherSeek>(
 
                     if position != sequence_number {
                         if position > sequence_number {
-                            debug!("[cipher] seeking backward by {}", position - sequence_number);
+                            debug!(
+                                "[cipher] seeking backward by {}",
+                                position - sequence_number
+                            );
                         } else {
                             debug!("[cipher] seeking forward by {}", sequence_number - position);
                         }

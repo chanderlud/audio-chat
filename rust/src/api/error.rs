@@ -151,8 +151,7 @@ impl From<ed25519_dalek::ed25519::Error> for Error {
 impl From<Elapsed> for Error {
     fn from(err: Elapsed) -> Self {
         Self {
-            kind: ErrorKind::Timeout(err
-            ),
+            kind: ErrorKind::Timeout(err),
         }
     }
 }
