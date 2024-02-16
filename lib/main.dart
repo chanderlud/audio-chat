@@ -431,8 +431,8 @@ class CallControls extends StatelessWidget {
                       await settingsController.updateInputSensitivity(value);
                       audioChat.setRmsThreshold(decimal: value);
                     },
-                    min: -100,
-                    max: 0,
+                    min: -16,
+                    max: 130,
                     label:
                         '${settingsController.inputSensitivity.toStringAsFixed(2)} db');
               }),

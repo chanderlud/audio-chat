@@ -4,7 +4,6 @@ pub use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
-use std::time::Instant;
 
 use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherCoreWrapper, StreamCipherSeek};
 use aes::Aes256;
@@ -41,7 +40,7 @@ use uuid::Uuid;
 use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};
 
 use crate::api::error::{DartError, Error, ErrorKind};
-use crate::api::items::{AudioHeader, Hello, Identity};
+use crate::api::items::{Hello, Identity};
 use crate::api::logger;
 use crate::frb_generated::{StreamSink, FLUTTER_RUST_BRIDGE_HANDLER};
 
@@ -51,11 +50,7 @@ type TransferBuffer = [u8; TRANSFER_BUFFER_SIZE];
 type AesCipher = StreamCipherCoreWrapper<CtrCore<Aes256, ctr::flavors::Ctr128BE>>;
 
 /// The number of bytes in a single UDP packet
-const TRANSFER_BUFFER_SIZE: usize = FRAME_SIZE * 2;
-/// The number of f32 samples in a single packet
-const CHUNK_SIZE: usize = TRANSFER_BUFFER_SIZE / mem::size_of::<f32>();
-const FLOAT_SILENCE: [f32; FRAME_SIZE] = [0_f32; FRAME_SIZE];
-const BYTE_SILENCE: TransferBuffer = [0; TRANSFER_BUFFER_SIZE];
+const TRANSFER_BUFFER_SIZE: usize = FRAME_SIZE * mem::size_of::<i16>();
 const RESAMPLER_PARAMETERS: SincInterpolationParameters = SincInterpolationParameters {
     sinc_len: 256,
     f_cutoff: 0.95,
@@ -127,6 +122,7 @@ pub struct AudioChat {
 
 impl AudioChat {
     // this function must be async to use `spawn`
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         listen_port: u16,
         receive_port: u16,
@@ -402,7 +398,10 @@ impl AudioChat {
         match result {
             Ok(()) => Ok(()),
             Err(error) => match error.kind {
-                ErrorKind::NoInputDevice | ErrorKind::NoOutputDevice => {
+                ErrorKind::NoInputDevice
+                | ErrorKind::NoOutputDevice
+                | ErrorKind::BuildStream(_)
+                | ErrorKind::StreamConfig(_) => {
                     socket.send(&[2]).await?;
                     Ok(())
                 }
@@ -418,11 +417,11 @@ impl AudioChat {
     async fn call(
         &self,
         socket: Arc<UdpSocket>,
-        stream: &mut TcpStream,
-        mut stream_cipher: AesCipher,
+        _stream: &mut TcpStream,
+        _stream_cipher: AesCipher,
         send_cipher: AesCipher,
         receive_cipher: AesCipher,
-        caller: bool,
+        _caller: bool,
     ) -> Result<()> {
         // get the output device and its default configuration
         let output_device = get_output_device(&self.output_device, &self.host).await?;
@@ -434,23 +433,18 @@ impl AudioChat {
         let input_config = input_device.default_input_config()?;
         debug!("input_device: {:?}", input_device.name());
 
-        // exchange input configurations
-        let message = AudioHeader::from(&input_config);
-        let remote_input_config =
-            exchange_messages(stream, &message, &mut stream_cipher, caller).await?;
+        // the number of samples to hold in a channel
+        let size = 4_800;
 
-        // expected packet input rate per second
-        let input_rate = remote_input_config.sample_rate as f64 / FRAME_SIZE as f64;
-
-        // sends denoised data to the output socket
-        let (input_sender, input_receiver) = bounded_async::<[f32; FRAME_SIZE]>(1_000);
-        // sends raw data from the socket to the processor
-        let (output_sender, output_receiver) = bounded_async::<TransferBuffer>(10);
+        // sends messages from the input stream to the sending socket
+        let (input_sender, input_receiver) = bounded_async::<[f32; 480]>(size / 480);
+        // sends raw data from the receiving socket to the processor
+        let (output_sender, output_receiver) = bounded_async::<OutputToProcessor>(size / 480);
         // sends the resampled data to the output stream
-        let (processed_sender, processed_receiver) = bounded::<f32>(1_000);
+        let (processed_sender, processed_receiver) = bounded::<f32>(size);
 
-        // the ratio of the output sample rate to the remote's input sample rate
-        let ratio = output_config.sample_rate().0 as f64 / remote_input_config.sample_rate as f64;
+        // the ratio of the output sample rate to the standard sample rate
+        let ratio = output_config.sample_rate().0 as f64 / 48_000_f64;
         // get a reference to output volume for the processor
         let output_volume = Arc::clone(&self.output_volume);
 
@@ -466,48 +460,22 @@ impl AudioChat {
 
         // sends single samples to the socket
         let input_channels = input_config.channels() as usize;
-        // get a reference to the threshold for input stream
-        let rms_threshold = Arc::clone(&self.rms_threshold);
-        // get a reference to the input factor for the input stream
-        let input_volume = Arc::clone(&self.input_volume);
         // create a sync sender for the input stream
         let sync_input_sender = input_sender.to_sync();
-        // create a denoise state
-        let mut denoise_state = DenoiseState::new();
         // create a buffer to store samples left over from the previous frame
         let mut remaining_samples = Vec::new();
-        // create a buffer to store the output of the denoising process
-        let mut out_buf = [0_f32; FRAME_SIZE];
-        // short silences are ignored to prevent popping
-        let mut silence_length = 0;
-        // get a reference to the muted flag
-        let muted = Arc::clone(&self.muted);
 
         let input_stream = SendStream {
             stream: input_device.build_input_stream(
                 &input_config.into(),
                 move |input, _: &_| {
-                    if muted.load(Relaxed) {
-                        // don't want to leave old samples to be played when unmuted
-                        remaining_samples.clear();
-                        return;
-                    }
-
                     // add the samples for the first channel for this frame to the remaining samples
                     for frame in input.chunks(input_channels) {
                         remaining_samples.push(frame[0]);
                     }
 
                     // process all the samples and store the remaining samples for the next frame
-                    remaining_samples = process_input_data(
-                        &remaining_samples,
-                        &sync_input_sender,
-                        &mut denoise_state,
-                        &mut out_buf,
-                        &mut silence_length,
-                        rms_threshold.load(Relaxed), // load the threshold for each frame
-                        input_volume.load(Relaxed),  // load the input factor for each frame
-                    );
+                    remaining_samples = process_input_data(&remaining_samples, &sync_input_sender);
                 },
                 move |err| {
                     error!("Error in input stream: {}", err);
@@ -519,7 +487,7 @@ impl AudioChat {
         // get the output channels for chunking the output
         let output_channels = output_config.channels() as usize;
         let deafened = Arc::clone(&self.deafened);
-        let mut sample_generator = SlidingWindow::new(FRAME_SIZE * 2);
+        let mut sample_generator = SlidingWindow::new(FRAME_SIZE * 4);
 
         let output_stream = SendStream {
             stream: output_device.build_output_stream(
@@ -535,9 +503,8 @@ impl AudioChat {
                         let sample = match processed_receiver.try_recv() {
                             // if the processor has a sample, process it through the sliding window
                             Ok(Some(sample)) => sample_generator.process_sample(sample),
-                            // if the processor is empty, generate a sample
+                            // if there are no frames available, generate a sample
                             Ok(None) | Err(_) => sample_generator.generate_sample(),
-                            // Ok(None) | Err(_) => 0_f32,
                         };
 
                         // write the sample to all the channels
@@ -562,6 +529,9 @@ impl AudioChat {
             Arc::clone(&socket),
             send_cipher,
             Arc::clone(&self.end_call),
+            Arc::clone(&self.input_volume),
+            Arc::clone(&self.rms_threshold),
+            Arc::clone(&self.muted),
         ));
 
         let output_handle = spawn(socket_output(
@@ -569,7 +539,6 @@ impl AudioChat {
             Arc::clone(&socket),
             receive_cipher,
             Arc::clone(&self.end_call),
-            input_rate,
         ));
 
         let processor_future = spawn_blocking_with(
@@ -815,8 +784,7 @@ impl SlidingWindow {
     // TODO a more sophisticated interpolation method
     fn interpolate_sample(&self) -> f32 {
         let sum: f32 = self.window.iter().sum();
-        let average = sum / self.window.len() as f32;
-        average
+        sum / self.window.len() as f32
     }
 
     /// Adds a sample to the window and removes the oldest sample if the window is full
@@ -827,6 +795,12 @@ impl SlidingWindow {
 
         self.window.push_back(sample);
     }
+}
+
+/// A message from the receiving socket to the processor
+enum OutputToProcessor {
+    Data(TransferBuffer),
+    Silence,
 }
 
 #[frb(sync)]
@@ -901,32 +875,12 @@ async fn exchange_messages<M: prost::Message + Default, C: StreamCipher>(
 }
 
 /// Processes the input data and sends it to the socket
-fn process_input_data(
-    input: &[f32],
-    sender: &Sender<[f32; FRAME_SIZE]>,
-    denoise_state: &mut DenoiseState,
-    out_buffer: &mut [f32; FRAME_SIZE],
-    silence_length: &mut usize,
-    rms_threshold: f32,
-    input_factor: f32,
-) -> Vec<f32> {
+fn process_input_data(input: &[f32], sender: &Sender<[f32; 480]>) -> Vec<f32> {
     for frame in input.chunks(FRAME_SIZE) {
         if frame.len() == FRAME_SIZE {
-            denoise_state.process_frame(out_buffer, frame);
-
-            if calculate_rms(out_buffer) < rms_threshold {
-                if *silence_length < 80 {
-                    *silence_length += 1;
-                } else {
-                    _ = sender.try_send(FLOAT_SILENCE);
-                }
-            } else {
-                *silence_length = 0;
-                mul(out_buffer, input_factor);
-                // this unwrap is safe because we know the length of the frame is FRAME_SIZE
-                _ = sender.send(out_buffer.as_slice().try_into().unwrap());
-            }
+            _ = sender.try_send(frame.try_into().unwrap());
         } else {
+            // if input.len is not a multiple of FRAME_SIZE, the last frame is incomplete
             return frame.to_vec();
         }
     }
@@ -934,24 +888,62 @@ fn process_input_data(
     Vec::new()
 }
 
-/// Receives frames of audio data from the input receiver and sends them to the socket
+/// Receives frames of audio data from the input stream and sends them to the socket
 async fn socket_input<C: StreamCipher>(
-    input_receiver: AsyncReceiver<[f32; FRAME_SIZE]>,
+    input_receiver: AsyncReceiver<[f32; 480]>,
     socket: Arc<UdpSocket>,
     mut cipher: C,
     notify: Arc<Notify>,
+    input_factor: Arc<AtomicF32>,
+    rms_threshold: Arc<AtomicF32>,
+    muted: Arc<AtomicBool>,
 ) -> Result<()> {
-    let mut buffer = [0; TRANSFER_BUFFER_SIZE + 8];
-    let mut sequence_number = 0_u64;
+    let mut byte_buffer = [0; TRANSFER_BUFFER_SIZE + 8];
     let mut int_buffer = [0; FRAME_SIZE];
+    let mut output_buffer = [0_f32; FRAME_SIZE];
+
+    let mut sequence_number = 0_u64;
+    let mut silence_length = 0; // short silence detection
+    let mut denoiser = DenoiseState::new();
+
+    // the maximum and minimum values for i16 as f32
+    let max_i16_f32 = i16::MAX as f32;
+    let min_i16_f32 = i16::MIN as f32;
 
     let future = async {
-        while let Ok(frame) = input_receiver.recv().await {
-            frame
-                .iter()
-                .enumerate()
-                .for_each(|(i, &x)| int_buffer[i] = (x * i16::MAX as f32) as i16);
+        while let Ok(mut frame) = input_receiver.recv().await {
+            if muted.load(Relaxed) {
+                socket.send(&[0]).await?;
+                continue;
+            }
 
+            let factor = max_i16_f32 * input_factor.load(Relaxed);
+
+            // rescale the samples to -32768.0 to 32767.0 for rnnoise
+            frame.par_iter_mut().for_each(|x| {
+                *x *= factor;
+                *x = x.trunc().clamp(min_i16_f32, max_i16_f32);
+            });
+
+            // denoise the frame
+            denoiser.process_frame(&mut output_buffer, &frame);
+
+            // check if the frame is below the rms threshold
+            if calculate_rms(&output_buffer) < rms_threshold.load(Relaxed) {
+                if silence_length < 80 {
+                    silence_length += 1; // short silences are ignored
+                } else {
+                    socket.send(&[0]).await?;
+                    continue;
+                }
+            } else {
+                silence_length = 0;
+            }
+
+            // cast the f32 samples to i16
+            int_buffer = output_buffer.map(|x| x as i16);
+
+            // convert the i16 samples to bytes
             let bytes = unsafe {
                 std::slice::from_raw_parts(
                     int_buffer.as_ptr() as *const u8,
@@ -959,16 +951,16 @@ async fn socket_input<C: StreamCipher>(
                 )
             };
 
-            if bytes == BYTE_SILENCE {
-                socket.send(&[0]).await?;
-            } else {
-                cipher.apply_keystream_b2b(bytes, &mut buffer[8..]).unwrap();
+            // encrypt the audio data
+            cipher
+                .apply_keystream_b2b(bytes, &mut byte_buffer[8..])
+                .unwrap();
 
-                buffer[..8].copy_from_slice(&sequence_number.to_be_bytes());
-                sequence_number += TRANSFER_BUFFER_SIZE as u64; // advance the sequence number
+            // add the sequence number to the buffer
+            byte_buffer[..8].copy_from_slice(&sequence_number.to_be_bytes());
+            sequence_number += TRANSFER_BUFFER_SIZE as u64; // increment the sequence number
 
-                socket.send(&buffer).await?;
-            }
+            socket.send(&byte_buffer).await?;
         }
 
         Ok::<(), Error>(())
@@ -985,40 +977,20 @@ async fn socket_input<C: StreamCipher>(
 
 /// Receives audio data from the socket and sends it to the output processor
 async fn socket_output<C: StreamCipher + StreamCipherSeek>(
-    output_sender: AsyncSender<TransferBuffer>,
+    sender: AsyncSender<OutputToProcessor>,
     socket: Arc<UdpSocket>,
     mut cipher: C,
     notify: Arc<Notify>,
-    rate: f64,
+    // rate: f64,
 ) -> EndReason {
     let mut in_buffer = [0; TRANSFER_BUFFER_SIZE + 8];
     let mut out_buffer = [0; TRANSFER_BUFFER_SIZE];
-
-    let mut last_packet = Instant::now(); // track the time between packets
-                                          // let mut packet_times = VecDeque::with_capacity(1_000);
-    let expected_time = 1_f64 / rate;
-    debug!("expected packet time: {:.5}s", expected_time);
 
     let future = async {
         loop {
             match timeout(RECEIVE_TIMEOUT, socket.recv(&mut in_buffer)).await {
                 // normal chunk of audio data
                 Ok(Ok(len)) if len == TRANSFER_BUFFER_SIZE + 8 => {
-                    let elapsed = last_packet.elapsed().as_secs_f64();
-
-                    // if packet_times.len() > 1_000 {
-                    //     packet_times.pop_front();
-                    // }
-
-                    // packet_times.push_back(elapsed);
-                    last_packet = Instant::now();
-
-                    if expected_time - elapsed > expected_time / 3_f64 {
-                        debug!("potential packed burst: {:.5}s", elapsed);
-                    } else if elapsed - expected_time > expected_time / 3_f64 {
-                        debug!("potential packet delay: {:.5}s", elapsed);
-                    }
-
                     // unwrap is safe because we know the buffer is the correct length
                     let sequence_number = u64::from_be_bytes(in_buffer[..8].try_into().unwrap());
                     let position = cipher.current_pos::<u64>();
@@ -1040,19 +1012,26 @@ async fn socket_output<C: StreamCipher + StreamCipherSeek>(
                     cipher
                         .apply_keystream_b2b(&in_buffer[8..], &mut out_buffer)
                         .unwrap();
-                    _ = output_sender.try_send(out_buffer);
+
+                    _ = sender.try_send(OutputToProcessor::Data(out_buffer));
                 }
                 // control signals
                 Ok(Ok(1)) => match in_buffer[0] {
-                    0 => _ = output_sender.try_send(BYTE_SILENCE), // silence
-                    1 => break EndReason::Ended,                   // end of call
+                    0 => _ = sender.try_send(OutputToProcessor::Silence), // silence
+                    1 => break EndReason::Ended,                          // end of call
                     2 => break EndReason::MissingDevice, // the other party is missing a device
                     3 => break EndReason::Error,         // the other party encountered an error
-                    _ => unreachable!("received unknown control signal {}", in_buffer[0]),
+                    _ => error!("received unknown control signal {}", in_buffer[0]),
                 },
                 Ok(Ok(len)) => error!("Received {} < {} data", len, TRANSFER_BUFFER_SIZE + 8),
                 Err(_) => error!("Receiver timed out"),
-                Ok(Err(error)) => error!("Error receiving {}", error),
+                Ok(Err(error)) => match error.kind() {
+                    std::io::ErrorKind::ConnectionReset => {
+                        error!("connection reset");
+                        break EndReason::Error;
+                    }
+                    _ => error!("error receiving: {}", error.kind()),
+                },
             }
         }
     };
@@ -1068,52 +1047,60 @@ async fn socket_output<C: StreamCipher + StreamCipherSeek>(
 
 /// Processes the audio data and sends it to the output stream
 fn processor(
-    receiver: Receiver<TransferBuffer>,
+    receiver: Receiver<OutputToProcessor>,
     sender: Sender<f32>,
     ratio: f64,
     output_volume: Arc<AtomicF32>,
 ) -> Result<()> {
+    // all audio is mono
     let mut resampler = resampler_factory(ratio, 1)?;
 
     // rubato requires 10 extra bytes in the output buffer as a safety margin
-    let post_len = (CHUNK_SIZE as f64 * ratio + 10.0) as usize;
+    let post_len = (FRAME_SIZE as f64 * ratio + 10.0) as usize;
 
+    // the input for the resampler
+    let mut pre_buf = [&mut [0_f32; FRAME_SIZE]];
     // the output for the resampler
     let mut post_buf = [vec![0_f32; post_len]];
-    // the input for the resampler
-    let mut pre_buf = [&mut [0_f32; CHUNK_SIZE]];
 
-    while let Ok(bytes) = receiver.recv() {
-        // convert the bytes to floats
-        let ints = unsafe {
-            std::slice::from_raw_parts(
-                bytes.as_ptr() as *const i16,
-                bytes.len() / mem::size_of::<i16>(),
-            )
-        };
-
-        for chunk in ints.chunks(CHUNK_SIZE) {
-            chunk
-                .iter()
-                .enumerate()
-                .for_each(|(i, &x)| pre_buf[0][i] = x as f32 / i16::MAX as f32);
-
-            let factor = output_volume.load(Relaxed);
-
-            if let Some(resampler) = &mut resampler {
-                // resample the data
-                let processed = resampler.process_into_buffer(&pre_buf, &mut post_buf, None)?;
-
-                mul(&mut post_buf[0][..processed.1], factor);
-
-                // send the resampled data to the output stream
-                for sample in &post_buf[0][..processed.1] {
-                    _ = sender.send(*sample);
+    while let Ok(message) = receiver.recv() {
+        match message {
+            OutputToProcessor::Silence => {
+                for _ in 0..FRAME_SIZE {
+                    sender.try_send(0_f32)?;
                 }
-            } else {
-                // send the raw data to the output stream
-                for sample in &pre_buf[0][..chunk.len()] {
-                    _ = sender.send(sample * factor);
+            }
+            OutputToProcessor::Data(bytes) => {
+                // convert the bytes to 16-bit integers
+                let ints = unsafe {
+                    std::slice::from_raw_parts(
+                        bytes.as_ptr() as *const i16,
+                        bytes.len() / mem::size_of::<i16>(),
+                    )
+                };
+
+                // convert the chunk to f32s
+                ints.iter()
+                    .enumerate()
+                    .for_each(|(i, &x)| pre_buf[0][i] = x as f32 / i16::MAX as f32);
+
+                // apply the output volume
+                let factor = output_volume.load(Relaxed);
+                mul(pre_buf[0], factor);
+
+                if let Some(resampler) = &mut resampler {
+                    // resample the data
+                    let processed = resampler.process_into_buffer(&pre_buf, &mut post_buf, None)?;
+
+                    // send the resampled data to the output stream
+                    for sample in &post_buf[0][..processed.1] {
+                        sender.try_send(*sample)?;
+                    }
+                } else {
+                    // if no resampling is needed, send the data to the output stream
+                    for sample in *pre_buf[0] {
+                        sender.try_send(sample)?;
+                    }
                 }
             }
         }
@@ -1160,7 +1147,10 @@ fn calculate_rms(data: &[f32]) -> f32 {
 
 /// Multiplies each element in the slice by the factor
 pub(crate) fn mul(vec: &mut [f32], factor: f32) {
-    vec.par_iter_mut().for_each(|p| *p *= factor);
+    vec.par_iter_mut().for_each(|p| {
+        *p *= factor;
+        *p = p.clamp(-1_f32, 1_f32);
+    })
 }
 
 /// Converts a decibel value to a multiplier
@@ -1180,7 +1170,7 @@ pub(crate) fn resampler_factory(ratio: f64, channels: usize) -> Result<Option<Si
             ratio,
             2.0,
             RESAMPLER_PARAMETERS,
-            CHUNK_SIZE,
+            FRAME_SIZE,
             channels,
         )?))
     }
