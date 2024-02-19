@@ -254,23 +254,23 @@ impl AudioChat {
 
     /// Initiate a call with the contact
     async fn _say_hello(&self, contact: &Contact) -> Result<bool> {
-        let mut buf = [255; 1];
         let mut stream = timeout(HELLO_TIMEOUT, TcpStream::connect(contact.address)).await??;
-        // this signal lets the callee know that the caller wants to start a handshake
-        stream.write(&buf).await?;
-        // this signal lets the caller know that the callee wants to start a handshake
-        stream.read(&mut buf).await?;
 
-        if buf != [0] {
-            return Ok(false);
-        }
+        // generate our public key and send it to the callee
+        let secret = EphemeralSecret::random();
+        let our_public = PublicKey::from(&secret);
+        stream.write_all(our_public.as_bytes()).await?;
+
+        // receive the callee's public key
+        let their_public = read_public(&mut stream).await?;
+        let shared_secret = secret.diffie_hellman(&their_public);
 
         let chat_clone = self.clone();
         let contact = contact.clone();
 
         spawn(async move {
             if let Err(error) = chat_clone
-                .handshake(stream, contact.address.ip(), true, contact)
+                .handshake(stream, contact.address.ip(), true, contact, shared_secret)
                 .await
             {
                 error!("Call failed [caller]: {:?}", error);
@@ -286,37 +286,38 @@ impl AudioChat {
 
         let listener_loop = async {
             while let Ok((mut stream, address)) = listener.accept().await {
-                let mut buf = [0; 1];
+                let future = async {
+                    let their_public = read_public(&mut stream).await?;
 
-                if stream.read(&mut buf).await.is_err() {
-                    error!("Stream closed before handshake");
-                    continue;
-                } else if buf != [255] {
-                    continue;
-                }
+                    let remote_address = address.ip();
+                    let contact = (self.get_contact.lock().await)(remote_address.to_string()).await;
 
-                let remote_address = address.ip();
-                let contact = (self.get_contact.lock().await)(remote_address.to_string()).await;
+                    if let Some(contact) = contact {
+                        debug!("Prompting for call from {}", contact.nickname);
 
-                if let Some(contact) = contact {
-                    debug!("Prompting for call from {}", contact.nickname);
+                        if !(self.accept_call.lock().await)(contact.clone()).await {
+                            return Ok(());
+                        }
 
-                    if !(self.accept_call.lock().await)(contact.clone()).await {
-                        debug!("Call rejected");
-                        continue;
-                    } else if let Err(error) = stream.write(&[0]).await {
-                        error!("Error writing to stream: {}", error);
-                        continue;
+                        let secret = EphemeralSecret::random();
+                        let our_public = PublicKey::from(&secret);
+                        stream.write_all(our_public.as_bytes()).await?;
+
+                        let shared_secret = secret.diffie_hellman(&their_public);
+                        self.handshake(stream, remote_address, false, contact, shared_secret)
+                            .await?;
+                    } else {
+                        warn!("Unknown contact: {}", remote_address);
                     }
 
-                    if let Err(error) = self.handshake(stream, remote_address, false, contact).await
-                    {
-                        error!("Call failed [callee]: {:?}", error);
-                    }
-                    self.in_call.store(false, Relaxed);
-                } else {
-                    warn!("Unknown contact: {}", remote_address);
+                    Ok::<(), Error>(())
+                };
+
+                if let Err(error) = future.await {
+                    error!("Callee Error: {:?}", error);
                 }
+
+                self.in_call.store(false, Relaxed);
             }
         };
 
@@ -336,11 +337,10 @@ impl AudioChat {
         remote_address: IpAddr,
         caller: bool,
         contact: Contact,
+        shared_secret: SharedSecret,
     ) -> Result<()> {
         self.in_call.store(true, Relaxed);
 
-        // perform the key exchange
-        let shared_secret = key_exchange(&mut stream).await?;
         // HKDF for the key derivation
         let hk = Hkdf::<Sha256>::new(Some(&SALT), shared_secret.as_bytes());
 
@@ -350,7 +350,7 @@ impl AudioChat {
         let mut receive_cipher = cipher_factory(&hk, b"receive-key", b"receive-iv")?;
 
         // create a random nonce
-        let mut nonce = [0; 1024];
+        let mut nonce = [0; 128];
         OsRng.fill(&mut nonce);
 
         // sign the nonce
@@ -382,6 +382,7 @@ impl AudioChat {
             mem::swap(&mut send_cipher, &mut receive_cipher);
         }
 
+        // alert the UI that the call has connected
         (self.connected.lock().await)().await;
 
         let result = self
@@ -799,7 +800,7 @@ impl SlidingWindow {
 
 /// A message from the receiving socket to the processor
 enum OutputToProcessor {
-    Data(TransferBuffer),
+    Data(Box<TransferBuffer>),
     Silence,
 }
 
@@ -1013,7 +1014,7 @@ async fn socket_output<C: StreamCipher + StreamCipherSeek>(
                         .apply_keystream_b2b(&in_buffer[8..], &mut out_buffer)
                         .unwrap();
 
-                    _ = sender.try_send(OutputToProcessor::Data(out_buffer));
+                    _ = sender.try_send(OutputToProcessor::Data(Box::new(out_buffer)));
                 }
                 // control signals
                 Ok(Ok(1)) => match in_buffer[0] {
@@ -1110,18 +1111,11 @@ fn processor(
     Ok(())
 }
 
-/// Performs the key exchange
-async fn key_exchange(stream: &mut TcpStream) -> Result<SharedSecret> {
-    let secret = EphemeralSecret::random();
-    let our_public = PublicKey::from(&secret);
-
-    stream.write_all(our_public.as_bytes()).await?;
-
+/// Reads a public key from the stream
+async fn read_public(stream: &mut TcpStream) -> Result<PublicKey> {
     let mut buffer = [0; 32];
     stream.read_exact(&mut buffer).await?;
-    let their_public = PublicKey::from(buffer);
-
-    Ok(secret.diffie_hellman(&their_public))
+    Ok(PublicKey::from(buffer))
 }
 
 /// Creates a cipher from the HKDF
@@ -1158,6 +1152,7 @@ pub(crate) fn db_to_multiplier(db: f32) -> f32 {
     10_f32.powf(db / 20.0)
 }
 
+/// Produces a resampler if needed
 pub(crate) fn resampler_factory(ratio: f64, channels: usize) -> Result<Option<SincFixedIn<f32>>> {
     if ratio == 1_f64 {
         debug!("No resampling needed");
@@ -1176,6 +1171,7 @@ pub(crate) fn resampler_factory(ratio: f64, channels: usize) -> Result<Option<Si
     }
 }
 
+/// Gets the output device
 pub(crate) async fn get_output_device(
     output_device: &DeviceName,
     host: &Arc<Host>,

@@ -1143,6 +1143,50 @@ fn wire_SoundPlayer_play_impl(
         },
     )
 }
+fn wire_SoundPlayer_update_output_device_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "SoundPlayer_update_output_device",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::rust_async::RwLock<SoundPlayer>,
+            >>::sse_decode(&mut deserializer);
+            let api_name = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse(
+                    (move || async move {
+                        let api_that = api_that.rust_auto_opaque_decode_ref();
+                        Result::<_, ()>::Ok(
+                            crate::api::player::SoundPlayer::update_output_device(
+                                &api_that, api_name,
+                            )
+                            .await,
+                        )
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire_SoundPlayer_update_output_volume_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -1415,6 +1459,17 @@ impl SseDecode for Vec<u8> {
     }
 }
 
+impl SseDecode for Option<String> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<String>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<Contact> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1493,6 +1548,7 @@ fn pde_ffi_dispatcher_primary_impl(
         30 => wire_SendToDartLogger_set_stream_sink_impl(port, ptr, rust_vec_len, data_len),
         29 => wire_init_logger_impl(port, ptr, rust_vec_len, data_len),
         32 => wire_SoundPlayer_play_impl(port, ptr, rust_vec_len, data_len),
+        34 => wire_SoundPlayer_update_output_device_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1528,7 +1584,7 @@ fn pde_ffi_dispatcher_sync_impl(
         19 => wire_Contact_verifying_key_str_impl(ptr, rust_vec_len, data_len),
         3 => wire_generate_keys_impl(ptr, rust_vec_len, data_len),
         2 => wire_rust_set_up_impl(ptr, rust_vec_len, data_len),
-        34 => wire_SoundHandle_cancel_impl(ptr, rust_vec_len, data_len),
+        35 => wire_SoundHandle_cancel_impl(ptr, rust_vec_len, data_len),
         31 => wire_SoundPlayer_new_impl(ptr, rust_vec_len, data_len),
         33 => wire_SoundPlayer_update_output_volume_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
@@ -1787,6 +1843,16 @@ impl SseEncode for Vec<u8> {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <u8>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<String> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <String>::sse_encode(value, serializer);
         }
     }
 }

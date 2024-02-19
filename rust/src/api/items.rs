@@ -32,7 +32,7 @@ impl From<&[u8]> for AudioHeader {
 }
 
 impl Identity {
-    pub(crate) fn new(nonce: [u8; 1024], signature: Signature) -> Self {
+    pub(crate) fn new(nonce: [u8; 128], signature: Signature) -> Self {
         Self {
             nonce: nonce.to_vec(),
             signature: signature.to_bytes().to_vec(),
