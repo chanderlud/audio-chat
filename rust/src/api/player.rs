@@ -8,15 +8,14 @@ use cpal::{Host, SampleFormat};
 use flutter_rust_bridge::spawn;
 use flutter_rust_bridge::{frb, spawn_blocking_with};
 use kanal::{bounded_async, Sender};
-use log::{debug, error};
+use log::error;
 use nnnoiseless::FRAME_SIZE;
 use rubato::Resampler;
 use tokio::select;
 use tokio::sync::Notify;
+use tokio::time::sleep;
 
-use crate::api::audio_chat::{
-    db_to_multiplier, get_output_device, mul, resampler_factory, DeviceName, SendStream,
-};
+use crate::api::audio_chat::{db_to_multiplier, get_output_device, mul, resampler_factory, DeviceName, SendStream};
 use crate::api::error::Error;
 use crate::api::items::AudioHeader;
 use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
@@ -45,11 +44,13 @@ impl SoundPlayer {
         }
     }
 
+    /// Public play function
     pub async fn play(&self, bytes: Vec<u8>) -> SoundHandle {
         let cancel = Arc::new(Notify::new());
+        let cancel_clone = cancel.clone();
+
         let output_volume = self.output_volume.clone();
         let host = self.host.clone();
-        let cancel_clone = cancel.clone();
         let output_device = self.output_device.clone();
 
         spawn(async move {
@@ -81,7 +82,7 @@ pub struct SoundHandle {
 impl SoundHandle {
     #[frb(sync)]
     pub fn cancel(&self) {
-        self.cancel.notify_waiters();
+        self.cancel.notify_one();
     }
 }
 
@@ -93,37 +94,74 @@ async fn play_sound(
     output_volume: Arc<AtomicF32>,
     output_device: DeviceName,
 ) -> Result<(), Error> {
+    if bytes.len() < 44 {
+        return Err(Error::invalid_wav());
+    }
+
+    // get the output device & config
     let output_device = get_output_device(&output_device, &host).await?;
     let output_config = output_device.default_output_config()?;
 
+    // parse the input spec
     let spec = AudioHeader::from(&bytes[0..44]);
-    debug!("Audio header: {:?}", spec);
 
-    let sample_format = SampleFormat::I16; // TODO get the sample format from the header
+    // match the correct sample format
+    let sample_format = match spec.sample_format.as_str() {
+        "u8" => SampleFormat::U8,
+        "i16" => SampleFormat::I16,
+        "i32" => SampleFormat::I32,
+        "f32" => SampleFormat::F32,
+        "f64" => SampleFormat::F64,
+        _ => return Err(Error::unknown_sample_format()),
+    };
+
+    // the resampling ratio used by the processor
     let ratio = output_config.sample_rate().0 as f64 / spec.sample_rate as f64;
 
+    // sends samples from the processor to the output stream
     let (processed_sender, processed_receiver) = bounded_async::<Vec<f32>>(1_000);
 
+    // used to chunk the output buffer correctly
     let output_channels = output_config.channels() as usize;
+    // the receiver used by the output stream
     let sync_receiver = processed_receiver.to_sync();
+    // keep track of the last samples played
+    let mut last_samples = Vec::with_capacity(output_channels);
+    // a counter used for fading out the last samples when the sound is cancelled
+    let mut i = 0;
+    // used to provide a fade to 0 when the sound is cancelled
+    let f32_sample_rate = output_config.sample_rate().0 as f32;
 
     let output_stream = SendStream {
         stream: output_device.build_output_stream(
             &output_config.into(),
             move |output: &mut [f32], _: &_| {
                 for frame in output.chunks_mut(output_channels) {
-                    let samples = sync_receiver.recv().unwrap();
-                    frame.copy_from_slice(&samples);
+                    if let Ok(samples) = sync_receiver.recv() {
+                        // play the samples
+                        frame.copy_from_slice(&samples);
+                        last_samples = samples;
+                    } else {
+                        // fade each sample
+                        for sample in &mut last_samples {
+                            *sample *= (1_f32 - i as f32 / f32_sample_rate).max(0_f32);
+                        }
+
+                        // play the samples
+                        frame.copy_from_slice(&last_samples);
+                        i += 1; // advance the counter
+                    }
                 }
             },
             move |err| {
-                error!("Error in output stream: {}", err);
+                error!("Error in player stream: {}", err);
             },
             None,
         )?,
     };
 
-    output_stream.stream.play()?;
+    // the sender used by the processor
+    let sender = processed_sender.clone_sync();
 
     let processor_handle = std::thread::spawn(move || {
         processor(
@@ -131,7 +169,7 @@ async fn play_sound(
             sample_format,
             spec,
             output_volume,
-            processed_sender.to_sync(),
+            sender,
             output_channels,
             ratio,
         )
@@ -142,13 +180,16 @@ async fn play_sound(
         FLUTTER_RUST_BRIDGE_HANDLER.thread_pool(),
     );
 
+    output_stream.stream.play()?; // play the stream
+
     select! {
         _ = cancel.notified() => {
-            debug!("Sound cancelled");
+            // this causes the stream to begin fading out
+            processed_sender.close();
+            // we sleep to prevent the stream from being closed while fading
+            sleep(std::time::Duration::from_secs(1)).await;
         }
-        result = processor_future => {
-            debug!("Sound finished {:?}", result);
-        }
+        _ = processor_future => {}
     }
 
     Ok(())
@@ -174,9 +215,9 @@ fn processor(
     let mut position = 0_f32; // the playback position
 
     // constants used for fading in and out
-    let float_frame_size = FRAME_SIZE as f32;
-    let fade_out = float_frame_size;
-    let fade_in = audio_len - float_frame_size;
+    let fade_basis = sample_count as f32 / 100_f32;
+    let fade_out = fade_basis;
+    let fade_in = audio_len - fade_basis;
 
     // rubato requires 10 extra bytes in the output buffer as a safety margin
     let post_len = (FRAME_SIZE as f64 * ratio + 10.0) as usize;
@@ -188,11 +229,21 @@ fn processor(
     // groups of samples ready to be sent to the output
     let mut out_buf = Vec::with_capacity(output_channels);
 
-    let mut resampler = resampler_factory(ratio, channels_usize)?;
+    let mut resampler = resampler_factory(ratio, channels_usize, FRAME_SIZE)?;
     let output_volume = output_volume.load(Relaxed);
 
     for chunk in bytes[44..].chunks(FRAME_SIZE * sample_size * channels_usize) {
         match sample_format {
+            SampleFormat::U8 => {
+                let float_u8_max = u8::MAX as f32;
+
+                for (i, sample) in chunk.chunks(channels_usize).enumerate() {
+                    for (j, channel) in sample.iter().enumerate() {
+                        let sample = *channel as f32 / float_u8_max;
+                        pre_buf[j][i] = sample;
+                    }
+                }
+            }
             SampleFormat::I16 => {
                 let float_i16_max = i16::MAX as f32;
 
@@ -200,6 +251,33 @@ fn processor(
                     for (j, channel) in sample.chunks(2).enumerate() {
                         let sample =
                             i16::from_le_bytes(channel.try_into().unwrap()) as f32 / float_i16_max;
+                        pre_buf[j][i] = sample;
+                    }
+                }
+            }
+            SampleFormat::I32 => {
+                let float_i32_max = i32::MAX as f32;
+
+                for (i, sample) in chunk.chunks(4 * channels_usize).enumerate() {
+                    for (j, channel) in sample.chunks(4).enumerate() {
+                        let sample =
+                            i32::from_le_bytes(channel.try_into().unwrap()) as f32 / float_i32_max;
+                        pre_buf[j][i] = sample;
+                    }
+                }
+            }
+            SampleFormat::F32 => {
+                for (i, sample) in chunk.chunks(4 * channels_usize).enumerate() {
+                    for (j, channel) in sample.chunks(4).enumerate() {
+                        let sample = f32::from_le_bytes(channel.try_into().unwrap());
+                        pre_buf[j][i] = sample;
+                    }
+                }
+            }
+            SampleFormat::F64 => {
+                for (i, sample) in chunk.chunks(8 * channels_usize).enumerate() {
+                    for (j, channel) in sample.chunks(8).enumerate() {
+                        let sample = f64::from_le_bytes(channel.try_into().unwrap()) as f32;
                         pre_buf[j][i] = sample;
                     }
                 }
@@ -224,10 +302,10 @@ fn processor(
 
                 if delta < fade_out {
                     // calculate fade out multiplier
-                    delta / float_frame_size
+                    delta / fade_basis
                 } else if delta > fade_in {
                     // calculate fade in multiplier
-                    position / float_frame_size
+                    position / fade_basis
                 } else {
                     1_f32 // no fade in or out
                 }
@@ -239,7 +317,7 @@ fn processor(
 
             for j in 0..output_channels {
                 // this handles when there are more output channels than input channels
-                let sample = if j > channels_usize {
+                let sample = if j >= channels_usize {
                     target_buffer[0][i]
                 } else {
                     target_buffer[j][i]
@@ -253,8 +331,6 @@ fn processor(
             processed_sender.send(buffer)?;
         }
     }
-
-    debug!("final position {}", position);
 
     Ok(())
 }
@@ -278,13 +354,16 @@ mod tests {
         .unwrap();
 
         let mut wav_bytes = Vec::new();
-        let mut wav_file = File::open("test.wav").await.unwrap();
+        let mut wav_file = File::open("../sounds/outgoing.wav").await.unwrap();
         wav_file.read_to_end(&mut wav_bytes).await.unwrap();
 
         let player = super::SoundPlayer::new(1_f32);
-        player.play(wav_bytes).await;
+        let handle = player.play(wav_bytes).await;
 
-        sleep(std::time::Duration::from_secs(5)).await;
+        sleep(std::time::Duration::from_secs(1)).await;
+        handle.cancel();
+        sleep(std::time::Duration::from_secs(1)).await;
+
         logger.flush();
     }
 }

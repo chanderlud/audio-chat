@@ -33,8 +33,15 @@ class AudioChat extends RustOpaque {
         RustLib.instance.api.rust_arc_decrement_strong_count_AudioChatPtr,
   );
 
+  /// Tries to start a controller for a contact
+  Future<void> connect({required Contact contact, dynamic hint}) =>
+      RustLib.instance.api.audioChatConnect(
+        that: this,
+        contact: contact,
+      );
+
   /// Ends the call (if there is one)
-  Future<void> endCall({dynamic hint}) => RustLib.instance.api.audioChatEndCall(
+  void endCall({dynamic hint}) => RustLib.instance.api.audioChatEndCall(
         that: this,
       );
 
@@ -51,10 +58,14 @@ class AudioChat extends RustOpaque {
           required double rmsThreshold,
           required double inputVolume,
           required double outputVolume,
-          required FutureOr<bool> Function(Contact) acceptCall,
+          required bool denoise,
+          required FutureOr<bool> Function(String) acceptCall,
           required FutureOr<void> Function(String) callEnded,
           required FutureOr<Contact?> Function(String) getContact,
           required FutureOr<void> Function() connected,
+          required FutureOr<void> Function(bool) callState,
+          required FutureOr<void> Function(String, bool) contactStatus,
+          required FutureOr<void> Function(AudioChat) startControllers,
           dynamic hint}) =>
       RustLib.instance.api.audioChatNew(
           listenPort: listenPort,
@@ -63,11 +74,21 @@ class AudioChat extends RustOpaque {
           rmsThreshold: rmsThreshold,
           inputVolume: inputVolume,
           outputVolume: outputVolume,
+          denoise: denoise,
           acceptCall: acceptCall,
           callEnded: callEnded,
           getContact: getContact,
           connected: connected,
+          callState: callState,
+          contactStatus: contactStatus,
+          startControllers: startControllers,
           hint: hint);
+
+  /// Restarts the controllers
+  Future<void> restartControllers({dynamic hint}) =>
+      RustLib.instance.api.audioChatRestartControllers(
+        that: this,
+      );
 
   /// Restarts the listener
   Future<void> restartListener({dynamic hint}) =>
@@ -76,7 +97,7 @@ class AudioChat extends RustOpaque {
       );
 
   /// The public say_hello function
-  Future<bool> sayHello({required Contact contact, dynamic hint}) =>
+  Future<void> sayHello({required Contact contact, dynamic hint}) =>
       RustLib.instance.api.audioChatSayHello(
         that: this,
         contact: contact,
@@ -86,6 +107,13 @@ class AudioChat extends RustOpaque {
       RustLib.instance.api.audioChatSetDeafened(
         that: this,
         deafened: deafened,
+      );
+
+  /// Changing the denoise flag will not affect the current call
+  void setDenoise({required bool denoise, dynamic hint}) =>
+      RustLib.instance.api.audioChatSetDenoise(
+        that: this,
+        denoise: denoise,
       );
 
   void setInputVolume({required double decibel, dynamic hint}) =>
@@ -123,6 +151,13 @@ class AudioChat extends RustOpaque {
         that: this,
         decimal: decimal,
       );
+
+  /// Stop a specific controller
+  Future<void> stopController({required Contact contact, dynamic hint}) =>
+      RustLib.instance.api.audioChatStopController(
+        that: this,
+        contact: contact,
+      );
 }
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::rust_async::RwLock<Contact>>
@@ -144,12 +179,6 @@ class Contact extends RustOpaque {
 
   String addressStr({dynamic hint}) => RustLib.instance.api.contactAddressStr(
         that: this,
-      );
-
-  bool equals({required Contact other, dynamic hint}) =>
-      RustLib.instance.api.contactEquals(
-        that: this,
-        other: other,
       );
 
   String id({dynamic hint}) => RustLib.instance.api.contactId(

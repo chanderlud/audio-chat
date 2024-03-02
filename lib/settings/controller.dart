@@ -39,6 +39,9 @@ class SettingsController with ChangeNotifier {
   /// the input sensitivity for calls
   late double inputSensitivity;
 
+  /// whether to use rnnoise
+  late bool useDenoise;
+
   Future<void> init() async {
     final signingKey = await storage.read(key: 'signingKey');
     final verifyingKey = await storage.read(key: 'verifyingKey');
@@ -75,11 +78,12 @@ class SettingsController with ChangeNotifier {
     inputVolume = options.getDouble('inputVolume') ?? 0;
     soundVolume = options.getDouble('soundVolume') ?? -10;
     inputSensitivity = options.getDouble('inputSensitivity') ?? -50;
+    useDenoise = options.getBool('useDenoise') ?? true;
 
     notifyListeners();
   }
 
-  Future<void> addContact(
+  Future<Contact> addContact(
     String nickname,
     String verifyingKey,
     String address,
@@ -90,6 +94,12 @@ class SettingsController with ChangeNotifier {
 
     await saveContacts();
     notifyListeners();
+
+    return contact;
+  }
+
+  Contact? getContact(String id) {
+    return contacts[id];
   }
 
   Future<void> updateContactNickname(Contact contact, String nickname) async {
@@ -151,6 +161,12 @@ class SettingsController with ChangeNotifier {
   Future<void> updateInputSensitivity(double sensitivity) async {
     inputSensitivity = sensitivity;
     await options.setDouble('inputSensitivity', sensitivity);
+    notifyListeners();
+  }
+
+  Future<void> updateUseDenoise(bool use) async {
+    useDenoise = use;
+    await options.setBool('useDenoise', use);
     notifyListeners();
   }
 }

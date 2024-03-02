@@ -15,12 +15,11 @@ class SettingsPage extends StatefulWidget {
   final SoundPlayer player;
 
   const SettingsPage(
-      {Key? key,
+      {super.key,
       required this.controller,
       required this.audioChat,
       required this.callStateController,
-      required this.player})
-      : super(key: key);
+      required this.player});
 
   @override
   SettingsPageState createState() => SettingsPageState();
@@ -43,7 +42,7 @@ class SettingsPageState extends State<SettingsPage> {
         widget.audioChat.restartListener();
       } on DartError catch (e) {
         // if there is an active call, the listener cannot be restarted
-        showErrorDialog(context, e.message);
+        showErrorDialog(context, 'Action blocked', e.message);
       }
     }
 
@@ -154,6 +153,13 @@ class SettingsPageState extends State<SettingsPage> {
                       },
                     );
                   }),
+              // const SizedBox(height: 20),
+              // Button(
+              //   text: 'Restart Controllers',
+              //   onPressed: () {
+              //     widget.audioChat.restartControllers();
+              //   },
+              // ),
               const SizedBox(height: 20),
               ListenableBuilder(
                   listenable: widget.callStateController,
@@ -178,6 +184,8 @@ class SettingsPageState extends State<SettingsPage> {
                       _unsavedChanges = true;
                     });
                   }),
+              const SizedBox(height: 20),
+              const Text('Sound Effect Volume'),
               ListenableBuilder(
                   listenable: widget.controller,
                   builder: (BuildContext context, Widget? child) {
@@ -191,6 +199,18 @@ class SettingsPageState extends State<SettingsPage> {
                         max: 20,
                         label:
                             '${widget.controller.soundVolume.toStringAsFixed(2)} db');
+                  }),
+              const SizedBox(height: 20),
+              const Text('Denoise'),
+              ListenableBuilder(
+                  listenable: widget.controller,
+                  builder: (BuildContext context, Widget? child) {
+                    return Switch(
+                        value: widget.controller.useDenoise,
+                        onChanged: (use) {
+                          widget.controller.updateUseDenoise(use);
+                          widget.audioChat.setDenoise(denoise: use);
+                        });
                   }),
               const Spacer(),
               Button(

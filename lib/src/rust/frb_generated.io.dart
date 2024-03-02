@@ -81,9 +81,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  FutureOr<bool> Function(Contact)
-      dco_decode_DartFn_Inputs_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact_Output_bool(
+  FutureOr<void> Function(AudioChat)
+      dco_decode_DartFn_Inputs_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat_Output_unit(
           dynamic raw);
+
+  @protected
+  FutureOr<bool> Function(String) dco_decode_DartFn_Inputs_String_Output_bool(
+      dynamic raw);
 
   @protected
   FutureOr<Contact?> Function(String)
@@ -95,7 +99,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       dynamic raw);
 
   @protected
+  FutureOr<void> Function(String, bool)
+      dco_decode_DartFn_Inputs_String_bool_Output_unit(dynamic raw);
+
+  @protected
   FutureOr<void> Function() dco_decode_DartFn_Inputs__Output_unit(dynamic raw);
+
+  @protected
+  FutureOr<void> Function(bool) dco_decode_DartFn_Inputs_bool_Output_unit(
+      dynamic raw);
 
   @protected
   Object dco_decode_DartOpaque(dynamic raw);
@@ -344,8 +356,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
-      sse_encode_DartFn_Inputs_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact_Output_bool(
-          FutureOr<bool> Function(Contact) self, SseSerializer serializer);
+      sse_encode_DartFn_Inputs_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat_Output_unit(
+          FutureOr<void> Function(AudioChat) self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_DartFn_Inputs_String_Output_bool(
+      FutureOr<bool> Function(String) self, SseSerializer serializer);
 
   @protected
   void
@@ -357,8 +373,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       FutureOr<void> Function(String) self, SseSerializer serializer);
 
   @protected
+  void sse_encode_DartFn_Inputs_String_bool_Output_unit(
+      FutureOr<void> Function(String, bool) self, SseSerializer serializer);
+
+  @protected
   void sse_encode_DartFn_Inputs__Output_unit(
       FutureOr<void> Function() self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_DartFn_Inputs_bool_Output_unit(
+      FutureOr<void> Function(bool) self, SseSerializer serializer);
 
   @protected
   void sse_encode_DartOpaque(Object self, SseSerializer serializer);

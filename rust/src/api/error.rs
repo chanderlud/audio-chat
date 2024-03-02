@@ -24,6 +24,7 @@ pub(crate) enum ErrorKind {
     ResamplerConstruction(ResamplerConstructionError),
     Resample(ResampleError),
     KanalSend(kanal::SendError),
+    KanalReceive(kanal::ReceiveError),
     HkdfLength(InvalidLength),
     Join(JoinError),
     AddrParse(AddrParseError),
@@ -34,6 +35,8 @@ pub(crate) enum ErrorKind {
     NoInputDevice,
     InvalidContactFormat,
     InCall,
+    UnknownSampleFormat,
+    InvalidWav,
 }
 
 impl From<std::io::Error> for Error {
@@ -96,6 +99,14 @@ impl From<kanal::SendError> for Error {
     fn from(err: kanal::SendError) -> Self {
         Self {
             kind: ErrorKind::KanalSend(err),
+        }
+    }
+}
+
+impl From<kanal::ReceiveError> for Error {
+    fn from(err: kanal::ReceiveError) -> Self {
+        Self {
+            kind: ErrorKind::KanalReceive(err),
         }
     }
 }
@@ -172,6 +183,7 @@ impl Display for Error {
                     format!("Resampler construction error: {}", err),
                 ErrorKind::Resample(ref err) => format!("Resample error: {}", err),
                 ErrorKind::KanalSend(ref err) => format!("Kanal send error: {}", err),
+                ErrorKind::KanalReceive(ref err) => format!("Kanal receive error: {}", err),
                 ErrorKind::HkdfLength(ref err) => format!("HKDF length error: {}", err),
                 ErrorKind::Join(ref err) => format!("Join error: {}", err),
                 ErrorKind::Base64(ref err) => format!("Base64 error: {}", err),
@@ -182,6 +194,8 @@ impl Display for Error {
                 ErrorKind::NoInputDevice => "No input device found".to_string(),
                 ErrorKind::InvalidContactFormat => "Invalid contact format".to_string(),
                 ErrorKind::InCall => "Cannot change this option while a call is active".to_string(),
+                ErrorKind::UnknownSampleFormat => "Unknown sample format".to_string(),
+                ErrorKind::InvalidWav => "Invalid WAV file".to_string(),
             }
         )
     }
@@ -211,6 +225,18 @@ impl Error {
             kind: ErrorKind::InCall,
         }
     }
+
+    pub(crate) fn unknown_sample_format() -> Self {
+        Self {
+            kind: ErrorKind::UnknownSampleFormat,
+        }
+    }
+
+    pub(crate) fn invalid_wav() -> Self {
+        Self {
+            kind: ErrorKind::InvalidWav,
+        }
+    }
 }
 
 pub struct DartError {
@@ -222,5 +248,11 @@ impl From<Error> for DartError {
         Self {
             message: err.to_string(),
         }
+    }
+}
+
+impl From<String> for DartError {
+    fn from(message: String) -> Self {
+        Self { message }
     }
 }

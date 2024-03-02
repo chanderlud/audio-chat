@@ -52,6 +52,7 @@ class SoundPlayer extends RustOpaque {
       RustLib.instance.api
           .soundPlayerNew(outputVolume: outputVolume, hint: hint);
 
+  /// Public play function
   Future<SoundHandle> play({required List<int> bytes, dynamic hint}) =>
       RustLib.instance.api.soundPlayerPlay(
         that: this,

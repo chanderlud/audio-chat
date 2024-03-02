@@ -1,15 +1,19 @@
-use std::collections::VecDeque;
+use std::collections::HashMap;
 use std::mem;
 pub use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicBool, AtomicU16};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherCoreWrapper, StreamCipherSeek};
 use aes::Aes256;
 use atomic_float::AtomicF32;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
+use chrono::{DateTime, Utc};
+use compressor::Compressor;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Host, Stream};
 use ctr::{Ctr128BE, CtrCore};
@@ -25,22 +29,21 @@ use rand::rngs::OsRng;
 use rand::Rng;
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelRefMutIterator;
+use rsntp::AsyncSntpClient;
 use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
 use sha2::Sha256;
-use std::sync::atomic::{AtomicBool, AtomicU16};
-use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
-use tokio::select;
 use tokio::sync::{Mutex, Notify};
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
+use tokio::{io, select};
 use uuid::Uuid;
 use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};
 
 use crate::api::error::{DartError, Error, ErrorKind};
-use crate::api::items::{Hello, Identity};
+use crate::api::items::{message, AudioHeader, Hello, Identity, Message, Ports};
 use crate::api::logger;
 use crate::frb_generated::{StreamSink, FLUTTER_RUST_BRIDGE_HANDLER};
 
@@ -58,7 +61,7 @@ const RESAMPLER_PARAMETERS: SincInterpolationParameters = SincInterpolationParam
     oversampling_factor: 256,
     window: WindowFunction::BlackmanHarris2,
 };
-const RECEIVE_TIMEOUT: Duration = Duration::from_secs(1);
+const RECEIVE_TIMEOUT: Duration = Duration::from_secs(2);
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 const SALT: [u8; 32] = hex!("04acee810b938239a6d2a09c109af6e3eaedc961fc66b9b6935a441c2690e336");
 
@@ -82,6 +85,9 @@ pub struct AudioChat {
 
     /// The factor to adjust the output volume by
     output_volume: Arc<AtomicF32>,
+
+    /// Enables rnnoise denoising
+    denoise: Arc<AtomicBool>,
 
     /// Notifies the call to end
     end_call: Arc<Notify>,
@@ -107,8 +113,14 @@ pub struct AudioChat {
     /// Disables the input stream
     muted: Arc<AtomicBool>,
 
-    /// Prompts the user to accept or reject the call
-    accept_call: Arc<Mutex<dyn Fn(Contact) -> DartFnFuture<bool> + Send>>,
+    /// Keeps track of and controls the controllers
+    controller_states: Arc<Mutex<HashMap<String, Arc<ControllerState>>>>,
+
+    /// Used for producing validation timestamps
+    time: Arc<Mutex<SyncedTime>>,
+
+    /// Prompts the user to accept a call
+    accept_call: Arc<Mutex<dyn Fn(String) -> DartFnFuture<bool> + Send>>,
 
     /// Alerts the UI that a call has ended
     call_ended: Arc<Mutex<dyn Fn(String) -> DartFnFuture<()> + Send>>,
@@ -118,6 +130,15 @@ pub struct AudioChat {
 
     /// Alerts the UI that the call has connected
     connected: Arc<Mutex<dyn Fn() -> DartFnFuture<()> + Send>>,
+
+    /// Notifies the frontend that the call has disconnected or reconnected
+    call_state: Arc<Mutex<dyn Fn(bool) -> DartFnFuture<()> + Send>>,
+
+    /// Alerts the UI when a contact comes online or goes offline
+    contact_status: Arc<Mutex<dyn Fn(String, bool) -> DartFnFuture<()> + Send>>,
+
+    /// Starts a controller for each of the UI's contacts
+    start_controllers: Arc<Mutex<dyn Fn(AudioChat) -> DartFnFuture<()> + Send>>,
 }
 
 impl AudioChat {
@@ -130,54 +151,91 @@ impl AudioChat {
         rms_threshold: f32,
         input_volume: f32,
         output_volume: f32,
-        accept_call: impl Fn(Contact) -> DartFnFuture<bool> + Send + 'static,
+        denoise: bool,
+        accept_call: impl Fn(String) -> DartFnFuture<bool> + Send + 'static,
         call_ended: impl Fn(String) -> DartFnFuture<()> + Send + 'static,
         get_contact: impl Fn(String) -> DartFnFuture<Option<Contact>> + Send + 'static,
         connected: impl Fn() -> DartFnFuture<()> + Send + 'static,
+        call_state: impl Fn(bool) -> DartFnFuture<()> + Send + 'static,
+        contact_status: impl Fn(String, bool) -> DartFnFuture<()> + Send + 'static,
+        start_controllers: impl Fn(AudioChat) -> DartFnFuture<()> + Send + 'static,
     ) -> AudioChat {
+        let key_bytes: [u8; 32] = signing_key.try_into().unwrap();
+
+        let host = cpal::default_host();
+
         let chat = Self {
             listen_port: Arc::new(AtomicU16::new(listen_port)),
             receive_port: Arc::new(AtomicU16::new(receive_port)),
-            host: Arc::new(cpal::default_host()),
+            host: Arc::new(host),
             rms_threshold: Arc::new(AtomicF32::new(db_to_multiplier(rms_threshold))),
             input_volume: Arc::new(AtomicF32::new(db_to_multiplier(input_volume))),
             output_volume: Arc::new(AtomicF32::new(db_to_multiplier(output_volume))),
+            denoise: Arc::new(AtomicBool::new(denoise)),
             end_call: Default::default(),
             stop_listener: Default::default(),
             input_device: Default::default(),
             output_device: Default::default(),
-            secret_key: SecretKey::from(
-                <Vec<u8> as TryInto<[u8; 32]>>::try_into(signing_key).unwrap(),
-            ),
+            secret_key: SecretKey::from(key_bytes),
             in_call: Default::default(),
             deafened: Default::default(),
             muted: Default::default(),
+            controller_states: Default::default(),
+            time: Default::default(),
             accept_call: Arc::new(Mutex::new(accept_call)),
             call_ended: Arc::new(Mutex::new(call_ended)),
             get_contact: Arc::new(Mutex::new(get_contact)),
             connected: Arc::new(Mutex::new(connected)),
+            call_state: Arc::new(Mutex::new(call_state)),
+            contact_status: Arc::new(Mutex::new(contact_status)),
+            start_controllers: Arc::new(Mutex::new(start_controllers)),
         };
 
-        let chat_clone = chat.clone();
+        // start the time synchronization background thread
+        spawn(synchronize(chat.time.clone()));
 
-        spawn(async move {
-            if let Err(error) = chat_clone.listener().await {
-                error!("Listener failed: {:?}", error);
-            }
-        });
+        // start the listener
+        let chat_clone = chat.clone();
+        spawn(async move { chat_clone.listener().await });
+
+        // start the controllers
+        (chat.start_controllers.lock().await)(chat.clone()).await;
 
         chat
     }
 
     /// The public say_hello function
-    pub async fn say_hello(&self, contact: &Contact) -> std::result::Result<bool, DartError> {
-        debug!("say hello called for {}", contact.nickname);
-        self._say_hello(contact).await.map_err(DartError::from)
+    pub async fn say_hello(&self, contact: &Contact) -> std::result::Result<(), DartError> {
+        if let Some(state) = self.controller_states.lock().await.get(&contact.id) {
+            state.start.notify_one();
+            Ok(())
+        } else {
+            Err(String::from("No controller active for contact").into())
+        }
+    }
+
+    /// Tries to start a controller for a contact
+    pub async fn connect(&self, contact: &Contact) {
+        if let Err(error) = self._connect(contact).await {
+            error!("Error connecting to {}: {}", contact.nickname, error);
+        }
     }
 
     /// Ends the call (if there is one)
-    pub async fn end_call(&self) {
+    #[frb(sync)]
+    pub fn end_call(&self) {
         self.end_call.notify_waiters();
+    }
+
+    /// Restarts the controllers
+    pub async fn restart_controllers(&self) {
+        for state in self.controller_states.lock().await.values() {
+            if !state.in_call.load(Relaxed) {
+                state.stop.notify_one();
+            }
+        }
+
+        (self.start_controllers.lock().await)(self.clone()).await;
     }
 
     /// Restarts the listener
@@ -186,15 +244,20 @@ impl AudioChat {
             return Err(Error::in_call().into());
         }
 
-        self.stop_listener.notify_waiters();
+        self.restart_controllers().await;
+        self.stop_listener.notify_one();
 
         let chat_clone = self.clone();
-        spawn(async move {
-            if let Err(error) = chat_clone.listener().await {
-                error!("Listener failed: {:?}", error);
-            }
-        });
+        spawn(async move { chat_clone.listener().await });
+
         Ok(())
+    }
+
+    /// Stop a specific controller
+    pub async fn stop_controller(&self, contact: &Contact) {
+        if let Some(state) = self.controller_states.lock().await.remove(&contact.id) {
+            state.stop.notify_one();
+        }
     }
 
     #[frb(sync)]
@@ -252,106 +315,133 @@ impl AudioChat {
         Ok((input_devices, output_devices))
     }
 
-    /// Initiate a call with the contact
-    async fn _say_hello(&self, contact: &Contact) -> Result<bool> {
-        let mut stream = timeout(HELLO_TIMEOUT, TcpStream::connect(contact.address)).await??;
-
-        // generate our public key and send it to the callee
-        let secret = EphemeralSecret::random();
-        let our_public = PublicKey::from(&secret);
-        stream.write_all(our_public.as_bytes()).await?;
-
-        // receive the callee's public key
-        let their_public = read_public(&mut stream).await?;
-        let shared_secret = secret.diffie_hellman(&their_public);
-
-        let chat_clone = self.clone();
-        let contact = contact.clone();
-
-        spawn(async move {
-            if let Err(error) = chat_clone
-                .handshake(stream, contact.address.ip(), true, contact, shared_secret)
-                .await
-            {
-                error!("Call failed [caller]: {:?}", error);
-            }
-            chat_clone.in_call.store(false, Relaxed);
-        });
-
-        Ok(true)
+    /// Changing the denoise flag will not affect the current call
+    #[frb(sync)]
+    pub fn set_denoise(&self, denoise: bool) {
+        self.denoise.store(denoise, Relaxed);
     }
 
+    /// Internal connect function
+    async fn _connect(&self, contact: &Contact) -> Result<()> {
+        let address = contact.address;
+
+        let mut stream = timeout(HELLO_TIMEOUT, TcpStream::connect(address)).await??;
+        stream.write_u16(self.listen_port.load(Relaxed)).await?;
+
+        self.start_controller(stream, contact.clone(), false).await;
+        Ok(())
+    }
+
+    /// Listens for incoming connections and starts new controllers
     async fn listener(&self) -> Result<()> {
         let listener = TcpListener::bind(("0.0.0.0", self.listen_port.load(Relaxed))).await?;
 
-        let listener_loop = async {
-            while let Ok((mut stream, address)) = listener.accept().await {
-                let future = async {
-                    let their_public = read_public(&mut stream).await?;
+        let future = async {
+            while let Ok((mut stream, mut address)) = listener.accept().await {
+                // a connecting client will send its listen port first
+                match stream.read_u16().await {
+                    Ok(port) => {
+                        // set the port for the address to correctly identify the contact
+                        address.set_port(port);
+                        let address_str = address.to_string();
 
-                    let remote_address = address.ip();
-                    let contact = (self.get_contact.lock().await)(remote_address.to_string()).await;
-
-                    if let Some(contact) = contact {
-                        debug!("Prompting for call from {}", contact.nickname);
-
-                        if !(self.accept_call.lock().await)(contact.clone()).await {
-                            return Ok(());
+                        if let Some(contact) = (self.get_contact.lock().await)(address_str).await {
+                            self.start_controller(stream, contact, true).await;
+                        } else {
+                            error!("connection from unknown contact: {}", address);
                         }
-
-                        let secret = EphemeralSecret::random();
-                        let our_public = PublicKey::from(&secret);
-                        stream.write_all(our_public.as_bytes()).await?;
-
-                        let shared_secret = secret.diffie_hellman(&their_public);
-                        self.handshake(stream, remote_address, false, contact, shared_secret)
-                            .await?;
-                    } else {
-                        warn!("Unknown contact: {}", remote_address);
                     }
-
-                    Ok::<(), Error>(())
-                };
-
-                if let Err(error) = future.await {
-                    error!("Callee Error: {:?}", error);
+                    Err(error) => error!("Error reading ports from {} {}", address, error),
                 }
-
-                self.in_call.store(false, Relaxed);
             }
         };
 
         select! {
-            result = listener_loop => Ok(result),
-            _ = self.stop_listener.notified() => {
-                debug!("Listener stopped");
-                Ok(())
-            }
+            _ = future => {},
+            _ = self.stop_listener.notified() => debug!("Listener stopped"),
         }
+
+        Ok(())
     }
 
-    /// Set up the cryptography and negotiate the audio ports
-    async fn handshake(
+    /// A wrapper which starts the controller and registers it in the controller states
+    async fn start_controller(&self, stream: TcpStream, contact: Contact, listener: bool) {
+        // alert the UI that this contact is now online
+        (self.contact_status.lock().await)(contact.id.clone(), true).await;
+
+        // create the state and a clone of it for the controller
+        let state = Default::default();
+        let state_clone = Arc::clone(&state);
+
+        // handle situations where a controller is already running for the contact
+        if let Some(controller) = self
+            .controller_states
+            .lock()
+            .await
+            .insert(contact.id.clone(), state)
+        {
+            if !controller.in_call.load(Relaxed) {
+                debug!("stopping existing controller for {}", contact.nickname);
+                controller.stop.notify_one();
+            } else {
+                warn!("{} is already in a call", contact.nickname);
+            }
+        }
+
+        let chat_clone = self.clone();
+        spawn(async move {
+            let id = contact.id.clone();
+            let nickname = contact.nickname.clone();
+
+            if let Err(error) = chat_clone
+                .controller(stream, contact, state_clone, listener)
+                .await
+            {
+                error!("Controller error: {}", error);
+            } else {
+                debug!("Controller for {} ended", nickname);
+            }
+
+            // cleanup
+            chat_clone.controller_states.lock().await.remove(&id);
+            (chat_clone.contact_status.lock().await)(id, false).await;
+        });
+    }
+
+    /// The controller for each online contact
+    async fn controller(
         &self,
         mut stream: TcpStream,
-        remote_address: IpAddr,
-        caller: bool,
         contact: Contact,
-        shared_secret: SharedSecret,
+        state: Arc<ControllerState>,
+        listener: bool,
     ) -> Result<()> {
-        self.in_call.store(true, Relaxed);
+        // perform the key exchange
+        let shared_secret = key_exchange(&mut stream).await?;
 
         // HKDF for the key derivation
         let hk = Hkdf::<Sha256>::new(Some(&SALT), shared_secret.as_bytes());
 
-        // create the stream, send, and receive ciphers
-        let mut stream_cipher = cipher_factory(&hk, b"stream-key", b"stream-iv")?;
-        let mut send_cipher = cipher_factory(&hk, b"send-key", b"send-iv")?;
-        let mut receive_cipher = cipher_factory(&hk, b"receive-key", b"receive-iv")?;
+        // stream send cipher
+        let mut ss_cipher = cipher_factory(&hk, b"ss-key", b"ss-iv")?;
+        // stream read cipher
+        let mut sr_cipher = cipher_factory(&hk, b"sr-key", b"sr-iv")?;
+
+        // one client always has the ciphers reversed
+        if listener {
+            mem::swap(&mut ss_cipher, &mut sr_cipher);
+        }
 
         // create a random nonce
         let mut nonce = [0; 128];
-        OsRng.fill(&mut nonce);
+        OsRng.fill(&mut nonce[16..]);
+
+        // adds the current timestamp to the nonce
+        {
+            let time = self.time.lock().await;
+            let timestamp = time.current_timestamp();
+            nonce[0..16].copy_from_slice(&timestamp.to_be_bytes());
+        }
 
         // sign the nonce
         let signing_key = SigningKey::from(self.secret_key);
@@ -359,23 +449,145 @@ impl AudioChat {
 
         // create the identity message
         let message = Identity::new(nonce, signature);
-        let identity = exchange_messages(&mut stream, &message, &mut stream_cipher, caller).await?;
+        write_message(&mut stream, &message, &mut ss_cipher).await?;
+
+        // receive the identity message
+        let identity: Identity = read_message(&mut stream, &mut sr_cipher).await?;
+
+        let timestamp = u128::from_be_bytes(identity.nonce[0..16].try_into().unwrap());
+
+        let delta = {
+            let time = self.time.lock().await;
+            let current_timestamp = time.current_timestamp();
+
+            if current_timestamp > timestamp {
+                current_timestamp - timestamp
+            } else {
+                timestamp - current_timestamp
+            }
+        };
+
+        // a max delta of 60 seconds should prevent replay attacks
+        if delta > 60_000_000 {
+            warn!("Rejecting handshake due to high delta of {}ms", delta / 1_000);
+            return Ok(());
+        } else {
+            debug!("delta: {}", delta);
+        }
 
         // verify the signature
         let verifying_key = VerifyingKey::from_bytes(&contact.verifying_key)?;
         let signature = Signature::from_slice(&identity.signature)?;
         verifying_key.verify_strict(&identity.nonce, &signature)?;
 
-        // create the UDP socket
+        // seeds the IV so subsequent calls in the same session are unique
+        let mut i = 0;
+
+        loop {
+            let future = async {
+                debug!("[{}] controller waiting for event", contact.nickname);
+
+                select! {
+                    result = read_message(&mut stream, &mut sr_cipher) => {
+                        result?; // ensure that a valid Hello message was received
+                        state.in_call.store(true, Relaxed); // blocks the controller from being restarted
+
+                        if self.in_call.load(Relaxed) {
+                            // do not accept another call if already in one
+                            let busy = Message::busy();
+                            write_message(&mut stream, &busy, &mut ss_cipher).await
+                        } else if (self.accept_call.lock().await)(contact.id.clone()).await {
+                            // respond with hello if the call is accepted
+                            let hello = Message::hello();
+                            write_message(&mut stream, &hello, &mut ss_cipher).await?;
+
+                            i += 1;
+                            self.handshake(&mut stream, contact.address.ip(), false, &hk, (&mut ss_cipher, &mut sr_cipher), i).await
+                        } else {
+                            // reject the call if not accepted
+                            let reject = Message::reject();
+                            write_message(&mut stream, &reject, &mut ss_cipher).await
+                        }
+                    }
+                    _ = state.start.notified() => {
+                        state.in_call.store(true, Relaxed); // blocks the controller from being restarted
+
+                        // queries the other client for a call
+                        let hello = Hello::new();
+                        write_message(&mut stream, &hello, &mut ss_cipher).await?;
+
+                        // handles a variety of messages sent in response to Hello
+                        match read_message(&mut stream, &mut sr_cipher).await? {
+                            Message { message: Some(message::Message::Hello(_)) } => {
+                                i += 1;
+                                self.handshake(&mut stream, contact.address.ip(), true, &hk, (&mut ss_cipher, &mut sr_cipher), i).await?;
+                            }
+                            Message { message: Some(message::Message::Reject(_)) } => {
+                                (self.call_ended.lock().await)(format!("{} did not accept the call", contact.nickname)).await;
+                            },
+                            Message { message: Some(message::Message::Busy(_)) } => {
+                                (self.call_ended.lock().await)(format!("{} is busy", contact.nickname)).await;
+                            }
+                            _ => warn!("received unexpected message from {}", contact.nickname),
+                        }
+
+                        Ok(())
+                    }
+                }
+            };
+
+            select! {
+                _ = state.stop.notified() => break Ok(()),
+                result = future => {
+                    if let Err(error) = result {
+                        if state.in_call.load(Relaxed) {
+                            (self.call_ended.lock().await)(error.to_string()).await;
+                        }
+
+                        match error.kind {
+                            ErrorKind::Io(error) => match error.kind() {
+                                // these errors indicate that the stream is closed
+                                io::ErrorKind::ConnectionReset | io::ErrorKind::UnexpectedEof => break Ok(()),
+                                _ => error!("Controller io error: {}", error),
+                            }
+                            _ => error!("Controller error: {}", error),
+                        }
+                    }
+                }
+            }
+
+            // the controller is now safe to restart
+            state.in_call.store(false, Relaxed);
+        }
+    }
+
+    /// Set up the cryptography and negotiate the audio ports
+    async fn handshake(
+        &self,
+        stream: &mut TcpStream,
+        remote_address: IpAddr,
+        caller: bool,
+        hk: &Hkdf<Sha256>,
+        stream_cipher: (&mut AesCipher, &mut AesCipher),
+        iv_seed: i64,
+    ) -> Result<()> {
+        // create the send and receive ciphers
+        let mut send_cipher = cipher_factory(hk, b"send-key", &iv_seed.to_be_bytes())?;
+        let mut receive_cipher = cipher_factory(hk, b"receive-key", &(iv_seed + 1).to_be_bytes())?;
+
         let receive_port = self.receive_port.load(Relaxed);
+
+        // build the ports message
+        let message = Ports::new(receive_port);
+        // send the ports message
+        write_message(stream, &message, stream_cipher.0).await?;
+        // receive the ports message
+        let ports: Ports = read_message(stream, stream_cipher.1).await?;
+
+        // create the UDP socket
         let socket = Arc::new(UdpSocket::bind(("0.0.0.0", receive_port)).await?);
-
-        // build the hello message
-        let message = Hello::new(receive_port);
-        let hello = exchange_messages(&mut stream, &message, &mut stream_cipher, caller).await?;
-
         // connect to the remote address on the hello port
-        socket.connect((remote_address, hello.port as u16)).await?;
+        socket.connect((remote_address, ports.port as u16)).await?;
 
         if caller {
             // the caller always has the ciphers reversed
@@ -384,17 +596,20 @@ impl AudioChat {
 
         // alert the UI that the call has connected
         (self.connected.lock().await)().await;
+        self.in_call.store(true, Relaxed);
 
         let result = self
             .call(
                 Arc::clone(&socket),
-                &mut stream,
+                stream,
                 stream_cipher,
                 receive_cipher,
                 send_cipher,
-                caller,
             )
             .await;
+
+        // the call has ended
+        self.in_call.store(false, Relaxed);
 
         match result {
             Ok(()) => Ok(()),
@@ -418,12 +633,14 @@ impl AudioChat {
     async fn call(
         &self,
         socket: Arc<UdpSocket>,
-        _stream: &mut TcpStream,
-        _stream_cipher: AesCipher,
+        stream: &mut TcpStream,
+        stream_cipher: (&mut AesCipher, &mut AesCipher),
         send_cipher: AesCipher,
         receive_cipher: AesCipher,
-        _caller: bool,
     ) -> Result<()> {
+        // the denoise flag is constant for the entire call
+        let denoise = self.denoise.load(Relaxed);
+
         // get the output device and its default configuration
         let output_device = get_output_device(&self.output_device, &self.host).await?;
         let output_config = output_device.default_output_config()?;
@@ -434,26 +651,64 @@ impl AudioChat {
         let input_config = input_device.default_input_config()?;
         debug!("input_device: {:?}", input_device.name());
 
+        let mut audio_header = AudioHeader::from(&input_config);
+
+        // rnnoise requires a 48kHz sample rate
+        if denoise {
+            audio_header.sample_rate = 48_000;
+        }
+
+        // send the audio header
+        write_message(stream, &audio_header, stream_cipher.0).await?;
+        let remote_input_config: AudioHeader = read_message(stream, stream_cipher.1).await?;
+
         // the number of samples to hold in a channel
-        let size = 4_800;
+        let size = 2_400;
 
-        // sends messages from the input stream to the sending socket
-        let (input_sender, input_receiver) = bounded_async::<[f32; 480]>(size / 480);
-        // sends raw data from the receiving socket to the processor
+        // sends messages from the input processor to the sending socket
+        let (processed_input_sender, processed_input_receiver) =
+            bounded_async::<ProcessorToOutput>(size / 480);
+        // sends raw data from the receiving socket to the output processor
         let (output_sender, output_receiver) = bounded_async::<OutputToProcessor>(size / 480);
-        // sends the resampled data to the output stream
-        let (processed_sender, processed_receiver) = bounded::<f32>(size);
+        // sends samples from the output processor to the output stream
+        let (processed_output_sender, processed_output_receiver) = bounded::<f32>(size);
+        // sends samples from the input to the input processor
+        let (input_sender, input_receiver) = bounded::<f32>(size);
 
-        // the ratio of the output sample rate to the standard sample rate
-        let ratio = output_config.sample_rate().0 as f64 / 48_000_f64;
+        // get a reference to input volume for the processor
+        let input_volume = Arc::clone(&self.input_volume);
+        // get a reference to the rms threshold for the processor
+        let rms_threshold = Arc::clone(&self.rms_threshold);
+        // get a reference to the muted flag for the processor
+        let muted = Arc::clone(&self.muted);
+        // get a sync version of the processed input sender
+        let processed_input_sender = processed_input_sender.to_sync();
+        // the input processor needs the sample rate
+        let sample_rate = input_config.sample_rate().0 as f64;
+
+        // spawn the input processor thread
+        let input_processor_handle = std::thread::spawn(move || {
+            input_processor(
+                input_receiver,
+                processed_input_sender,
+                sample_rate,
+                input_volume,
+                rms_threshold,
+                muted,
+                denoise,
+            )
+        });
+
+        // the ratio of the output sample rate to the remote input sample rate
+        let ratio = output_config.sample_rate().0 as f64 / remote_input_config.sample_rate as f64;
         // get a reference to output volume for the processor
         let output_volume = Arc::clone(&self.output_volume);
 
-        // spawn the processor thread
-        let processor_handle = std::thread::spawn(move || {
-            processor(
+        // spawn the output processor thread
+        let output_processor_handle = std::thread::spawn(move || {
+            output_processor(
                 output_receiver.to_sync(),
-                processed_sender,
+                processed_output_sender,
                 ratio,
                 output_volume,
             )
@@ -461,22 +716,14 @@ impl AudioChat {
 
         // sends single samples to the socket
         let input_channels = input_config.channels() as usize;
-        // create a sync sender for the input stream
-        let sync_input_sender = input_sender.to_sync();
-        // create a buffer to store samples left over from the previous frame
-        let mut remaining_samples = Vec::new();
 
         let input_stream = SendStream {
             stream: input_device.build_input_stream(
                 &input_config.into(),
                 move |input, _: &_| {
-                    // add the samples for the first channel for this frame to the remaining samples
                     for frame in input.chunks(input_channels) {
-                        remaining_samples.push(frame[0]);
+                        _ = input_sender.try_send(frame[0]);
                     }
-
-                    // process all the samples and store the remaining samples for the next frame
-                    remaining_samples = process_input_data(&remaining_samples, &sync_input_sender);
                 },
                 move |err| {
                     error!("Error in input stream: {}", err);
@@ -488,7 +735,6 @@ impl AudioChat {
         // get the output channels for chunking the output
         let output_channels = output_config.channels() as usize;
         let deafened = Arc::clone(&self.deafened);
-        let mut sample_generator = SlidingWindow::new(FRAME_SIZE * 4);
 
         let output_stream = SendStream {
             stream: output_device.build_output_stream(
@@ -500,13 +746,7 @@ impl AudioChat {
                     }
 
                     for frame in output.chunks_mut(output_channels) {
-                        // get the next sample from the processor
-                        let sample = match processed_receiver.try_recv() {
-                            // if the processor has a sample, process it through the sliding window
-                            Ok(Some(sample)) => sample_generator.process_sample(sample),
-                            // if there are no frames available, generate a sample
-                            Ok(None) | Err(_) => sample_generator.generate_sample(),
-                        };
+                        let sample = processed_output_receiver.recv().unwrap_or(0_f32);
 
                         // write the sample to all the channels
                         for channel in frame.iter_mut() {
@@ -526,13 +766,10 @@ impl AudioChat {
         output_stream.stream.play()?;
 
         let input_handle = spawn(socket_input(
-            input_receiver,
+            processed_input_receiver,
             Arc::clone(&socket),
             send_cipher,
             Arc::clone(&self.end_call),
-            Arc::clone(&self.input_volume),
-            Arc::clone(&self.rms_threshold),
-            Arc::clone(&self.muted),
         ));
 
         let output_handle = spawn(socket_output(
@@ -540,10 +777,16 @@ impl AudioChat {
             Arc::clone(&socket),
             receive_cipher,
             Arc::clone(&self.end_call),
+            Arc::clone(&self.call_state),
         ));
 
-        let processor_future = spawn_blocking_with(
-            move || processor_handle.join(),
+        let input_processor_future = spawn_blocking_with(
+            move || input_processor_handle.join(),
+            FLUTTER_RUST_BRIDGE_HANDLER.thread_pool(),
+        );
+
+        let output_processor_future = spawn_blocking_with(
+            move || output_processor_handle.join(),
             FLUTTER_RUST_BRIDGE_HANDLER.thread_pool(),
         );
 
@@ -559,7 +802,9 @@ impl AudioChat {
                 (self.call_ended.lock().await)(message).await
             },
             // this unwrap is safe because the processor thread will not panic
-            result = processor_future => result?.unwrap()?,
+            result = output_processor_future => result?.unwrap()?,
+            // this unwrap is safe because the processor thread will not panic
+            result = input_processor_future => result?.unwrap()?,
             _ = self.end_call.notified() => (self.call_ended.lock().await)(String::new()).await,
         }
 
@@ -570,6 +815,7 @@ impl AudioChat {
         Ok(())
     }
 
+    /// Returns either the default or the user specified device
     async fn get_input_device(&self) -> Result<Device> {
         match *self.input_device.lock().await {
             Some(ref name) => self
@@ -605,7 +851,7 @@ enum EndReason {
     Error,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug)]
 #[frb(opaque)]
 pub struct Contact {
     /// A random ID to identify the contact
@@ -711,11 +957,6 @@ impl Contact {
     }
 
     #[frb(sync)]
-    pub fn equals(&self, other: &Contact) -> bool {
-        self == other
-    }
-
-    #[frb(sync)]
     pub fn id(&self) -> String {
         self.id.clone()
     }
@@ -737,71 +978,55 @@ impl Contact {
     }
 }
 
-struct SlidingWindow {
-    window: VecDeque<f32>,
-    capacity: usize,
-    generated_count: usize,
-}
-
-impl SlidingWindow {
-    fn new(capacity: usize) -> Self {
-        Self {
-            window: VecDeque::with_capacity(capacity),
-            capacity,
-            generated_count: 0,
-        }
-    }
-
-    /// Processes a real sample
-    fn process_sample(&mut self, mut sample: f32) -> f32 {
-        if self.generated_count > 0 {
-            self.generated_count -= 1;
-
-            if let Some(last) = self.window.back() {
-                let difference = sample - last;
-                sample = *last + difference * (self.generated_count as f32 / self.capacity as f32);
-            }
-        }
-
-        self._add_sample(sample);
-        sample
-    }
-
-    /// Generates a sample
-    fn generate_sample(&mut self) -> f32 {
-        if self.window.is_empty() {
-            return 0_f32;
-        }
-
-        let mut sample = self.interpolate_sample();
-        sample -= sample * (self.generated_count as f32 / self.capacity as f32);
-
-        self._add_sample(sample);
-        self.generated_count += 1;
-
-        sample
-    }
-
-    // TODO a more sophisticated interpolation method
-    fn interpolate_sample(&self) -> f32 {
-        let sum: f32 = self.window.iter().sum();
-        sum / self.window.len() as f32
-    }
-
-    /// Adds a sample to the window and removes the oldest sample if the window is full
-    fn _add_sample(&mut self, sample: f32) {
-        if self.window.len() == self.capacity {
-            self.window.pop_front();
-        }
-
-        self.window.push_back(sample);
-    }
-}
-
-/// A message from the receiving socket to the processor
+/// A message from the receiving socket to the output processor
 enum OutputToProcessor {
     Data(Box<TransferBuffer>),
     Silence,
+}
+
+/// A message from the input processor to the sending socket
+enum ProcessorToOutput {
+    Data(Box<[f32; 480]>),
+    Silence,
+}
+
+/// Keeps track of the active controllers
+#[derive(Default)]
+struct ControllerState {
+    /// Signals the controller to initiate a call
+    start: Notify,
+
+    /// Stops the controller
+    stop: Notify,
+
+    /// If the controller is in a call
+    in_call: AtomicBool,
+}
+
+/// Produces current timestamps with high precision
+struct SyncedTime {
+    datetime: DateTime<Utc>,
+    instant: Instant,
+}
+
+impl Default for SyncedTime {
+    fn default() -> Self {
+        Self::new(Utc::now())
+    }
+}
+
+impl SyncedTime {
+    fn new(datetime: DateTime<Utc>) -> Self {
+        Self {
+            datetime,
+            instant: Instant::now(),
+        }
+    }
+
+    /// Returns the current timestamp in microseconds
+    fn current_timestamp(&self) -> u128 {
+        self.datetime.timestamp_micros() as u128 + self.instant.elapsed().as_micros()
+    }
 }
 
 #[frb(sync)]
@@ -854,114 +1079,49 @@ async fn read_message<M: prost::Message + Default, C: StreamCipher>(
     Ok(message)
 }
 
-/// A common message exchange pattern
-async fn exchange_messages<M: prost::Message + Default, C: StreamCipher>(
-    stream: &mut TcpStream,
-    message: &M,
-    cipher: &mut C,
-    caller: bool,
-) -> Result<M> {
-    if caller {
-        // the caller sends the message first
-        write_message(stream, message, cipher).await?;
-        // then receives the message from the callee
-        read_message(stream, cipher).await
-    } else {
-        // callee receives the message from the caller
-        let remote_identity = read_message(stream, cipher).await;
-        // then sends the message
-        write_message(stream, message, cipher).await?;
-        remote_identity
-    }
-}
-
-/// Processes the input data and sends it to the socket
-fn process_input_data(input: &[f32], sender: &Sender<[f32; 480]>) -> Vec<f32> {
-    for frame in input.chunks(FRAME_SIZE) {
-        if frame.len() == FRAME_SIZE {
-            _ = sender.try_send(frame.try_into().unwrap());
-        } else {
-            // if input.len is not a multiple of FRAME_SIZE, the last frame is incomplete
-            return frame.to_vec();
-        }
-    }
-
-    Vec::new()
-}
-
-/// Receives frames of audio data from the input stream and sends them to the socket
+/// Receives frames of audio data from the input processor and sends them to the socket
 async fn socket_input<C: StreamCipher>(
-    input_receiver: AsyncReceiver<[f32; 480]>,
+    input_receiver: AsyncReceiver<ProcessorToOutput>,
     socket: Arc<UdpSocket>,
     mut cipher: C,
     notify: Arc<Notify>,
-    input_factor: Arc<AtomicF32>,
-    rms_threshold: Arc<AtomicF32>,
-    muted: Arc<AtomicBool>,
 ) -> Result<()> {
     let mut byte_buffer = [0; TRANSFER_BUFFER_SIZE + 8];
     let mut int_buffer = [0; FRAME_SIZE];
-    let mut output_buffer = [0_f32; FRAME_SIZE];
 
     let mut sequence_number = 0_u64;
-    let mut silence_length = 0; // short silence detection
-    let mut denoiser = DenoiseState::new();
-
-    // the maximum and minimum values for i16 as f32
-    let max_i16_f32 = i16::MAX as f32;
-    let min_i16_f32 = i16::MIN as f32;
 
     let future = async {
-        while let Ok(mut frame) = input_receiver.recv().await {
-            if muted.load(Relaxed) {
-                socket.send(&[0]).await?;
-                continue;
-            }
-
-            let factor = max_i16_f32 * input_factor.load(Relaxed);
-
-            // rescale the samples to -32768.0 to 32767.0 for rnnoise
-            frame.par_iter_mut().for_each(|x| {
-                *x *= factor;
-                *x = x.trunc().clamp(min_i16_f32, max_i16_f32);
-            });
-
-            // denoise the frame
-            denoiser.process_frame(&mut output_buffer, &frame);
-
-            // check if the frame is below the rms threshold
-            if calculate_rms(&output_buffer) < rms_threshold.load(Relaxed) {
-                if silence_length < 80 {
-                    silence_length += 1; // short silences are ignored
-                } else {
+        while let Ok(message) = input_receiver.recv().await {
+            match message {
+                ProcessorToOutput::Silence => {
+                    // send the silence signal
                     socket.send(&[0]).await?;
-                    continue;
                 }
-            } else {
-                silence_length = 0;
+                ProcessorToOutput::Data(frame) => {
+                    // cast the f32 samples to i16
+                    int_buffer = frame.map(|x| x as i16);
+
+                    // convert the i16 samples to bytes
+                    let bytes = unsafe {
+                        std::slice::from_raw_parts(
+                            int_buffer.as_ptr() as *const u8,
+                            int_buffer.len() * mem::size_of::<i16>(),
+                        )
+                    };
+
+                    // encrypt the audio data (unwrap is safe because we know the buffer is the correct length)
+                    cipher
+                        .apply_keystream_b2b(bytes, &mut byte_buffer[8..])
+                        .unwrap();
+
+                    // add the sequence number to the buffer
+                    byte_buffer[..8].copy_from_slice(&sequence_number.to_be_bytes());
+                    sequence_number += TRANSFER_BUFFER_SIZE as u64; // increment the sequence number
+
+                    socket.send(&byte_buffer).await?;
+                }
             }
-
-            // cast the f32 samples to i16
-            int_buffer = output_buffer.map(|x| x as i16);
-
-            // convert the i16 samples to bytes
-            let bytes = unsafe {
-                std::slice::from_raw_parts(
-                    int_buffer.as_ptr() as *const u8,
-                    int_buffer.len() * mem::size_of::<i16>(),
-                )
-            };
-
-            // encrypt the audio data
-            cipher
-                .apply_keystream_b2b(bytes, &mut byte_buffer[8..])
-                .unwrap();
-
-            // add the sequence number to the buffer
-            byte_buffer[..8].copy_from_slice(&sequence_number.to_be_bytes());
-            sequence_number += TRANSFER_BUFFER_SIZE as u64; // increment the sequence number
-
-            socket.send(&byte_buffer).await?;
         }
 
         Ok::<(), Error>(())
@@ -982,16 +1142,22 @@ async fn socket_output<C: StreamCipher + StreamCipherSeek>(
     socket: Arc<UdpSocket>,
     mut cipher: C,
     notify: Arc<Notify>,
-    // rate: f64,
+    disconnected_callback: Arc<Mutex<dyn Fn(bool) -> DartFnFuture<()> + Send>>,
 ) -> EndReason {
     let mut in_buffer = [0; TRANSFER_BUFFER_SIZE + 8];
     let mut out_buffer = [0; TRANSFER_BUFFER_SIZE];
+    let mut disconnected = false;
 
     let future = async {
         loop {
             match timeout(RECEIVE_TIMEOUT, socket.recv(&mut in_buffer)).await {
                 // normal chunk of audio data
                 Ok(Ok(len)) if len == TRANSFER_BUFFER_SIZE + 8 => {
+                    if disconnected {
+                        disconnected = false;
+                        (disconnected_callback.lock().await)(disconnected).await;
+                    }
+
                     // unwrap is safe because we know the buffer is the correct length
                     let sequence_number = u64::from_be_bytes(in_buffer[..8].try_into().unwrap());
                     let position = cipher.current_pos::<u64>();
@@ -1017,17 +1183,32 @@ async fn socket_output<C: StreamCipher + StreamCipherSeek>(
                     _ = sender.try_send(OutputToProcessor::Data(Box::new(out_buffer)));
                 }
                 // control signals
-                Ok(Ok(1)) => match in_buffer[0] {
-                    0 => _ = sender.try_send(OutputToProcessor::Silence), // silence
-                    1 => break EndReason::Ended,                          // end of call
-                    2 => break EndReason::MissingDevice, // the other party is missing a device
-                    3 => break EndReason::Error,         // the other party encountered an error
-                    _ => error!("received unknown control signal {}", in_buffer[0]),
-                },
+                Ok(Ok(1)) => {
+                    if disconnected {
+                        disconnected = false;
+                        (disconnected_callback.lock().await)(disconnected).await;
+                    }
+
+                    match in_buffer[0] {
+                        0 => _ = sender.try_send(OutputToProcessor::Silence), // silence
+                        1 => break EndReason::Ended,                          // end of call
+                        2 => break EndReason::MissingDevice, // the other party is missing a device
+                        3 => break EndReason::Error,         // the other party encountered an error
+                        _ => error!("received unknown control signal {}", in_buffer[0]),
+                    }
+                }
+                // malformed packets (never happens)
                 Ok(Ok(len)) => error!("Received {} < {} data", len, TRANSFER_BUFFER_SIZE + 8),
-                Err(_) => error!("Receiver timed out"),
+                // timeouts
+                Err(_) => {
+                    if !disconnected {
+                        disconnected = true;
+                        (disconnected_callback.lock().await)(disconnected).await;
+                    }
+                }
+                // socket errors
                 Ok(Err(error)) => match error.kind() {
-                    std::io::ErrorKind::ConnectionReset => {
+                    io::ErrorKind::ConnectionReset => {
                         error!("connection reset");
                         break EndReason::Error;
                     }
@@ -1046,18 +1227,147 @@ async fn socket_output<C: StreamCipher + StreamCipherSeek>(
     }
 }
 
+// TODO consider using a SincFixedOut resampler here
+/// Processes the audio input and sends it to the sending socket
+fn input_processor(
+    receiver: Receiver<f32>,
+    sender: Sender<ProcessorToOutput>,
+    sample_rate: f64,
+    input_factor: Arc<AtomicF32>,
+    rms_threshold: Arc<AtomicF32>,
+    muted: Arc<AtomicBool>,
+    denoise: bool,
+) -> Result<()> {
+    // the maximum and minimum values for i16 as f32
+    let max_i16_f32 = i16::MAX as f32;
+    let min_i16_f32 = i16::MIN as f32;
+
+    let ratio = if denoise {
+        // rnnoise requires a 48kHz sample rate
+        48_000.0 / sample_rate
+    } else {
+        // do not resample if not using rnnoise
+        1_f64
+    };
+
+    // rubato requires 10 extra spaces in the output buffer as a safety margin
+    let post_len = (FRAME_SIZE as f64 + 10_f64) as usize;
+    let in_len = (FRAME_SIZE as f64 / ratio).ceil() as usize;
+
+    let mut resampler = resampler_factory(ratio, 1, in_len)?;
+    let mut denoiser = denoise.then_some(DenoiseState::new());
+    let mut compressor = Compressor::peak_min(1_000_f64, 1_000_f64, sample_rate, 0.1, 100_f32);
+
+    // the input for the resampler
+    let mut pre_buf = [vec![0_f32; in_len]];
+    // the output for the resampler
+    let mut post_buf = [vec![0_f32; post_len]];
+    // the output for rnnoise
+    let mut out_buf = [0_f32; FRAME_SIZE];
+
+    // the position in pre_buf
+    let mut position = 0;
+    // a counter user for short silence detection
+    let mut silence_length = 0_u8;
+    // avoids checking the muted state in every iteration
+    let mut is_muted = muted.load(Relaxed);
+
+    while let Ok(mut sample) = receiver.recv() {
+        // check if the muted state has changed every 100 iterations
+        if position % 100 == 0 {
+            let muted = muted.load(Relaxed);
+
+            // muted -> unmuted transition
+            if !muted && is_muted {
+                silence_length = 0;
+                position = 0;
+            }
+
+            is_muted = muted;
+        }
+
+        // sends a silence signal for every FRAME_SIZE samples if the input is muted
+        if is_muted {
+            if position > FRAME_SIZE {
+                position = 0;
+                _ = sender.try_send(ProcessorToOutput::Silence);
+            } else {
+                position += 1;
+            }
+
+            continue;
+        }
+
+        sample = compressor.next_frame([sample])[0];
+        pre_buf[0][position] = sample;
+        position += 1;
+
+        if position < in_len {
+            continue;
+        } else {
+            position = 0;
+        }
+
+        let (target_buffer, len) = if let Some(resampler) = &mut resampler {
+            // resample the data
+            let processed = resampler.process_into_buffer(&pre_buf, &mut post_buf, None)?;
+            (&mut post_buf[0], processed.1)
+        } else {
+            (&mut pre_buf[0], FRAME_SIZE)
+        };
+
+        // the first frame may be smaller than FRAME_SIZE
+        if len != FRAME_SIZE {
+            warn!("input_processor: len != FRAME_SIZE: {}", len);
+            continue;
+        }
+
+        // apply the input volume & scale the samples to -32768.0 to 32767.0
+        let factor = max_i16_f32 * input_factor.load(Relaxed);
+
+        // rescale the samples to -32768.0 to 32767.0 for rnnoise
+        target_buffer.par_iter_mut().for_each(|x| {
+            *x *= factor;
+            *x = x.trunc().clamp(min_i16_f32, max_i16_f32);
+        });
+
+        if let Some(ref mut denoiser) = denoiser {
+            // denoise the frame
+            denoiser.process_frame(&mut out_buf, &target_buffer[..len]);
+        } else {
+            out_buf = target_buffer[..len].try_into().unwrap();
+        };
+
+        // check if the frame is below the rms threshold
+        if calculate_rms(&out_buf) < rms_threshold.load(Relaxed) {
+            if silence_length < 80 {
+                silence_length += 1; // short silences are ignored
+            } else {
+                _ = sender.try_send(ProcessorToOutput::Silence);
+            }
+        } else {
+            silence_length = 0;
+            _ = sender.try_send(ProcessorToOutput::Data(Box::new(out_buf)));
+        }
+    }
+
+    debug!("Input processor ended");
+    Ok(())
+}
+
 /// Processes the audio data and sends it to the output stream
-fn processor(
+fn output_processor(
     receiver: Receiver<OutputToProcessor>,
     sender: Sender<f32>,
     ratio: f64,
     output_volume: Arc<AtomicF32>,
 ) -> Result<()> {
-    // all audio is mono
-    let mut resampler = resampler_factory(ratio, 1)?;
+    let max_i16_f32 = i16::MAX as f32;
 
-    // rubato requires 10 extra bytes in the output buffer as a safety margin
-    let post_len = (FRAME_SIZE as f64 * ratio + 10.0) as usize;
+    let mut resampler = resampler_factory(ratio, 1, FRAME_SIZE)?;
+
+    // rubato requires 10 extra spaces in the output buffer as a safety margin
+    let post_len = (FRAME_SIZE as f64 * ratio + 10_f64) as usize;
 
     // the input for the resampler
     let mut pre_buf = [&mut [0_f32; FRAME_SIZE]];
@@ -1080,10 +1390,10 @@ fn processor(
                     )
                 };
 
-                // convert the chunk to f32s
+                // convert the frame to f32s
                 ints.iter()
                     .enumerate()
-                    .for_each(|(i, &x)| pre_buf[0][i] = x as f32 / i16::MAX as f32);
+                    .for_each(|(i, &x)| pre_buf[0][i] = x as f32 / max_i16_f32);
 
                 // apply the output volume
                 let factor = output_volume.load(Relaxed);
@@ -1107,7 +1417,7 @@ fn processor(
         }
     }
 
-    debug!("Processor ended");
+    debug!("Output processor ended");
     Ok(())
 }
 
@@ -1140,8 +1450,8 @@ fn calculate_rms(data: &[f32]) -> f32 {
 }
 
 /// Multiplies each element in the slice by the factor
-pub(crate) fn mul(vec: &mut [f32], factor: f32) {
-    vec.par_iter_mut().for_each(|p| {
+pub(crate) fn mul(frame: &mut [f32], factor: f32) {
+    frame.par_iter_mut().for_each(|p| {
         *p *= factor;
         *p = p.clamp(-1_f32, 1_f32);
     })
@@ -1153,19 +1463,20 @@ pub(crate) fn db_to_multiplier(db: f32) -> f32 {
 }
 
 /// Produces a resampler if needed
-pub(crate) fn resampler_factory(ratio: f64, channels: usize) -> Result<Option<SincFixedIn<f32>>> {
+pub(crate) fn resampler_factory(
+    ratio: f64,
+    channels: usize,
+    size: usize,
+) -> Result<Option<SincFixedIn<f32>>> {
     if ratio == 1_f64 {
-        debug!("No resampling needed");
         Ok(None)
     } else {
-        debug!("Resampling at {:.2}%", ratio * 100_f64);
-
         // create the resampler if needed
         Ok(Some(SincFixedIn::<f32>::new(
             ratio,
             2.0,
             RESAMPLER_PARAMETERS,
-            FRAME_SIZE,
+            size,
             channels,
         )?))
     }
@@ -1190,5 +1501,43 @@ pub(crate) async fn get_output_device(
         None => host
             .default_output_device()
             .ok_or(Error::no_output_device()),
+    }
+}
+
+/// Performs the key exchange
+async fn key_exchange(stream: &mut TcpStream) -> Result<SharedSecret> {
+    let secret = EphemeralSecret::random();
+
+    // send our public key
+    let our_public = PublicKey::from(&secret);
+    stream.write_all(our_public.as_bytes()).await?;
+
+    // receive their public key
+    let their_public = timeout(HELLO_TIMEOUT, read_public(stream)).await??;
+    let shared_secret = secret.diffie_hellman(&their_public);
+
+    Ok(shared_secret)
+}
+
+/// A background thread which produces synchronized datetime objects
+async fn synchronize(time: Arc<Mutex<SyncedTime>>) {
+    let client = AsyncSntpClient::new();
+
+    loop {
+        match client.synchronize("pool.ntp.org").await {
+            Ok(result) => {
+                let local = DateTime::from(result.datetime().into_chrono_datetime().unwrap());
+                *time.lock().await = SyncedTime::new(local);
+                debug!("time synchronized: {}", local.to_rfc2822());
+
+                // re-sync every 5 minutes
+                sleep(Duration::from_secs(60 * 5)).await;
+            }
+            Err(error) => {
+                error!("Failed to synchronize time: {}", error);
+                // retry after 20 seconds
+                sleep(Duration::from_secs(20)).await;
+            }
+        }
     }
 }

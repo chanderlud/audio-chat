@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:audio_chat/settings/view.dart';
 import 'package:audio_chat/src/rust/api/audio_chat.dart';
@@ -11,8 +12,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:mutex/mutex.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+SoundHandle? outgoingSoundHandle;
 
 Future<void> main() async {
   await RustLib.init();
@@ -35,6 +38,8 @@ Future<void> main() async {
   final soundPlayer =
       SoundPlayer.newSoundPlayer(outputVolume: settingsController.soundVolume);
 
+  final inPrompt = Mutex();
+
   final audioChat = await AudioChat.newAudioChat(
       listenPort: settingsController.listenPort,
       receivePort: settingsController.receivePort,
@@ -42,44 +47,95 @@ Future<void> main() async {
       rmsThreshold: settingsController.inputSensitivity,
       inputVolume: settingsController.inputVolume,
       outputVolume: settingsController.outputVolume,
-      acceptCall: (contact) async {
-        if (callStateController.isCallActive) {
-          return false;
-        } else if (navigatorKey.currentState == null) {
-          DebugConsole.warning('navigatorKey.currentState is null');
-          return false;
-        }
+      denoise: settingsController.useDenoise,
+      // called when there is an incoming call
+      acceptCall: (String id) async {
+        bool accepted = false;
 
-        bool accepted = await acceptCallPrompt(
-            navigatorKey.currentState!.context, contact, soundPlayer);
+        // only allow one prompt at a time
+        await inPrompt.protect(() async {
+          Contact? contact = settingsController.getContact(id);
 
-        if (accepted) {
-          callStateController.setStatus('Connecting');
-          callStateController.setActiveContact(contact);
-        }
+          if (callStateController.isCallActive) {
+            return false;
+          } else if (navigatorKey.currentState == null || !navigatorKey.currentState!.mounted) {
+            DebugConsole.warning('navigatorKey.currentState is null');
+            return false;
+          } else if (contact == null) {
+            DebugConsole.warning('contact is null');
+            return false;
+          }
+
+          accepted = await acceptCallPrompt(
+              navigatorKey.currentState!.context, contact, soundPlayer);
+
+          if (accepted) {
+            callStateController.setStatus('Connecting');
+            callStateController.setActiveContact(contact);
+          }
+        });
 
         return accepted;
       },
+      // called when a call ends
       callEnded: (message) async {
+        outgoingSoundHandle?.cancel();
+
         callStateController.setActiveContact(null);
         callStateController.setStatus('Inactive');
 
-        List<int> bytes = await readWavBytes('sounds/goodbye.wav');
-        soundPlayer.play(bytes: bytes);
+        List<int> bytes = await readWavBytes('call_ended');
+        await soundPlayer.play(bytes: bytes);
 
-        if (message.isNotEmpty && navigatorKey.currentState != null) {
-          showErrorDialog(navigatorKey.currentState!.context, message);
-        } else {
-          DebugConsole.debug('call ended, not showing popup');
+        if (message.isNotEmpty &&
+            navigatorKey.currentState != null &&
+            navigatorKey.currentState!.mounted) {
+          showErrorDialog(
+              navigatorKey.currentState!.context, 'Call failed', message);
         }
       },
-      getContact: (ipStr) {
+      // called when a contact is needed in the backend
+      getContact: (addressStr) {
         Contact? contact = settingsController.contacts.values
-            .firstWhere((contact) => contact.ipStr() == ipStr);
+            .firstWhere((contact) => contact.addressStr() == addressStr);
         return contact.pubClone();
       },
-      connected: () {
+      // called when the call initially connects
+      connected: () async {
+        outgoingSoundHandle?.cancel();
+
+        List<int> bytes = await readWavBytes('connected');
+        await soundPlayer.play(bytes: bytes);
+
         callStateController.setStatus('Active');
+      },
+      // called when the call disconnects or reconnects
+      callState: (disconnected) async {
+        if (disconnected) {
+          List<int> bytes = await readWavBytes('disconnected');
+          await soundPlayer.play(bytes: bytes);
+
+          callStateController.setStatus('Reconnecting');
+        } else {
+          List<int> bytes = await readWavBytes('reconnected');
+          await soundPlayer.play(bytes: bytes);
+
+          callStateController.setStatus('Active');
+        }
+      },
+      // called when a contact goes online or offline
+      contactStatus: (String id, bool online) {
+        if (online) {
+          callStateController.addOnlineContact(id);
+        } else {
+          callStateController.removeOnlineContact(id);
+        }
+      },
+      // called when the backend wants the frontend to start controllers
+      startControllers: (AudioChat audioChat) {
+        for (Contact contact in settingsController.contacts.values) {
+          audioChat.connect(contact: contact);
+        }
       });
 
   runApp(AudioChatApp(
@@ -241,21 +297,24 @@ class _ContactFormState extends State<ContactForm> {
                   if (_nicknameInput.text.isEmpty ||
                       _verifyingKeyInput.text.isEmpty ||
                       _contactAddressInput.text.isEmpty) {
-                    showErrorDialog(context, 'All fields are required');
+                    showErrorDialog(
+                        context, 'Validation error', 'All fields are required');
                     return;
                   }
 
-                  await widget.settingsController.addContact(
+                  Contact contact = await widget.settingsController.addContact(
                       _nicknameInput.text,
                       _verifyingKeyInput.text,
                       _contactAddressInput.text);
+
+                  widget.audioChat.connect(contact: contact);
 
                   _contactAddressInput.clear();
                   _nicknameInput.clear();
                   _verifyingKeyInput.clear();
                 } on DartError catch (e) {
                   if (!context.mounted) return;
-                  showErrorDialog(context, e.message);
+                  showErrorDialog(context, 'Failed to add contact', e.message);
                 }
               },
             ),
@@ -460,8 +519,8 @@ class CallControls extends StatelessWidget {
                                 }
 
                                 List<int> bytes = stateController.isMuted
-                                    ? await readWavBytes('sounds/unmute.wav')
-                                    : await readWavBytes('sounds/mute.wav');
+                                    ? await readWavBytes('unmute')
+                                    : await readWavBytes('mute');
                                 player.play(bytes: bytes);
 
                                 stateController.mute();
@@ -479,8 +538,8 @@ class CallControls extends StatelessWidget {
                           return IconButton(
                               onPressed: () async {
                                 List<int> bytes = stateController.isDeafened
-                                    ? await readWavBytes('sounds/deafen.wav')
-                                    : await readWavBytes('sounds/undeafen.wav');
+                                    ? await readWavBytes('deafen')
+                                    : await readWavBytes('undeafen');
                                 player.play(bytes: bytes);
 
                                 stateController.deafen();
@@ -538,6 +597,53 @@ class ContactWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    bool online = controller.isOnlineContact(contact);
+
+    Widget trailing;
+
+    if (!online) {
+      trailing = const Padding(padding: EdgeInsets.symmetric(horizontal: 7), child: Icon(Icons.dark_mode_outlined));
+    } else if (online && controller.isActiveContact(contact)) {
+      trailing = IconButton(
+        icon: const Icon(Icons.call_end, color: Colors.red),
+        onPressed: () async {
+          outgoingSoundHandle?.cancel();
+
+          audioChat.endCall();
+          controller.setActiveContact(null);
+          controller.setStatus('Inactive');
+
+          List<int> bytes = await readWavBytes('call_ended');
+          await player.play(bytes: bytes);
+        },
+      );
+    } else {
+      trailing = IconButton(
+        icon: const Icon(Icons.call),
+        onPressed: () async {
+          if (controller.isCallActive) {
+            showErrorDialog(context, 'Call failed',
+                'There is a call already active');
+            return;
+          }
+
+          controller.setStatus('Connecting');
+          List<int> bytes = await readWavBytes('outgoing');
+          outgoingSoundHandle = await player.play(bytes: bytes);
+
+          try {
+            await audioChat.sayHello(contact: contact);
+            controller.setActiveContact(contact);
+          } on DartError catch (e) {
+            controller.setStatus('Inactive');
+            outgoingSoundHandle?.cancel();
+            if (!context.mounted) return;
+            showErrorDialog(context, 'Call failed', e.message);
+          }
+        },
+      );
+    }
+
     return Container(
       margin: const EdgeInsets.all(5.0),
       decoration: BoxDecoration(
@@ -550,47 +656,7 @@ class ContactWidget extends StatelessWidget {
         ),
         title: Text(contact.nickname()),
         subtitle: Text(contact.addressStr()),
-        trailing: controller.isActiveContact(contact)
-            ? IconButton(
-                icon: const Icon(Icons.call_end),
-                onPressed: () async {
-                  await audioChat.endCall();
-                  controller.setActiveContact(null);
-
-                  List<int> bytes = await readWavBytes('sounds/goodbye.wav');
-                  player.play(bytes: bytes);
-                },
-              )
-            : IconButton(
-                icon: const Icon(Icons.call),
-                onPressed: () async {
-                  if (controller.isCallActive) {
-                    showErrorDialog(context, 'There is a call already active');
-                    return;
-                  }
-
-                  controller.setStatus('Connecting');
-                  List<int> bytes = await readWavBytes('sounds/outgoing.wav');
-                  SoundHandle handle = await player.play(bytes: bytes);
-
-                  try {
-                    if (await audioChat.sayHello(contact: contact)) {
-                      controller.setActiveContact(contact);
-                      handle.cancel();
-                    } else {
-                      controller.setStatus('Inactive');
-                      handle.cancel();
-                      if (!context.mounted) return;
-                      showErrorDialog(context, 'Call failed');
-                    }
-                  } on DartError catch (e) {
-                    controller.setStatus('Inactive');
-                    handle.cancel();
-                    if (!context.mounted) return;
-                    showErrorDialog(context, e.message);
-                  }
-                },
-              ),
+        trailing: trailing,
       ),
     );
   }
@@ -662,6 +728,10 @@ class _EditContactWidgetState extends State<EditContactWidget> {
                 try {
                   widget.settingsController
                       .updateContactAddress(widget.contact, value);
+
+                  // TODO maybe it is not ideal to start and stop the controller on every change
+                  widget.audioChat.stopController(contact: widget.contact);
+                  widget.audioChat.connect(contact: widget.contact);
                 } on DartError catch (_) {
                   return; // ignore
                 }
@@ -670,8 +740,9 @@ class _EditContactWidgetState extends State<EditContactWidget> {
               onPressed: () {
                 if (!widget.stateController.isActiveContact(widget.contact)) {
                   widget.settingsController.removeContact(widget.contact);
+                  widget.audioChat.stopController(contact: widget.contact);
                 } else {
-                  showErrorDialog(context,
+                  showErrorDialog(context, 'Warning',
                       'Cannot delete a contact while in an active call');
                 }
               },
@@ -749,6 +820,7 @@ class StateController extends ChangeNotifier {
   String _status = 'Inactive';
   bool deafened = false;
   bool muted = false;
+  final HashSet<String> _onlineContacts = HashSet();
 
   Contact? get activeContact => _activeContact;
   String get status => _status;
@@ -767,7 +839,21 @@ class StateController extends ChangeNotifier {
   }
 
   bool isActiveContact(Contact contact) {
-    return _activeContact?.equals(other: contact) ?? false;
+    return _activeContact?.id() == contact.id();
+  }
+
+  bool isOnlineContact(Contact contact) {
+    return _onlineContacts.contains(contact.id());
+  }
+
+  void addOnlineContact(String id) {
+    _onlineContacts.add(id);
+    notifyListeners();
+  }
+
+  void removeOnlineContact(String id) {
+    _onlineContacts.remove(id);
+    notifyListeners();
   }
 
   void deafen() {
@@ -820,12 +906,12 @@ class EditContacts extends StatelessWidget {
 }
 
 // Function to show error modal dialog
-void showErrorDialog(BuildContext context, String errorMessage) {
+void showErrorDialog(BuildContext context, String title, String errorMessage) {
   showDialog(
     context: context,
     builder: (BuildContext context) {
       return AlertDialog(
-        title: const Text('An Error Occurred'),
+        title: Text(title),
         content: Text(errorMessage),
         actions: <Widget>[
           TextButton(
@@ -846,7 +932,7 @@ void showErrorDialog(BuildContext context, String errorMessage) {
 Future<bool> acceptCallPrompt(
     BuildContext context, Contact contact, SoundPlayer player) async {
   const timeout = Duration(seconds: 10);
-  List<int> bytes = await readWavBytes('sounds/incoming.wav');
+  List<int> bytes = await readWavBytes('incoming');
   SoundHandle handle = await player.play(bytes: bytes);
 
   if (!context.mounted) {
@@ -855,6 +941,7 @@ Future<bool> acceptCallPrompt(
 
   bool? result = await showDialog<bool>(
     context: context,
+    barrierDismissible: false,
     builder: (BuildContext context) {
       Timer(timeout, () {
         if (context.mounted) {
@@ -871,27 +958,27 @@ Future<bool> acceptCallPrompt(
             onPressed: () {
               handle.cancel();
               Navigator.of(context).pop(false);
-            }, // Return false (deny)
+            },
           ),
           TextButton(
             child: const Text('Accept'),
             onPressed: () {
               handle.cancel();
               Navigator.of(context).pop(true);
-            }, // Return true (accept)
+            },
           ),
         ],
       );
     },
   );
 
-  // If the dialog is dismissed by the timeout, result will be null. Treating null as false here.
+  handle.cancel();
   return result ?? false;
 }
 
-Future<List<int>> readWavBytes(String assetPath) async {
+Future<List<int>> readWavBytes(String assetName) async {
   // Load the asset bytes
-  final ByteData data = await rootBundle.load(assetPath);
+  final ByteData data = await rootBundle.load('assets/sounds/$assetName.wav');
   // Convert ByteData to Uint8List
   final List<int> bytes = data.buffer.asUint8List();
   return bytes;

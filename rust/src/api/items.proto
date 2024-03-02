@@ -2,24 +2,37 @@ syntax = "proto2";
 
 package audio_chat.items;
 
-message Message {
-  oneof message {
-    Hello hello = 1;
-    AudioHeader input_config = 2;
-  }
-}
-
-message Hello {
+message Ports {
   required uint32 port = 1;
 }
 
+// The specification for the audio data
 message AudioHeader {
   required uint32 channels = 1;
   required uint32 sample_rate = 2;
   required string sample_format = 3;
 }
 
+// Verifies the clients identity
 message Identity {
   required bytes nonce = 1;
   required bytes signature = 2;
+}
+
+// Signals that one client wants to start a call
+message Hello {}
+
+// Signals that the client does not want to start a call
+message Reject {}
+
+// Signals that the client is already in a call
+message Busy {}
+
+// Messages used by controllers
+message Message {
+  oneof message {
+    Hello hello = 1;
+    Reject reject = 2;
+    Busy busy = 4;
+  }
 }
