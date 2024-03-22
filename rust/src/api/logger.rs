@@ -3,8 +3,10 @@
 
 use std::sync::Once;
 
+use crate::api::logger;
 use fast_log::appender::{FastLogRecord, LogAppender};
 use fast_log::Config;
+use flutter_rust_bridge::frb;
 use lazy_static::lazy_static;
 use log::{info, warn, LevelFilter};
 use parking_lot::RwLock;
@@ -80,4 +82,14 @@ impl LogAppender for SendToDartLogger {
             }
         }
     }
+}
+
+#[frb(sync)]
+pub fn create_log_stream(s: StreamSink<String>) {
+    logger::SendToDartLogger::set_stream_sink(s);
+}
+
+#[frb(sync)]
+pub fn rust_set_up() {
+    logger::init_logger();
 }

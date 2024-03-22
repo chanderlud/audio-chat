@@ -2,6 +2,7 @@ use base64::DecodeError;
 use cpal::{BuildStreamError, DefaultStreamConfigError, DevicesError, PlayStreamError};
 use hkdf::InvalidLength;
 use rubato::{ResampleError, ResamplerConstructionError};
+use std::array::TryFromSliceError;
 use std::fmt::{Display, Formatter};
 use std::net::AddrParseError;
 use tokio::task::JoinError;
@@ -37,6 +38,7 @@ pub(crate) enum ErrorKind {
     InCall,
     UnknownSampleFormat,
     InvalidWav,
+    TryFromSlice(TryFromSliceError),
 }
 
 impl From<std::io::Error> for Error {
@@ -167,6 +169,14 @@ impl From<Elapsed> for Error {
     }
 }
 
+impl From<TryFromSliceError> for Error {
+    fn from(err: TryFromSliceError) -> Self {
+        Self {
+            kind: ErrorKind::TryFromSlice(err),
+        }
+    }
+}
+
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -189,6 +199,7 @@ impl Display for Error {
                 ErrorKind::Base64(ref err) => format!("Base64 error: {}", err),
                 ErrorKind::Ed25519(ref err) => format!("Ed25519 error: {}", err),
                 ErrorKind::Timeout(_) => "The connection timed out".to_string(),
+                ErrorKind::TryFromSlice(ref err) => format!("Try from slice error: {}", err),
                 ErrorKind::AddrParse(ref err) => err.to_string(),
                 ErrorKind::NoOutputDevice => "No output device found".to_string(),
                 ErrorKind::NoInputDevice => "No input device found".to_string(),

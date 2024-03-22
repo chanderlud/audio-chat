@@ -42,18 +42,21 @@ impl From<&[u8]> for AudioHeader {
 }
 
 impl Identity {
-    pub(crate) fn new(nonce: [u8; 128], signature: Signature) -> Self {
+    pub(crate) fn new(nonce: [u8; 128], signature: Signature, public_key: &[u8; 32]) -> Self {
         Self {
             nonce: nonce.to_vec(),
             signature: signature.to_bytes().to_vec(),
+            public_key: public_key.to_vec(),
         }
     }
 }
 
 impl Message {
-    pub(crate) fn hello() -> Self {
+    pub(crate) fn hello(ringtone: Option<Vec<u8>>) -> Self {
         Self {
-            message: Some(message::Message::Hello(Hello {})),
+            message: Some(message::Message::Hello(Hello {
+                ringtone: ringtone.unwrap_or_default(),
+            })),
         }
     }
 
@@ -68,10 +71,35 @@ impl Message {
             message: Some(message::Message::Busy(Busy {})),
         }
     }
-}
 
-impl Hello {
-    pub(crate) fn new() -> Self {
-        Self {}
+    pub(crate) fn goodbye_reason(reason: String) -> Self {
+        Self {
+            message: Some(message::Message::Goodbye(Goodbye { reason })),
+        }
+    }
+
+    pub(crate) fn goodbye() -> Self {
+        Self {
+            message: Some(message::Message::Goodbye(Goodbye {
+                reason: String::new(),
+            })),
+        }
+    }
+
+    pub(crate) fn latency_test(timestamp: u128) -> Self {
+        Self {
+            message: Some(message::Message::LatencyTest(LatencyTest {
+                timestamp: timestamp.to_be_bytes().to_vec(),
+            })),
+        }
+    }
+
+    pub(crate) fn chat(message: String) -> Self {
+        Self {
+            message: Some(message::Message::Chat(Chat {
+                message,
+                attachment: vec![],
+            })),
+        }
     }
 }

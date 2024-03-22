@@ -17,16 +17,43 @@ message AudioHeader {
 message Identity {
   required bytes nonce = 1;
   required bytes signature = 2;
+  required bytes public_key = 3;
 }
 
 // Signals that one client wants to start a call
-message Hello {}
+message Hello {
+  required bytes ringtone = 1;
+}
 
 // Signals that the client does not want to start a call
 message Reject {}
 
 // Signals that the client is already in a call
-message Busy {}
+message Busy {
+  // TODO required string reason = 1;
+}
+
+// Alerts the client that the call has been ended by the other party
+message Goodbye {
+  required string reason = 1;
+}
+
+// The current timestamp at the moment the message was sent
+message LatencyTest {
+  required bytes timestamp = 1;
+}
+
+// A chat message
+message Chat {
+  required string message = 1;
+  repeated Attachment attachment = 2;
+}
+
+// An attachment to a chat message
+message Attachment {
+  required string name = 1;
+  required bytes data = 2;
+}
 
 // Messages used by controllers
 message Message {
@@ -34,5 +61,8 @@ message Message {
     Hello hello = 1;
     Reject reject = 2;
     Busy busy = 4;
+    Goodbye goodbye = 5;
+    LatencyTest latency_test = 6;
+    Chat chat = 7;
   }
 }

@@ -1,10 +1,12 @@
 import 'dart:convert';
 
-import 'package:audio_chat/src/rust/api/audio_chat.dart';
 import 'package:audio_chat/src/rust/api/error.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../src/rust/api/contact.dart';
+import '../src/rust/api/crypto.dart';
 
 class SettingsController with ChangeNotifier {
   final FlutterSecureStorage storage;
@@ -41,6 +43,18 @@ class SettingsController with ChangeNotifier {
 
   /// whether to use rnnoise
   late bool useDenoise;
+
+  /// the output device for calls
+  late String? outputDevice;
+
+  /// the input device for calls
+  late String? inputDevice;
+
+  /// whether to play custom ringtones
+  late bool playCustomRingtones;
+
+  /// the custom ringtone file
+  late String? customRingtoneFile;
 
   Future<void> init() async {
     final signingKey = await storage.read(key: 'signingKey');
@@ -79,6 +93,10 @@ class SettingsController with ChangeNotifier {
     soundVolume = options.getDouble('soundVolume') ?? -10;
     inputSensitivity = options.getDouble('inputSensitivity') ?? -50;
     useDenoise = options.getBool('useDenoise') ?? true;
+    outputDevice = options.getString('outputDevice');
+    inputDevice = options.getString('inputDevice');
+    playCustomRingtones = options.getBool('playCustomRingtones') ?? true;
+    customRingtoneFile = options.getString('customRingtoneFile');
 
     notifyListeners();
   }
@@ -88,7 +106,7 @@ class SettingsController with ChangeNotifier {
     String verifyingKey,
     String address,
   ) async {
-    Contact contact = Contact.newContact(
+    Contact contact = Contact(
         nickname: nickname, verifyingKey: verifyingKey, address: address);
     contacts[contact.id()] = contact;
 
@@ -167,6 +185,48 @@ class SettingsController with ChangeNotifier {
   Future<void> updateUseDenoise(bool use) async {
     useDenoise = use;
     await options.setBool('useDenoise', use);
+    notifyListeners();
+  }
+
+  Future<void> updateOutputDevice(String? device) async {
+    outputDevice = device;
+
+    if (device != null) {
+      await options.setString('outputDevice', device);
+    } else {
+      await options.remove('outputDevice');
+    }
+
+    notifyListeners();
+  }
+
+  Future<void> updateInputDevice(String? device) async {
+    inputDevice = device;
+
+    if (device != null) {
+      await options.setString('inputDevice', device);
+    } else {
+      await options.remove('inputDevice');
+    }
+
+    notifyListeners();
+  }
+
+  Future<void> updatePlayCustomRingtones(bool play) async {
+    playCustomRingtones = play;
+    await options.setBool('playCustomRingtones', play);
+    notifyListeners();
+  }
+
+  Future<void> updateCustomRingtoneFile(String? file) async {
+    customRingtoneFile = file;
+
+    if (file != null) {
+      await options.setString('customRingtoneFile', file);
+    } else {
+      await options.remove('customRingtoneFile');
+    }
+
     notifyListeners();
   }
 }
