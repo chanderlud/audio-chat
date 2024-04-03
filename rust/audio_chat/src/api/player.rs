@@ -18,7 +18,7 @@ use tokio::time::sleep;
 use crate::api::audio_chat::{
     db_to_multiplier, get_output_device, mul, resampler_factory, DeviceName, SendStream,
 };
-use crate::api::error::Error;
+use crate::api::error::{Error, ErrorKind};
 use crate::api::items::AudioHeader;
 use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
 
@@ -97,7 +97,7 @@ async fn play_sound(
     output_device: DeviceName,
 ) -> Result<(), Error> {
     if bytes.len() < 44 {
-        return Err(Error::invalid_wav());
+        return Err(ErrorKind::InvalidWav.into());
     }
 
     // get the output device & config
@@ -114,7 +114,7 @@ async fn play_sound(
         "i32" => SampleFormat::I32,
         "f32" => SampleFormat::F32,
         "f64" => SampleFormat::F64,
-        _ => return Err(Error::unknown_sample_format()),
+        _ => return Err(ErrorKind::UnknownSampleFormat.into()),
     };
 
     // the resampling ratio used by the processor

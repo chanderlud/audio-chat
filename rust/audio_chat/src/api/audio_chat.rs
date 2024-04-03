@@ -1,58 +1,64 @@
+use async_throttle::RateLimiter;
 use std::collections::{HashMap, VecDeque};
 use std::mem;
 pub use std::net::{IpAddr, SocketAddr};
+use std::pin::Pin;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::Relaxed;
-use std::sync::atomic::{AtomicBool, AtomicU16};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherCoreWrapper, StreamCipherSeek};
-use aes::Aes256;
 use atomic_float::AtomicF32;
-use chrono::{DateTime, Utc};
+use common::crypto::{identity_factory, key_exchange, verify_identity, PairedCipher};
+use common::items::Message as CommonMessage;
+use common::items::{Candidate, Identity, RequestOutcome, RequestSession};
+use common::time::synchronize;
+use common::{
+    read_message, write_message, Aes256, AesCipher, Ctr128BE, Hkdf, KeyIvInit, Sha256,
+    StreamCipher, StreamCipherSeek, Time, Transport,
+};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Host, Stream};
-use ctr::{Ctr128BE, CtrCore};
-use ed25519_dalek::{SecretKey, Signature, Signer, SigningKey, VerifyingKey};
+
+use ed25519_dalek::{SecretKey, SigningKey};
 use flutter_rust_bridge::{frb, spawn, spawn_blocking_with, DartFnFuture};
-use futures::SinkExt;
-use hex_literal::hex;
-use hkdf::Hkdf;
 use kanal::{
     bounded, bounded_async, unbounded_async, AsyncReceiver, AsyncSender, Receiver, Sender,
 };
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use nnnoiseless::{DenoiseState, FRAME_SIZE};
-use rand::rngs::OsRng;
-use rand::Rng;
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelRefMutIterator;
-use rsntp::AsyncSntpClient;
 use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
-use sha2::Sha256;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream, UdpSocket};
-use tokio::sync::{Mutex, Notify};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::TcpStream;
+use tokio::sync::{mpsc, Mutex, Notify, RwLock};
 use tokio::time::{interval, timeout};
 use tokio::{io, select};
-use tokio_stream::StreamExt;
 use tokio_util::bytes::Bytes;
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
-use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};
+use tokio_util::codec::LengthDelimitedCodec;
+use webrtc_ice::agent::agent_config::AgentConfig;
+use webrtc_ice::agent::Agent;
+use webrtc_ice::candidate::candidate_base::unmarshal_candidate;
+use webrtc_ice::network_type::NetworkType;
+use webrtc_ice::state::ConnectionState;
+use webrtc_ice::udp_network::UDPNetwork;
+use webrtc_ice::url::Url;
+use webrtc_sctp::association::{Association, Config};
+use webrtc_sctp::chunk::chunk_payload_data::PayloadProtocolIdentifier;
+use webrtc_sctp::stream::{PollStream, ReliabilityType};
+use webrtc_util::Conn;
 
 use crate::api::contact::Contact;
 use crate::api::error::{DartError, Error, ErrorKind};
-use crate::api::items::{message, AudioHeader, Identity, Message, Ports};
+use crate::api::items::{message, AudioHeader, Message};
 use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
 
 type Result<T> = std::result::Result<T, Error>;
 pub(crate) type DeviceName = Arc<Mutex<Option<String>>>;
 type TransferBuffer = [u8; TRANSFER_BUFFER_SIZE];
-type AesCipher = StreamCipherCoreWrapper<CtrCore<Aes256, ctr::flavors::Ctr128BE>>;
-type Time = Arc<Mutex<SyncedTime>>;
-type Transport = Framed<TcpStream, LengthDelimitedCodec>;
 
 /// The number of bytes in a single UDP packet
 const TRANSFER_BUFFER_SIZE: usize = FRAME_SIZE * mem::size_of::<i16>();
@@ -68,20 +74,12 @@ const RESAMPLER_PARAMETERS: SincInterpolationParameters = SincInterpolationParam
 const RECEIVE_TIMEOUT: Duration = Duration::from_secs(2);
 /// A timeout used when initializing the call
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
-/// A salt used by the HKDF
-const SALT: [u8; 32] = hex!("04acee810b938239a6d2a09c109af6e3eaedc961fc66b9b6935a441c2690e336");
 /// the number of frames to hold in a channel
 const CHANNEL_SIZE: usize = 2_400;
 
 #[frb(opaque)]
 #[derive(Clone)]
 pub struct AudioChat {
-    /// The port to listen for incoming TCP connections
-    listen_port: Arc<AtomicU16>,
-
-    /// The port to which the UDP socket binds to
-    receive_port: Arc<AtomicU16>,
-
     /// The audio host
     host: Arc<Host>,
 
@@ -100,9 +98,6 @@ pub struct AudioChat {
     /// Notifies the call to end
     end_call: Arc<Notify>,
 
-    /// Notifies the listener to stop
-    stop_listener: Arc<Notify>,
-
     /// Manually set the input device
     input_device: DeviceName,
 
@@ -110,7 +105,7 @@ pub struct AudioChat {
     output_device: DeviceName,
 
     /// Private key for signing the handshake
-    secret_key: SecretKey,
+    signing_key: Arc<RwLock<SigningKey>>,
 
     /// Keeps track of whether the user is in a call
     in_call: Arc<AtomicBool>,
@@ -124,11 +119,17 @@ pub struct AudioChat {
     /// Disables the playback of custom ringtones
     play_custom_ringtones: Arc<AtomicBool>,
 
-    /// Keeps track of and controls the controllers
-    controller_states: Arc<Mutex<HashMap<String, Arc<ControllerState>>>>,
+    /// Keeps track of and controls the sessions
+    session_states: Arc<RwLock<HashMap<String, Arc<SessionState>>>>,
 
     /// Used for producing validation timestamps
     time: Time,
+
+    /// Signals the session manager to start a new session
+    start_session: AsyncSender<[u8; 32]>,
+
+    /// Restarts the session manager when needed
+    restart_manager: Arc<Notify>,
 
     /// Prompts the user to accept a call
     accept_call: Arc<Mutex<dyn Fn(String, Option<Vec<u8>>) -> DartFnFuture<bool> + Send>>,
@@ -137,7 +138,7 @@ pub struct AudioChat {
     call_ended: Arc<Mutex<dyn Fn(String, bool) -> DartFnFuture<()> + Send>>,
 
     /// Fetches a contact from the front end
-    get_contact: Arc<Mutex<dyn Fn(String) -> DartFnFuture<Option<Contact>> + Send>>,
+    get_contact: Arc<Mutex<dyn Fn([u8; 32]) -> DartFnFuture<Option<Contact>> + Send>>,
 
     /// Alerts the UI that the call has connected
     connected: Arc<Mutex<dyn Fn() -> DartFnFuture<()> + Send>>,
@@ -148,8 +149,8 @@ pub struct AudioChat {
     /// Alerts the UI when a contact comes online or goes offline
     contact_status: Arc<Mutex<dyn Fn(String, bool) -> DartFnFuture<()> + Send>>,
 
-    /// Starts a controller for each of the UI's contacts
-    start_controllers: Arc<Mutex<dyn Fn(AudioChat) -> DartFnFuture<()> + Send>>,
+    /// Starts a session for each of the UI's contacts
+    start_sessions: Arc<Mutex<dyn Fn(AudioChat) -> DartFnFuture<()> + Send>>,
 
     /// Used to report the call latency to the frontend
     call_latency: Arc<Mutex<dyn Fn(i32) -> DartFnFuture<()> + Send>>,
@@ -168,16 +169,14 @@ impl AudioChat {
     // this function must be async to use `spawn`
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
-        listen_port: u16,
-        receive_port: u16,
         signing_key: Vec<u8>,
         accept_call: impl Fn(String, Option<Vec<u8>>) -> DartFnFuture<bool> + Send + 'static,
         call_ended: impl Fn(String, bool) -> DartFnFuture<()> + Send + 'static,
-        get_contact: impl Fn(String) -> DartFnFuture<Option<Contact>> + Send + 'static,
+        get_contact: impl Fn([u8; 32]) -> DartFnFuture<Option<Contact>> + Send + 'static,
         connected: impl Fn() -> DartFnFuture<()> + Send + 'static,
         call_state: impl Fn(bool) -> DartFnFuture<()> + Send + 'static,
         contact_status: impl Fn(String, bool) -> DartFnFuture<()> + Send + 'static,
-        start_controllers: impl Fn(AudioChat) -> DartFnFuture<()> + Send + 'static,
+        start_sessions: impl Fn(AudioChat) -> DartFnFuture<()> + Send + 'static,
         call_latency: impl Fn(i32) -> DartFnFuture<()> + Send + 'static,
         load_ringtone: impl Fn() -> DartFnFuture<Option<Vec<u8>>> + Send + 'static,
         statistics: impl Fn(Statistics) -> DartFnFuture<()> + Send + 'static,
@@ -187,32 +186,33 @@ impl AudioChat {
 
         let host = cpal::default_host();
 
+        let (start_session, start) = unbounded_async::<[u8; 32]>();
+
         let chat = Self {
-            listen_port: Arc::new(AtomicU16::new(listen_port)),
-            receive_port: Arc::new(AtomicU16::new(receive_port)),
             host: Arc::new(host),
             rms_threshold: Default::default(),
             input_volume: Default::default(),
             output_volume: Default::default(),
             denoise: Default::default(),
             end_call: Default::default(),
-            stop_listener: Default::default(),
             input_device: Default::default(),
             output_device: Default::default(),
-            secret_key: SecretKey::from(key_bytes),
+            signing_key: Arc::new(RwLock::new(SigningKey::from(SecretKey::from(key_bytes)))),
             in_call: Default::default(),
             deafened: Default::default(),
             muted: Default::default(),
             play_custom_ringtones: Default::default(),
-            controller_states: Default::default(),
+            session_states: Default::default(),
             time: Default::default(),
+            start_session,
+            restart_manager: Default::default(),
             accept_call: Arc::new(Mutex::new(accept_call)),
             call_ended: Arc::new(Mutex::new(call_ended)),
             get_contact: Arc::new(Mutex::new(get_contact)),
             connected: Arc::new(Mutex::new(connected)),
             call_state: Arc::new(Mutex::new(call_state)),
             contact_status: Arc::new(Mutex::new(contact_status)),
-            start_controllers: Arc::new(Mutex::new(start_controllers)),
+            start_sessions: Arc::new(Mutex::new(start_sessions)),
             call_latency: Arc::new(Mutex::new(call_latency)),
             load_ringtone: Arc::new(Mutex::new(load_ringtone)),
             statistics: Arc::new(Mutex::new(statistics)),
@@ -222,30 +222,55 @@ impl AudioChat {
         // start the time synchronization background thread
         spawn(synchronize(chat.time.clone()));
 
-        // start the listener
+        // start the session manager
         let chat_clone = chat.clone();
-        spawn(async move { chat_clone.listener().await });
+        spawn(async move {
+            // retry the session manager if it fails, but not too fast
+            let rate_limiter = RateLimiter::new(Duration::from_millis(100));
 
-        // start the controllers
-        (chat.start_controllers.lock().await)(chat.clone()).await;
+            loop {
+                while let Err(error) = rate_limiter
+                    .throttle(|| async { chat_clone.session_manager(&start).await })
+                    .await
+                {
+                    error!("Session manager failed: {}", error);
+                }
+
+                debug!("Session manager waiting for restart signal");
+                chat_clone.restart_manager.notified().await;
+            }
+        });
+
+        // start the sessions
+        (chat.start_sessions.lock().await)(chat.clone()).await;
 
         chat
     }
 
-    /// The public say_hello function
-    pub async fn say_hello(&self, contact: &Contact) -> std::result::Result<(), DartError> {
-        if let Some(state) = self.controller_states.lock().await.get(&contact.id) {
-            state.start.notify_one();
-            Ok(())
-        } else {
-            Err(String::from("No controller active for contact").into())
+    /// Tries to start a session for a contact
+    pub async fn start_session(&self, contact: &Contact) {
+        debug!(
+            "start_session called for {:?}",
+            &contact.verifying_key[0..5]
+        );
+
+        if self
+            .start_session
+            .send(contact.verifying_key)
+            .await
+            .is_err()
+        {
+            error!("start_session channel is closed");
         }
     }
 
-    /// Tries to start a controller for a contact
-    pub async fn connect(&self, contact: &Contact) {
-        if let Err(error) = self._connect(contact).await {
-            error!("Error connecting to {}: {}", contact.nickname, error);
+    /// Attempts to start a call through an existing session
+    pub async fn say_hello(&self, contact: &Contact) -> std::result::Result<(), DartError> {
+        if let Some(state) = self.session_states.read().await.get(&contact.id) {
+            state.start.notify_one();
+            Ok(())
+        } else {
+            Err(String::from("No session found for contact").into())
         }
     }
 
@@ -255,39 +280,44 @@ impl AudioChat {
         self.end_call.notify_one();
     }
 
-    /// Restarts the controllers
-    pub async fn restart_controllers(&self) {
-        for state in self.controller_states.lock().await.values() {
+    /// Restarts the session manager
+    pub async fn restart_manager(&self) -> std::result::Result<(), DartError> {
+        if self.in_call.load(Relaxed) {
+            Err(ErrorKind::InCall.into())
+        } else {
+            self.restart_manager.notify_one();
+            self.restart_sessions().await;
+            Ok(())
+        }
+    }
+
+    // TODO when the session manager closes, shouldn't all the sessions just die cause the channels close?
+    /// Restarts the sessions
+    pub async fn restart_sessions(&self) {
+        for state in self.session_states.read().await.values() {
             if !state.in_call.load(Relaxed) {
                 state.stop.notify_one();
             }
         }
 
-        (self.start_controllers.lock().await)(self.clone()).await;
+        (self.start_sessions.lock().await)(self.clone()).await;
     }
 
-    /// Restarts the listener
-    pub async fn restart_listener(&self) -> std::result::Result<(), DartError> {
-        if self.in_call.load(Relaxed) {
-            return Err(Error::in_call().into());
-        }
-
-        self.restart_controllers().await;
-        self.stop_listener.notify_one();
-
-        let chat_clone = self.clone();
-        spawn(async move { chat_clone.listener().await });
-
+    /// Sets the signing key (called when the profile changes)
+    pub async fn set_signing_key(&self, key: Vec<u8>) -> std::result::Result<(), DartError> {
+        let key: [u8; 32] = key.try_into().map_err(|_| ErrorKind::InvalidSigningKey)?;
+        *self.signing_key.write().await = SigningKey::from(SecretKey::from(key));
         Ok(())
     }
 
-    /// Stop a specific controller
-    pub async fn stop_controller(&self, contact: &Contact) {
-        if let Some(state) = self.controller_states.lock().await.remove(&contact.id) {
+    /// Stops a specific session (called when a contact is deleted)
+    pub async fn stop_session(&self, contact: &Contact) {
+        if let Some(state) = self.session_states.write().await.remove(&contact.id) {
             state.stop.notify_one();
         }
     }
 
+    /// Blocks while an audio test is running
     pub async fn audio_test(&self) -> std::result::Result<(), DartError> {
         self.in_call.store(true, Relaxed);
 
@@ -302,34 +332,19 @@ impl AudioChat {
         result
     }
 
+    /// Sends a chat message
     pub async fn send_chat(
         &self,
         message: String,
         id: String,
     ) -> std::result::Result<(), DartError> {
-        let states = self.controller_states.lock().await;
-
-        if let Some(state) = states.get(&id) {
+        if let Some(state) = self.session_states.read().await.get(&id) {
             let message = Message::chat(message);
-            state
-                .message_channel
-                .0
-                .send(message)
-                .await
-                .map_err(Error::from)?;
+
+            state.channel.0.send(message).await.map_err(Error::from)?;
         }
 
         Ok(())
-    }
-
-    #[frb(sync)]
-    pub fn set_listen_port(&self, port: u16) {
-        self.listen_port.store(port, Relaxed);
-    }
-
-    #[frb(sync)]
-    pub fn set_receive_port(&self, port: u16) {
-        self.receive_port.store(port, Relaxed);
     }
 
     #[frb(sync)]
@@ -396,74 +411,180 @@ impl AudioChat {
         Ok((input_devices, output_devices))
     }
 
-    /// Internal connect function
-    async fn _connect(&self, contact: &Contact) -> Result<()> {
-        let address = contact.address;
+    /// Starts new sessions and communicates with the matchmaker
+    async fn session_manager(&self, start: &AsyncReceiver<[u8; 32]>) -> Result<()> {
+        let local_verifying_key = self.signing_key.read().await.verifying_key().to_bytes();
 
-        let mut stream = timeout(HELLO_TIMEOUT, TcpStream::connect(address)).await??;
-        stream.write_u16(self.listen_port.load(Relaxed)).await?;
+        // TODO allow for changing the match maker addr from the UI
+        let mut stream = TcpStream::connect("match-maker.chanchan.dev:8957").await?;
+        let shared_secret = key_exchange(&mut stream).await?;
 
-        self.start_controller(stream, contact.clone(), false).await;
-        Ok(())
-    }
+        // HKDF for the key derivation
+        let hk = Hkdf::<Sha256>::new(Some(&common::SALT), shared_secret.as_bytes());
 
-    /// Listens for incoming connections and starts new controllers
-    async fn listener(&self) -> Result<()> {
-        let listener = TcpListener::bind(("0.0.0.0", self.listen_port.load(Relaxed))).await?;
+        // note; the client uses the reverse of the server's ciphers
+        // stream send cipher
+        let mut sr_cipher = common::crypto::cipher_factory(&hk, b"ss-key", b"ss-iv")?;
+        // stream read cipher
+        let mut ss_cipher = common::crypto::cipher_factory(&hk, b"sr-key", b"sr-iv")?;
 
-        let future = async {
-            while let Ok((mut stream, mut address)) = listener.accept().await {
-                // a connecting client will send its listen port first
-                match stream.read_u16().await {
-                    Ok(port) => {
-                        // set the port for the address to correctly identify the contact
-                        address.set_port(port);
-                        let address_str = address.to_string();
+        let mut transport = LengthDelimitedCodec::builder().new_framed(stream);
 
-                        if let Some(contact) = (self.get_contact.lock().await)(address_str).await {
-                            self.start_controller(stream, contact, true).await;
-                        } else {
-                            error!("connection from unknown contact: {}", address);
-                        }
+        // send the identity message, the server will allow further messages if the identity is accepted
+        let identity = identity_factory(&self.time, &*self.signing_key.read().await).await?;
+        write_message(&mut transport, identity, &mut ss_cipher).await?;
+
+        // the server's identity is not verified here because we do not trust it
+
+        // sends messages from sessions to the session manager for dispatch to the matchmaker
+        let (message_sender, message_receiver) = unbounded_async::<CommonMessage>();
+        // maps messages from the session manager to the sessions
+        let mut sender_map: HashMap<[u8; 32], AsyncSender<CommonMessage>> = Default::default();
+
+        let mut ice_agent = ice_factory().await?;
+
+        loop {
+            select! {
+                _ = self.restart_manager.notified() => {
+                    break Err(ErrorKind::ManagerRestarted.into());
+                }
+                result = message_receiver.recv() => {
+                    write_message(&mut transport, result?, &mut ss_cipher).await?
+                }
+                result = start.recv() => {
+                    let public = result?;
+
+                    if (self.get_contact.lock().await)(public).await.is_none() {
+                        warn!("No contact found for {:?}", &public[0..5]);
+                        continue;
                     }
-                    Err(error) => error!("Error reading ports from {} {}", address, error),
+
+                    let (local_ufrag, local_pwd) = ice_agent.get_local_user_credentials().await;
+                    let request = RequestSession::new(&local_ufrag, &local_pwd);
+                    let message = CommonMessage::new(request.into(), &public, &local_verifying_key);
+                    write_message(&mut transport, message, &mut ss_cipher).await?;
+                }
+                result = read_message::<CommonMessage, _, _>(&mut transport, &mut sr_cipher) => {
+                    match result {
+                        Ok(message) => {
+                            let from: [u8; 32] = if let Ok(from) = message.from.clone().try_into() {
+                                from
+                            } else {
+                                error!("Failed to parse public key");
+                                continue;
+                            };
+
+                            match &message.message {
+                                Some(common::items::message::Message::RequestSession(request)) => {
+                                    let contact = match (self.get_contact.lock().await)(from).await {
+                                        Some(contact) => contact,
+                                        None => {
+                                            warn!("No contact found for {:?}", from);
+                                            continue;
+                                        }
+                                    };
+
+                                    let (local_ufrag, local_pwd) = ice_agent.get_local_user_credentials().await;
+                                    let outcome = RequestOutcome::success(&local_ufrag, &local_pwd);
+                                    let message = CommonMessage::new(outcome.into(), &from, &local_verifying_key);
+                                    write_message(&mut transport, message, &mut ss_cipher).await?;
+
+                                    let channel = unbounded_async::<CommonMessage>();
+                                    sender_map.insert(from, channel.0);
+
+                                    self._start_session(contact, (message_sender.clone(), channel.1), ice_agent, false, (request.ufrag.clone(), request.pwd.clone())).await;
+
+                                    ice_agent = ice_factory().await?;
+                                }
+                                Some(common::items::message::Message::RequestOutcome(outcome)) => {
+                                    if !outcome.success {
+                                        warn!("Failed to start session for {:?} because {:?}", &from[0..5], outcome.reason);
+                                        continue;
+                                    }
+
+                                    let contact = match (self.get_contact.lock().await)(from).await {
+                                        Some(contact) => contact,
+                                        None => {
+                                            warn!("No contact found for {:?}", &from[0..5]);
+                                            continue;
+                                        }
+                                    };
+
+                                    let channel = unbounded_async::<CommonMessage>();
+                                    sender_map.insert(from, channel.0);
+
+                                    self._start_session(contact, (message_sender.clone(), channel.1), ice_agent, true, (outcome.ufrag.clone().ok_or(ErrorKind::MissingCredentials)?, outcome.pwd.clone().ok_or(ErrorKind::MissingCredentials)?)).await;
+
+                                    ice_agent = ice_factory().await?;
+                                }
+                                Some(common::items::message::Message::EndSession(_)) => {
+                                    if let Some(sender) = sender_map.remove(&from) {
+                                        _ = sender.send(message).await;
+                                    } else {
+                                        warn!("Received end session for a session which does not exist {:?}", &from[0..5]);
+                                    }
+                                }
+                                Some(common::items::message::Message::ServerError(error)) => {
+                                    match error.message.as_ref() {
+                                        "Session already exists" => break Ok(()),
+                                        _ => warn!("Server error: {:?}", error.message),
+                                    }
+                                }
+                                // all other messages are intended for the sessions
+                                _ => {
+                                    if let Some(sender) = sender_map.get(&from) {
+                                        if sender.send(message).await.is_err() {
+                                            warn!("Failed to forward message to session");
+                                        } else {
+                                            debug!("Forwarded message to session {:?}", &from[0..5]);
+                                        }
+                                    } else {
+                                        warn!("No session found for {:?}", from);
+                                    }
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            match error.kind {
+                                common::error::ErrorKind::Io(ref io_error) => match io_error.kind() {
+                                    io::ErrorKind::UnexpectedEof => {
+                                        error!("Match maker connection closed");
+                                        break Err(error.into());
+                                    }
+                                    _ => error!("error receiving message {:?}", error),
+                                }
+                                _ => error!("error receiving message {:?}", error),
+                            }
+                        },
+                    }
                 }
             }
-        };
-
-        select! {
-            _ = future => {},
-            _ = self.stop_listener.notified() => debug!("Listener stopped"),
         }
-
-        Ok(())
     }
 
-    /// A wrapper which starts the controller and registers it in the controller states
-    async fn start_controller(&self, stream: TcpStream, contact: Contact, listener: bool) {
-        // alert the UI that this contact is now online
-        (self.contact_status.lock().await)(contact.id.clone(), true).await;
-
+    /// A wrapper which starts the session and registers it in the session states
+    async fn _start_session(
+        &self,
+        contact: Contact,
+        session_message_channel: (AsyncSender<CommonMessage>, AsyncReceiver<CommonMessage>),
+        agent: Arc<Agent>,
+        controlling: bool,
+        remote_credentials: (String, String),
+    ) {
         let message_channel = unbounded_async::<Message>();
 
-        // create the state and a clone of it for the controller
-        let state = Arc::new(ControllerState::new(&message_channel));
+        // create the state and a clone of it for the session
+        let state = Arc::new(SessionState::new(&message_channel));
         let state_clone = Arc::clone(&state);
 
-        // handle situations where a controller is already running for the contact
-        if let Some(controller) = self
-            .controller_states
-            .lock()
-            .await
-            .insert(contact.id.clone(), state)
-        {
-            if !controller.in_call.load(Relaxed) {
-                debug!("stopping existing controller for {}", contact.nickname);
-                controller.stop.notify_one();
-            } else {
-                warn!("{} is already in a call", contact.nickname);
-            }
+        let mut states = self.session_states.write().await;
+
+        if states.contains_key(&contact.id) {
+            warn!("{} already has a session", contact.nickname);
+            return;
         }
+
+        states.insert(contact.id.clone(), state.clone());
 
         let chat_clone = self.clone();
         spawn(async move {
@@ -471,125 +592,193 @@ impl AudioChat {
             let nickname = contact.nickname.clone();
 
             if let Err(error) = chat_clone
-                .controller(stream, contact, state_clone, listener, message_channel)
+                .session(
+                    contact,
+                    session_message_channel,
+                    message_channel,
+                    agent,
+                    controlling,
+                    remote_credentials,
+                    state_clone,
+                )
                 .await
             {
-                error!("Controller error: {}", error);
+                error!("Session error: {}", error);
             } else {
-                debug!("Controller for {} ended", nickname);
+                debug!("Session for {} ended", nickname);
             }
 
+            // TODO ask the match maker to reconnect this session if possible
+
             // cleanup
-            chat_clone.controller_states.lock().await.remove(&id);
+            chat_clone.session_states.write().await.remove(&id);
             (chat_clone.contact_status.lock().await)(id, false).await;
         });
     }
 
-    /// The controller for each online contact
-    async fn controller(
+    /// A session with a contact
+    async fn session(
         &self,
-        mut stream: TcpStream,
         contact: Contact,
-        state: Arc<ControllerState>,
-        listener: bool,
-        message_channel: (AsyncSender<Message>, AsyncReceiver<Message>),
+        // carries messages to and from the matchmaker
+        session_channel: (AsyncSender<CommonMessage>, AsyncReceiver<CommonMessage>),
+        // carries messages to and from the remote
+        call_message_channel: (AsyncSender<Message>, AsyncReceiver<Message>),
+        agent: Arc<Agent>,
+        controlling: bool,
+        credentials: (String, String),
+        state: Arc<SessionState>,
     ) -> Result<()> {
-        // perform the key exchange
-        let shared_secret = key_exchange(&mut stream).await?;
+        let (message_sender, message_receiver) = session_channel;
+        let ice_done: Arc<Notify> = Default::default();
+        let (cancel_tx, cancel_rx) = mpsc::channel(1);
 
-        // construct a length delimited codec for the stream
-        let mut transport = LengthDelimitedCodec::builder()
-            // .length_adjustment(8)
-            .new_framed(stream);
+        let remote_public_key = contact.verifying_key;
+        let local_public_key = self.signing_key.read().await.verifying_key().to_bytes();
+
+        agent.on_candidate(Box::new(move |c| {
+            let message_sender = message_sender.clone();
+
+            Box::pin(async move {
+                if let Some(candidate) = c {
+                    info!("local candidate {}", candidate);
+
+                    let candidate: Candidate = candidate.marshal().into();
+                    let message =
+                        CommonMessage::new(candidate.into(), &remote_public_key, &local_public_key);
+                    _ = message_sender.send(message).await
+                }
+            })
+        }));
+
+        // this monitors the matchmaker connection for messages
+        let agent_clone = agent.clone();
+        let ice_done_clone = ice_done.clone();
+        spawn(async move {
+            while let Ok(message) = message_receiver.recv().await {
+                match message.message {
+                    Some(common::items::message::Message::Candidate(candidate)) => {
+                        debug!("remote candidate {:?}", candidate.candidate);
+
+                        if let Ok(candidate) = unmarshal_candidate(&candidate.candidate) {
+                            let c: Arc<dyn webrtc_ice::candidate::Candidate + Send + Sync> =
+                                Arc::new(candidate);
+                            if let Err(error) = agent_clone.add_remote_candidate(&c) {
+                                error!("Failed to add remote candidate {:?}", error);
+                            }
+                        }
+                    }
+                    Some(common::items::message::Message::ServerError(error)) => {
+                        warn!("received server error: {:?}", error);
+                        ice_done_clone.notify_one();
+                        break;
+                    }
+                    Some(common::items::message::Message::EndSession(_)) => {
+                        ice_done_clone.notify_one();
+                        break;
+                    }
+                    _ => error!("session received unexpected message: {:?}", message),
+                }
+            }
+        });
+
+        let ice_done_clone = ice_done.clone();
+        agent.on_connection_state_change(Box::new(move |c| {
+            if c == ConnectionState::Failed {
+                ice_done_clone.notify_one();
+            } else {
+                info!("ICE Connection State has changed: {c}");
+            }
+
+            Box::pin(async move {})
+        }));
+
+        agent.gather_candidates()?;
+
+        let conn: Arc<dyn Conn + Send + Sync> = if controlling {
+            agent.dial(cancel_rx, credentials.0, credentials.1).await?
+        } else {
+            agent
+                .accept(cancel_rx, credentials.0, credentials.1)
+                .await?
+        };
+
+        let config = Config {
+            net_conn: conn,
+            max_receive_buffer_size: 0,
+            max_message_size: 0,
+            name: "audio-chat".to_owned(),
+        };
+
+        let association = if controlling {
+            Association::client(config).await?
+        } else {
+            Association::server(config).await?
+        };
+
+        let stream = if controlling {
+            association
+                .open_stream(0, PayloadProtocolIdentifier::Binary)
+                .await?
+        } else {
+            association
+                .accept_stream()
+                .await
+                .ok_or(ErrorKind::AcceptStream)?
+        };
+
+        let mut poll_stream = SendPollStream {
+            poll_stream: PollStream::new(stream),
+        };
+
+        // perform the key exchange
+        let shared_secret = key_exchange(&mut poll_stream).await?;
+
+        let mut transport = LengthDelimitedCodec::builder().new_framed(poll_stream);
 
         // HKDF for the key derivation
-        let hk = Hkdf::<Sha256>::new(Some(&SALT), shared_secret.as_bytes());
+        let hk = Hkdf::<Sha256>::new(Some(&common::SALT), shared_secret.as_bytes());
 
         // stream send cipher
-        let ss_cipher = cipher_factory(&hk, b"ss-key", b"ss-iv")?;
+        let ss_cipher = common::crypto::cipher_factory(&hk, b"ss-key", b"ss-iv")?;
         // stream read cipher
-        let sr_cipher = cipher_factory(&hk, b"sr-key", b"sr-iv")?;
+        let sr_cipher = common::crypto::cipher_factory(&hk, b"sr-key", b"sr-iv")?;
         // construct the stream cipher pair
         let mut stream_cipher = PairedCipher::new(ss_cipher, sr_cipher);
 
         // one client always has the ciphers reversed
-        if listener {
+        if controlling {
             stream_cipher.swap();
         }
 
-        // create a random nonce
-        let mut nonce = [0; 128];
-        OsRng.fill(&mut nonce[16..]);
-
-        // adds the current timestamp to the nonce
-        {
-            let time = self.time.lock().await;
-            let timestamp = time.current_timestamp();
-            nonce[0..16].copy_from_slice(&timestamp.to_be_bytes());
-        }
-
-        // sign the nonce
-        let signing_key = SigningKey::from(self.secret_key);
-        let signature = signing_key.sign(&nonce);
-
-        // create the identity message
-        let message = Identity::new(
-            nonce,
-            signature,
-            signing_key.verifying_key().as_bytes()
-        );
-
-        // send the message
-        write_message(&mut transport, &message, &mut stream_cipher.send_cipher).await?;
+        // send the identity message
+        let identity = identity_factory(&self.time, &*self.signing_key.read().await).await?;
+        write_message(&mut transport, identity, &mut stream_cipher.send_cipher).await?;
 
         // receive the identity message
         let identity: Identity =
             read_message(&mut transport, &mut stream_cipher.receive_cipher).await?;
 
-        let timestamp = u128::from_be_bytes(identity.nonce[0..16].try_into()?);
+        verify_identity(&self.time, &identity).await?;
 
-        let delta = {
-            let time = self.time.lock().await;
-            let current_timestamp = time.current_timestamp();
-
-            if current_timestamp > timestamp {
-                current_timestamp - timestamp
-            } else {
-                timestamp - current_timestamp
-            }
-        };
-
-        // a max delta of 60 seconds should prevent replay attacks
-        if delta > 60_000_000 {
-            warn!(
-                "Rejecting handshake due to high delta of {}ms",
-                delta / 1_000
-            );
-            return Ok(());
-        } else {
-            debug!("delta: {}", delta);
-        }
-
-        // verify the signature
-        let verifying_key = VerifyingKey::from_bytes(&contact.verifying_key)?;
-        let signature = Signature::from_slice(&identity.signature)?;
-        verifying_key.verify_strict(&identity.nonce, &signature)?;
+        // alert the UI that this contact is now online
+        (self.contact_status.lock().await)(contact.id.clone(), true).await;
 
         // seeds the IV so subsequent calls in the same session are unique
         let mut i = 0;
 
         loop {
             let future = async {
-                debug!("[{}] controller waiting for event", contact.nickname);
+                debug!("[{}] session waiting for event", contact.nickname);
 
                 select! {
-                    result = read_message::<Message, AesCipher>(&mut transport, &mut stream_cipher.receive_cipher) => {
+                    result = read_message::<Message, _, _>(&mut transport, &mut stream_cipher.receive_cipher) => {
                         let message = result?;
                         let mut ringtone = None;
 
                         match message {
                             Message { message: Some(message::Message::Hello(message)) } => {
-                                if message.ringtone.len() > 0 && self.play_custom_ringtones.load(Relaxed) {
+                                if !message.ringtone.is_empty() && self.play_custom_ringtones.load(Relaxed) {
                                     ringtone = Some(message.ringtone);
                                 }
                             }
@@ -599,37 +788,37 @@ impl AudioChat {
                             },
                         }
 
-                        state.in_call.store(true, Relaxed); // blocks the controller from being restarted
+                        state.in_call.store(true, Relaxed); // blocks the session from being restarted
 
                         if self.in_call.load(Relaxed) {
                             // do not accept another call if already in one
                             let busy = Message::busy();
-                            write_message(&mut transport, &busy, &mut stream_cipher.send_cipher).await
+                            write_message(&mut transport, busy, &mut stream_cipher.send_cipher).await.map_err(Error::from)
                         } else if (self.accept_call.lock().await)(contact.id.clone(), ringtone).await {
                             // respond with hello if the call is accepted
                             let hello = Message::hello(None);
-                            write_message(&mut transport, &hello, &mut stream_cipher.send_cipher).await?;
+                            write_message(&mut transport, hello, &mut stream_cipher.send_cipher).await?;
 
                             // start the handshake
-                            self.handshake(&mut transport, contact.address.ip(), false, &hk, &mut stream_cipher, &mut i, &message_channel).await
+                            self.handshake(&mut transport, controlling, &hk, &mut stream_cipher, &mut i, &call_message_channel, &association).await
                         } else {
                             // reject the call if not accepted
                             let reject = Message::reject();
-                            write_message(&mut transport, &reject, &mut stream_cipher.send_cipher).await
+                            write_message(&mut transport, reject, &mut stream_cipher.send_cipher).await.map_err(Error::from)
                         }
                     }
                     _ = state.start.notified() => {
-                        state.in_call.store(true, Relaxed); // blocks the controller from being restarted
+                        state.in_call.store(true, Relaxed); // blocks the session from being restarted
 
                         // queries the other client for a call
                         let ringtone = (self.load_ringtone.lock().await)().await;
                         let hello = Message::hello(ringtone);
-                        write_message(&mut transport, &hello, &mut stream_cipher.send_cipher).await?;
+                        write_message(&mut transport, hello, &mut stream_cipher.send_cipher).await?;
 
                         // handles a variety of messages sent in response to Hello
                         match timeout(HELLO_TIMEOUT, read_message(&mut transport, &mut stream_cipher.receive_cipher)).await?? {
                             Message { message: Some(message::Message::Hello(_)) } => {
-                                self.handshake(&mut transport, contact.address.ip(), true, &hk, &mut stream_cipher, &mut i, &message_channel).await?;
+                                self.handshake(&mut transport, controlling, &hk, &mut stream_cipher, &mut i, &call_message_channel, &association).await?;
                             }
                             Message { message: Some(message::Message::Reject(_)) } => {
                                 (self.call_ended.lock().await)(format!("{} did not accept the call", contact.nickname), true).await;
@@ -647,6 +836,15 @@ impl AudioChat {
 
             select! {
                 _ = state.stop.notified() => break,
+                _ = ice_done.notified() => {
+                    if state.in_call.load(Relaxed) {
+                        (self.call_ended.lock().await)(String::from("ICE Failed"), false).await;
+                    } else {
+                        warn!("ICE failed for {}", contact.nickname);
+                    }
+
+                    break;
+                }
                 result = future => {
                     if let Err(error) = result {
                         if state.in_call.load(Relaxed) {
@@ -657,35 +855,36 @@ impl AudioChat {
                             ErrorKind::Io(error) => match error.kind() {
                                 // these errors indicate that the stream is closed
                                 io::ErrorKind::ConnectionReset | io::ErrorKind::UnexpectedEof => break,
-                                _ => error!("Controller io error: {}", error),
+                                _ => error!("Session io error: {}", error),
                             }
-                            _ => error!("Controller error: {}", error),
+                            ErrorKind::KanalReceive(_) => break,
+                            _ => error!("Session error: {:?}", error),
                         }
                     }
                 }
             }
 
-            // the controller is now safe to restart
+            // the session is now safe to restart
             state.in_call.store(false, Relaxed);
         }
 
-        // TODO try to reconnect the session on errors
-        // this handles cases where an error occurs and a new session is needed
-        // self.connect(&contact).await;
+        _ = cancel_tx.send(()).await;
         Ok(())
     }
 
-    /// Set up the cryptography and negotiate the audio ports
+    /// Gets everything ready for the call
     async fn handshake(
         &self,
-        transport: &mut Transport,
-        remote_address: IpAddr,
-        caller: bool,
+        transport: &mut Transport<SendPollStream>,
+        controlling: bool,
         hk: &Hkdf<Sha256>,
         stream_cipher: &mut PairedCipher<AesCipher>,
         iv_seed: &mut i64,
         message_channel: &(AsyncSender<Message>, AsyncReceiver<Message>),
+        association: &Association,
     ) -> Result<()> {
+        debug!("handshake running");
+
         // create the send and receive ciphers
         let send_cipher = cipher_factory(hk, b"send-key", &iv_seed.to_be_bytes())?;
         *iv_seed += 1;
@@ -695,24 +894,37 @@ impl AudioChat {
         // create the cipher pair for data
         let mut data_cipher = PairedCipher::new(send_cipher, receive_cipher);
 
-        if caller {
-            // the caller always has the ciphers reversed
+        if controlling {
+            // the controlling peer always has the ciphers reversed
             data_cipher.swap();
         }
 
-        let receive_port = self.receive_port.load(Relaxed);
+        let stream = if controlling {
+            debug!("accepting stream");
+            association
+                .open_stream(*iv_seed as u16, PayloadProtocolIdentifier::Binary)
+                .await?
+        } else {
+            debug!("opening stream");
+            association
+                .accept_stream()
+                .await
+                .ok_or(ErrorKind::AcceptStream)?
+        };
 
-        // build the ports message
-        let message = Ports::new(receive_port);
-        // send the ports message
-        write_message(transport, &message, &mut stream_cipher.send_cipher).await?;
-        // receive the ports message
-        let ports: Ports = read_message(transport, &mut stream_cipher.receive_cipher).await?;
+        debug!("stream available");
 
-        // create the UDP socket
-        let socket = Arc::new(UdpSocket::bind(("0.0.0.0", receive_port)).await?);
-        // connect to the remote address on the hello port
-        socket.connect((remote_address, ports.port as u16)).await?;
+        // for some reason, sending a message through the stream here causes it to open correctly
+        if controlling {
+            stream.write(&Bytes::copy_from_slice(&[0])).await?;
+            debug!("wrote to stream");
+        } else {
+            let mut buffer = [0; 1];
+            stream.read(&mut buffer).await?;
+            debug!("read from stream");
+        }
+
+        stream.set_reliability_params(true, ReliabilityType::Rexmit, 0);
 
         spawn(send_timestamps(
             message_channel.0.clone(),
@@ -725,7 +937,7 @@ impl AudioChat {
 
         let result = self
             .call(
-                Some(Arc::clone(&socket)),
+                Some(Arc::clone(&stream)),
                 Some(transport),
                 Some(stream_cipher),
                 Some(data_cipher),
@@ -745,12 +957,12 @@ impl AudioChat {
                 | ErrorKind::BuildStream(_)
                 | ErrorKind::StreamConfig(_) => {
                     let message = Message::goodbye_reason("Audio device error".to_string());
-                    write_message(transport, &message, &mut stream_cipher.send_cipher).await?;
+                    write_message(transport, message, &mut stream_cipher.send_cipher).await?;
                     Err(error)
                 }
                 _ => {
                     let message = Message::goodbye_reason(error.to_string());
-                    write_message(transport, &message, &mut stream_cipher.send_cipher).await?;
+                    write_message(transport, message, &mut stream_cipher.send_cipher).await?;
                     Err(error)
                 }
             },
@@ -760,16 +972,15 @@ impl AudioChat {
     /// The bulk of the call logic
     async fn call(
         &self,
-        socket: Option<Arc<UdpSocket>>,
-        mut transport: Option<&mut Transport>,
+        stream: Option<Arc<webrtc_sctp::stream::Stream>>,
+        mut transport: Option<&mut Transport<SendPollStream>>,
         mut stream_cipher: Option<&mut PairedCipher<AesCipher>>,
         data_cipher: Option<PairedCipher<AesCipher>>,
-        // message_sender: AsyncSender<Message>,
         message_receiver: Option<AsyncReceiver<Message>>,
     ) -> Result<()> {
         // if any of the values required for a normal call is missing, the call is an audio test
         let audio_test = transport.is_none()
-            || socket.is_none()
+            || stream.is_none()
             || message_receiver.is_none()
             || data_cipher.is_none()
             || stream_cipher.is_none();
@@ -817,7 +1028,7 @@ impl AudioChat {
             let (send_cipher, receive_cipher) = stream_cipher.as_mut().unwrap().mut_parts();
             let transport = transport.as_mut().unwrap();
 
-            write_message(transport, &audio_header, send_cipher).await?;
+            write_message(transport, audio_header, send_cipher).await?;
             read_message(transport, receive_cipher).await?
         };
 
@@ -957,18 +1168,18 @@ impl AudioChat {
             }
         } else {
             let (send_cipher, receive_cipher) = data_cipher.unwrap().into_parts();
-            let socket = socket.unwrap();
+            let stream = stream.unwrap();
 
             let input_handle = spawn(socket_input(
                 processed_input_receiver,
-                Arc::clone(&socket),
+                Arc::clone(&stream),
                 send_cipher,
                 Arc::clone(&stop_io),
             ));
 
             let output_handle = spawn(socket_output(
                 output_sender,
-                Arc::clone(&socket),
+                Arc::clone(&stream),
                 receive_cipher,
                 Arc::clone(&stop_io),
                 Arc::clone(&self.call_state),
@@ -1008,7 +1219,7 @@ impl AudioChat {
     /// Returns either the default or the user specified device
     async fn get_input_device(&self) -> Result<Device> {
         match *self.input_device.lock().await {
-            Some(ref name) => self
+            Some(ref name) => Ok(self
                 .host
                 .input_devices()?
                 .find(|device| {
@@ -1018,11 +1229,15 @@ impl AudioChat {
                         false
                     }
                 })
-                .ok_or(Error::no_input_device()),
+                .unwrap_or(
+                    self.host
+                        .default_input_device()
+                        .ok_or(ErrorKind::NoInputDevice)?,
+                )),
             None => self
                 .host
                 .default_input_device()
-                .ok_or(Error::no_input_device()),
+                .ok_or(ErrorKind::NoInputDevice.into()),
         }
     }
 }
@@ -1033,6 +1248,47 @@ pub(crate) struct SendStream {
 }
 
 unsafe impl Send for SendStream {}
+
+// TODO yikers
+struct SendPollStream {
+    poll_stream: PollStream,
+}
+
+unsafe impl Send for SendPollStream {}
+
+impl AsyncRead for SendPollStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        Pin::new(&mut self.poll_stream).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for SendPollStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        Pin::new(&mut self.poll_stream).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        Pin::new(&mut self.poll_stream).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        Pin::new(&mut self.poll_stream).poll_shutdown(cx)
+    }
+}
 
 /// A message containing either a frame of audio or silence
 enum ProcessorMessage {
@@ -1055,82 +1311,29 @@ impl ProcessorMessage {
     }
 }
 
-/// Keeps track of the active controllers
-struct ControllerState {
-    /// Signals the controller to initiate a call
+/// Keeps track of the active sessions
+struct SessionState {
+    /// Signals the session to initiate a call
     start: Notify,
 
-    /// Stops the controller
+    /// Stops the session
     stop: Notify,
 
-    /// If the controller is in a call
+    /// If the session is in a call
     in_call: AtomicBool,
 
     /// A reusable channel used to send and receive messages while a call is active
-    message_channel: (AsyncSender<Message>, AsyncReceiver<Message>),
+    channel: (AsyncSender<Message>, AsyncReceiver<Message>),
 }
 
-impl ControllerState {
+impl SessionState {
     fn new(message_channel: &(AsyncSender<Message>, AsyncReceiver<Message>)) -> Self {
         Self {
             start: Notify::new(),
             stop: Notify::new(),
             in_call: AtomicBool::new(false),
-            message_channel: message_channel.clone(),
+            channel: message_channel.clone(),
         }
-    }
-}
-
-/// Produces current timestamps with high precision
-struct SyncedTime {
-    datetime: DateTime<Utc>,
-    instant: Instant,
-}
-
-impl Default for SyncedTime {
-    fn default() -> Self {
-        Self::new(Utc::now())
-    }
-}
-
-impl SyncedTime {
-    fn new(datetime: DateTime<Utc>) -> Self {
-        Self {
-            datetime,
-            instant: Instant::now(),
-        }
-    }
-
-    /// Returns the current timestamp in microseconds
-    fn current_timestamp(&self) -> u128 {
-        self.datetime.timestamp_micros() as u128 + self.instant.elapsed().as_micros()
-    }
-}
-
-/// A pair of stream ciphers one for sending and one for receiving
-struct PairedCipher<T> {
-    send_cipher: T,
-    receive_cipher: T,
-}
-
-impl<T: StreamCipher + StreamCipherSeek> PairedCipher<T> {
-    fn new(send_cipher: T, receive_cipher: T) -> Self {
-        Self {
-            send_cipher,
-            receive_cipher,
-        }
-    }
-
-    fn swap(&mut self) {
-        mem::swap(&mut self.send_cipher, &mut self.receive_cipher);
-    }
-
-    fn into_parts(self) -> (T, T) {
-        (self.send_cipher, self.receive_cipher)
-    }
-
-    fn mut_parts(&mut self) -> (&mut T, &mut T) {
-        (&mut self.send_cipher, &mut self.receive_cipher)
     }
 }
 
@@ -1191,7 +1394,7 @@ pub struct Statistics {
 }
 
 async fn call_controller<C: StreamCipher + StreamCipherSeek>(
-    transport: &mut Transport,
+    transport: &mut Transport<SendPollStream>,
     cipher: &mut PairedCipher<C>,
     receiver: AsyncReceiver<Message>,
     end_call: Arc<Notify>,
@@ -1232,7 +1435,7 @@ async fn call_controller<C: StreamCipher + StreamCipherSeek>(
             // sends messages to the callee
             result = receiver.recv() => {
                 if let Ok(message) = result {
-                    write_message(transport, &message, &mut cipher.send_cipher).await?;
+                    write_message(transport, message, &mut cipher.send_cipher).await?;
                 } else {
                     // if the channel closes, the call has ended
                     break Ok(String::new());
@@ -1241,7 +1444,7 @@ async fn call_controller<C: StreamCipher + StreamCipherSeek>(
             // ends the call
             _ = end_call.notified() => {
                 let message = Message::goodbye();
-                write_message(transport, &message, &mut cipher.send_cipher).await?;
+                write_message(transport, message, &mut cipher.send_cipher).await?;
                 break Ok(String::new());
             },
         }
@@ -1251,19 +1454,21 @@ async fn call_controller<C: StreamCipher + StreamCipherSeek>(
 /// Receives frames of audio data from the input processor and sends them to the socket
 async fn socket_input<C: StreamCipher>(
     input_receiver: AsyncReceiver<ProcessorMessage>,
-    socket: Arc<UdpSocket>,
+    socket: Arc<webrtc_sctp::stream::Stream>,
     mut cipher: C,
     notify: Arc<Notify>,
 ) -> Result<()> {
     let mut byte_buffer = [0; TRANSFER_BUFFER_SIZE + 8];
     let mut sequence_number = 0_u64;
 
+    let silence = Bytes::from_static(&[0]);
+
     let future = async {
         while let Ok(message) = input_receiver.recv().await {
             match message {
                 ProcessorMessage::Silence => {
                     // send the silence signal
-                    socket.send(&[0]).await?;
+                    socket.write(&silence).await?;
                 }
                 ProcessorMessage::Data(bytes) => {
                     // encrypt the audio data (unwrap is safe because we know the buffer is the correct length)
@@ -1275,8 +1480,9 @@ async fn socket_input<C: StreamCipher>(
                     byte_buffer[..8].copy_from_slice(&sequence_number.to_be_bytes());
                     sequence_number += TRANSFER_BUFFER_SIZE as u64; // increment the sequence number
 
+                    // TODO i guess we need to copy byte_buffer here but i still do not love it
                     // send the bytes to the socket
-                    socket.send(&byte_buffer).await?;
+                    socket.write(&Bytes::copy_from_slice(&byte_buffer)).await?;
                 }
             }
         }
@@ -1296,7 +1502,7 @@ async fn socket_input<C: StreamCipher>(
 /// Receives audio data from the socket and sends it to the output processor
 async fn socket_output<C: StreamCipher + StreamCipherSeek>(
     sender: AsyncSender<ProcessorMessage>,
-    socket: Arc<UdpSocket>,
+    socket: Arc<webrtc_sctp::stream::Stream>,
     mut cipher: C,
     notify: Arc<Notify>,
     disconnected_callback: Arc<Mutex<dyn Fn(bool) -> DartFnFuture<()> + Send>>,
@@ -1307,7 +1513,7 @@ async fn socket_output<C: StreamCipher + StreamCipherSeek>(
 
     let future = async {
         loop {
-            match timeout(RECEIVE_TIMEOUT, socket.recv(&mut in_buffer)).await {
+            match timeout(RECEIVE_TIMEOUT, socket.read(&mut in_buffer)).await {
                 // normal chunk of audio data
                 Ok(Ok(len)) if len == TRANSFER_BUFFER_SIZE + 8 => {
                     if disconnected {
@@ -1361,13 +1567,16 @@ async fn socket_output<C: StreamCipher + StreamCipherSeek>(
                     }
                 }
                 // socket errors
-                Ok(Err(error)) => match error.kind() {
-                    io::ErrorKind::ConnectionReset => {
-                        error!("connection reset");
-                        break;
-                    }
-                    _ => error!("error receiving: {}", error.kind()),
-                },
+                Ok(Err(error)) => {
+                    // match error {
+                    //     io::ErrorKind::ConnectionReset => {
+                    //         error!("connection reset");
+                    //         break;
+                    //     }
+                    //     _ => error!("error receiving: {}", error.kind()),
+                    // }
+                    error!("error receiving: {}", error);
+                }
             }
         }
     };
@@ -1433,6 +1642,8 @@ async fn statistics_collector(
     loop {
         select! {
             _ = interval.tick() => {
+                // TODO this is super broken
+
                 let rms = rms_window.iter().sum::<f32>() / 10_f32;
                 let db = multiplier_to_db(rms / i16_max);
 
@@ -1660,45 +1871,6 @@ fn output_processor(
     Ok(())
 }
 
-/// Reads a public key from the stream
-async fn read_public(stream: &mut TcpStream) -> Result<PublicKey> {
-    let mut buffer = [0; 32];
-    stream.read_exact(&mut buffer).await?;
-    Ok(PublicKey::from(buffer))
-}
-
-/// Writes a protobuf message to the stream
-async fn write_message<M: prost::Message, C: StreamCipher + StreamCipherSeek>(
-    transport: &mut Transport,
-    message: &M,
-    cipher: &mut C,
-) -> Result<()> {
-    let len = message.encoded_len(); // get the length of the message
-    let mut buffer = Vec::with_capacity(len);
-
-    message.encode(&mut buffer).unwrap(); // encode the message into the buffer (infallible)
-    cipher.apply_keystream(&mut buffer);
-
-    transport.send(Bytes::from(buffer)).await?;
-    Ok(())
-}
-
-/// Reads a protobuf message from the stream
-async fn read_message<M: prost::Message + Default, C: StreamCipher + StreamCipherSeek>(
-    transport: &mut Transport,
-    cipher: &mut C,
-) -> Result<M> {
-    if let Some(Ok(mut buffer)) = transport.next().await {
-        cipher.apply_keystream(&mut buffer); // apply the keystream to the buffer
-
-        let message = M::decode(&buffer[..])?; // decode the message
-
-        Ok(message)
-    } else {
-        Err(io::Error::new(io::ErrorKind::UnexpectedEof, "read failed").into())
-    }
-}
-
 /// Creates a cipher from the HKDF
 fn cipher_factory(hk: &Hkdf<Sha256>, key_info: &[u8], iv_info: &[u8]) -> Result<AesCipher> {
     let mut key = [0_u8; 32];
@@ -1763,7 +1935,7 @@ pub(crate) async fn get_output_device(
     host: &Arc<Host>,
 ) -> Result<Device> {
     match *output_device.lock().await {
-        Some(ref name) => host
+        Some(ref name) => Ok(host
             .output_devices()?
             .find(|device| {
                 if let Ok(ref device_name) = device.name() {
@@ -1772,53 +1944,26 @@ pub(crate) async fn get_output_device(
                     false
                 }
             })
-            .ok_or(Error::no_output_device()),
+            .unwrap_or(
+                host.default_output_device()
+                    .ok_or(ErrorKind::NoOutputDevice)?,
+            )),
         None => host
             .default_output_device()
-            .ok_or(Error::no_output_device()),
+            .ok_or(ErrorKind::NoOutputDevice.into()),
     }
 }
 
-/// Performs the key exchange
-async fn key_exchange(stream: &mut TcpStream) -> Result<SharedSecret> {
-    let secret = EphemeralSecret::random();
+async fn ice_factory() -> Result<Arc<Agent>> {
+    let udp_network = UDPNetwork::Ephemeral(Default::default());
 
-    // send our public key
-    let our_public = PublicKey::from(&secret);
-    stream.write_all(our_public.as_bytes()).await?;
-
-    // receive their public key
-    let their_public = timeout(HELLO_TIMEOUT, read_public(stream)).await??;
-    let shared_secret = secret.diffie_hellman(&their_public);
-
-    Ok(shared_secret)
-}
-
-/// A background thread which produces synchronized datetime objects
-async fn synchronize(time: Time) -> Result<()> {
-    let client = AsyncSntpClient::new();
-
-    // time is re-synced every 5 minutes
-    let mut interval = interval(Duration::from_secs(60 * 5));
-
-    loop {
-        interval.tick().await;
-
-        match client.synchronize("pool.ntp.org").await {
-            Ok(result) => {
-                match result.datetime().into_chrono_datetime() {
-                    Ok(new_time) => {
-                        // store the new time
-                        *time.lock().await = SyncedTime::new(new_time);
-                        continue;
-                    }
-                    Err(error) => error!("Failed to convert datetime: {}", error),
-                }
-            }
-            Err(error) => error!("Failed to synchronize time: {}", error),
-        }
-
-        // retry after 20 seconds
-        interval.reset_after(Duration::from_secs(20));
-    }
+    Ok(Arc::new(
+        Agent::new(AgentConfig {
+            urls: vec![Url::parse_url("stun:stun.l.google.com:19302")?],
+            network_types: vec![NetworkType::Udp4],
+            udp_network,
+            ..Default::default()
+        })
+        .await?,
+    ))
 }

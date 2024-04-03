@@ -1,13 +1,6 @@
 use cpal::SupportedStreamConfig;
-use ed25519_dalek::Signature;
 
 include!(concat!(env!("OUT_DIR"), "/audio_chat.items.rs"));
-
-impl Ports {
-    pub(crate) fn new(port: u16) -> Self {
-        Self { port: port as u32 }
-    }
-}
 
 impl From<&SupportedStreamConfig> for AudioHeader {
     fn from(value: &SupportedStreamConfig) -> Self {
@@ -37,16 +30,6 @@ impl From<&[u8]> for AudioHeader {
             channels: u16::from_le_bytes([value[22], value[23]]) as u32,
             sample_rate: u32::from_le_bytes([value[24], value[25], value[26], value[27]]),
             sample_format: String::from(sample_format),
-        }
-    }
-}
-
-impl Identity {
-    pub(crate) fn new(nonce: [u8; 128], signature: Signature, public_key: &[u8; 32]) -> Self {
-        Self {
-            nonce: nonce.to_vec(),
-            signature: signature.to_bytes().to_vec(),
-            public_key: public_key.to_vec(),
         }
     }
 }

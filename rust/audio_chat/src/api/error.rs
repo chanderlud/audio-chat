@@ -1,12 +1,13 @@
-use base64::DecodeError;
-use cpal::{BuildStreamError, DefaultStreamConfigError, DevicesError, PlayStreamError};
-use hkdf::InvalidLength;
-use rubato::{ResampleError, ResamplerConstructionError};
 use std::array::TryFromSliceError;
 use std::fmt::{Display, Formatter};
 use std::net::AddrParseError;
+
+use cpal::{BuildStreamError, DefaultStreamConfigError, DevicesError, PlayStreamError};
+use rubato::{ResampleError, ResamplerConstructionError};
 use tokio::task::JoinError;
 use tokio::time::error::Elapsed;
+
+use common::InvalidLength;
 
 /// generic error type for audio chat
 #[derive(Debug)]
@@ -29,9 +30,11 @@ pub(crate) enum ErrorKind {
     HkdfLength(InvalidLength),
     Join(JoinError),
     AddrParse(AddrParseError),
-    Base64(DecodeError),
     Ed25519(ed25519_dalek::ed25519::Error),
+    Common(common::error::ErrorKind),
     Timeout(Elapsed),
+    Ice(webrtc_ice::Error),
+    Sctp(webrtc_sctp::Error),
     NoOutputDevice,
     NoInputDevice,
     InvalidContactFormat,
@@ -39,6 +42,10 @@ pub(crate) enum ErrorKind {
     UnknownSampleFormat,
     InvalidWav,
     TryFromSlice(TryFromSliceError),
+    AcceptStream,
+    MissingCredentials,
+    ManagerRestarted,
+    InvalidSigningKey,
 }
 
 impl From<std::io::Error> for Error {
@@ -145,14 +152,6 @@ impl From<AddrParseError> for Error {
     }
 }
 
-impl From<DecodeError> for Error {
-    fn from(err: DecodeError) -> Self {
-        Self {
-            kind: ErrorKind::Base64(err),
-        }
-    }
-}
-
 impl From<ed25519_dalek::ed25519::Error> for Error {
     fn from(err: ed25519_dalek::ed25519::Error) -> Self {
         Self {
@@ -177,6 +176,36 @@ impl From<TryFromSliceError> for Error {
     }
 }
 
+impl From<common::error::Error> for Error {
+    fn from(err: common::error::Error) -> Self {
+        Self {
+            kind: ErrorKind::Common(err.kind),
+        }
+    }
+}
+
+impl From<webrtc_sctp::Error> for Error {
+    fn from(err: webrtc_sctp::Error) -> Self {
+        Self {
+            kind: ErrorKind::Sctp(err),
+        }
+    }
+}
+
+impl From<webrtc_ice::Error> for Error {
+    fn from(err: webrtc_ice::Error) -> Self {
+        Self {
+            kind: ErrorKind::Ice(err),
+        }
+    }
+}
+
+impl From<ErrorKind> for Error {
+    fn from(kind: ErrorKind) -> Self {
+        Self { kind }
+    }
+}
+
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -196,57 +225,25 @@ impl Display for Error {
                 ErrorKind::KanalReceive(ref err) => format!("Kanal receive error: {}", err),
                 ErrorKind::HkdfLength(ref err) => format!("HKDF length error: {}", err),
                 ErrorKind::Join(ref err) => format!("Join error: {}", err),
-                ErrorKind::Base64(ref err) => format!("Base64 error: {}", err),
                 ErrorKind::Ed25519(ref err) => format!("Ed25519 error: {}", err),
                 ErrorKind::Timeout(_) => "The connection timed out".to_string(),
                 ErrorKind::TryFromSlice(ref err) => format!("Try from slice error: {}", err),
                 ErrorKind::AddrParse(ref err) => err.to_string(),
+                ErrorKind::Common(ref err) => format!("Common error: {:?}", err),
+                ErrorKind::Ice(ref err) => format!("ICE error: {}", err),
+                ErrorKind::Sctp(ref err) => format!("SCTP error: {}", err),
                 ErrorKind::NoOutputDevice => "No output device found".to_string(),
                 ErrorKind::NoInputDevice => "No input device found".to_string(),
                 ErrorKind::InvalidContactFormat => "Invalid contact format".to_string(),
                 ErrorKind::InCall => "Cannot change this option while a call is active".to_string(),
                 ErrorKind::UnknownSampleFormat => "Unknown sample format".to_string(),
                 ErrorKind::InvalidWav => "Invalid WAV file".to_string(),
+                ErrorKind::AcceptStream => "Failed to accept stream".to_string(),
+                ErrorKind::MissingCredentials => "Missing credentials".to_string(),
+                ErrorKind::ManagerRestarted => "Listener restarted".to_string(),
+                ErrorKind::InvalidSigningKey => "Invalid signing key".to_string(),
             }
         )
-    }
-}
-
-impl Error {
-    pub(crate) fn no_output_device() -> Self {
-        Self {
-            kind: ErrorKind::NoOutputDevice,
-        }
-    }
-
-    pub(crate) fn no_input_device() -> Self {
-        Self {
-            kind: ErrorKind::NoInputDevice,
-        }
-    }
-
-    pub(crate) fn invalid_contact_format() -> Self {
-        Self {
-            kind: ErrorKind::InvalidContactFormat,
-        }
-    }
-
-    pub(crate) fn in_call() -> Self {
-        Self {
-            kind: ErrorKind::InCall,
-        }
-    }
-
-    pub(crate) fn unknown_sample_format() -> Self {
-        Self {
-            kind: ErrorKind::UnknownSampleFormat,
-        }
-    }
-
-    pub(crate) fn invalid_wav() -> Self {
-        Self {
-            kind: ErrorKind::InvalidWav,
-        }
     }
 }
 
@@ -258,6 +255,14 @@ impl From<Error> for DartError {
     fn from(err: Error) -> Self {
         Self {
             message: err.to_string(),
+        }
+    }
+}
+
+impl From<ErrorKind> for DartError {
+    fn from(kind: ErrorKind) -> Self {
+        Self {
+            message: Error { kind }.to_string(),
         }
     }
 }

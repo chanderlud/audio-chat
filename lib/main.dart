@@ -11,7 +11,6 @@ import 'package:audio_chat/src/rust/api/player.dart';
 import 'package:audio_chat/src/rust/frb_generated.dart';
 import 'package:audio_chat/settings/controller.dart';
 import 'package:debug_console/debug_console.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -46,8 +45,6 @@ Future<void> main() async {
   final inPrompt = Mutex();
 
   final audioChat = await AudioChat.newInstance(
-      listenPort: settingsController.listenPort,
-      receivePort: settingsController.receivePort,
       signingKey: settingsController.signingKey,
       // called when there is an incoming call
       acceptCall: (String id, ringtone) async {
@@ -114,10 +111,10 @@ Future<void> main() async {
         }
       },
       // called when a contact is needed in the backend
-      getContact: (addressStr) {
+      getContact: (verifyingKey) {
         Contact? contact = settingsController.contacts.values
-            .firstWhere((contact) => contact.addressStr() == addressStr);
-        return contact.pubClone();
+            .firstWhere((Contact contact) => contact.keyEq(key: verifyingKey));
+        return contact?.pubClone();
       },
       // called when the call initially connects
       connected: () async {
@@ -150,10 +147,10 @@ Future<void> main() async {
           callStateController.removeOnlineContact(id);
         }
       },
-      // called when the backend wants the frontend to start controllers
-      startControllers: (AudioChat audioChat) {
+      // called when the backend wants to start sessions
+      startSessions: (AudioChat audioChat) {
         for (Contact contact in settingsController.contacts.values) {
-          audioChat.connect(contact: contact);
+          audioChat.startSession(contact: contact);
         }
       },
       // TODO this callback could potentially be merged with the statisticsCallback
@@ -311,11 +308,11 @@ class HomePage extends StatelessWidget {
                   stateController: callStateController,
                   player: player),
               const SizedBox(width: 20),
-              Expanded(
-                  child: ChatWidget(
-                      audioChat: audioChat,
-                      stateController: callStateController,
-                      messageBus: messageBus))
+              // Expanded(
+              //     child: ChatWidget(
+              //         audioChat: audioChat,
+              //         stateController: callStateController,
+              //         messageBus: messageBus))
             ])),
           ],
         ),
@@ -340,7 +337,6 @@ class ContactForm extends StatefulWidget {
 class _ContactFormState extends State<ContactForm> {
   final TextEditingController _nicknameInput = TextEditingController();
   final TextEditingController _verifyingKeyInput = TextEditingController();
-  final TextEditingController _contactAddressInput = TextEditingController();
 
   @override
   Widget build(BuildContext context) {
@@ -359,11 +355,6 @@ class _ContactFormState extends State<ContactForm> {
           TextInput(controller: _nicknameInput, labelText: 'Nickname'),
           const SizedBox(height: 10),
           TextInput(
-              controller: _contactAddressInput,
-              labelText: 'Address',
-              hintText: 'host:port or ip:port'),
-          const SizedBox(height: 10),
-          TextInput(
               controller: _verifyingKeyInput,
               labelText: 'Verifying Key',
               hintText: 'base64 encoded verifying (public) key',
@@ -372,24 +363,21 @@ class _ContactFormState extends State<ContactForm> {
           Center(
             child: Button(
               text: 'Add Contact',
+              disabled: false,
               onPressed: () async {
+                if (_nicknameInput.text.isEmpty ||
+                    _verifyingKeyInput.text.isEmpty) {
+                  showErrorDialog(context, 'Failed to add contact',
+                      'Nickname and verifying key cannot be empty');
+                  return;
+                }
+
                 try {
-                  if (_nicknameInput.text.isEmpty ||
-                      _verifyingKeyInput.text.isEmpty ||
-                      _contactAddressInput.text.isEmpty) {
-                    showErrorDialog(
-                        context, 'Validation error', 'All fields are required');
-                    return;
-                  }
+                  Contact contact = await widget.settingsController
+                      .addContact(_nicknameInput.text, _verifyingKeyInput.text);
 
-                  Contact contact = await widget.settingsController.addContact(
-                      _nicknameInput.text,
-                      _verifyingKeyInput.text,
-                      _contactAddressInput.text);
+                  widget.audioChat.startSession(contact: contact);
 
-                  widget.audioChat.connect(contact: contact);
-
-                  _contactAddressInput.clear();
                   _nicknameInput.clear();
                   _verifyingKeyInput.clear();
                 } on DartError catch (e) {
@@ -572,7 +560,6 @@ class ContactWidget extends StatelessWidget {
           child: Icon(Icons.person),
         ),
         title: Text(contact.nickname()),
-        subtitle: Text(contact.addressStr()),
         trailing: trailing,
       ),
     );
@@ -813,19 +800,16 @@ class EditContactWidget extends StatefulWidget {
 /// The state for EditContactWidget
 class _EditContactWidgetState extends State<EditContactWidget> {
   late final TextEditingController _nicknameInput;
-  late final TextEditingController _addressInput;
 
   @override
   void initState() {
     super.initState();
     _nicknameInput = TextEditingController(text: widget.contact.nickname());
-    _addressInput = TextEditingController(text: widget.contact.addressStr());
   }
 
   @override
   void dispose() {
     _nicknameInput.dispose();
-    _addressInput.dispose();
     super.dispose();
   }
 
@@ -852,27 +836,11 @@ class _EditContactWidgetState extends State<EditContactWidget> {
                       'nickname updated ${widget.contact.nickname()}');
                 }),
           ),
-          subtitle: TextInput(
-              enabled: !widget.stateController.isActiveContact(widget.contact),
-              controller: _addressInput,
-              labelText: 'Address',
-              onChanged: (value) {
-                try {
-                  widget.settingsController
-                      .updateContactAddress(widget.contact, value);
-
-                  // TODO maybe it is not ideal to start and stop the controller on every change
-                  widget.audioChat.stopController(contact: widget.contact);
-                  widget.audioChat.connect(contact: widget.contact);
-                } on DartError catch (_) {
-                  return; // ignore
-                }
-              }),
           trailing: IconButton(
               onPressed: () {
                 if (!widget.stateController.isActiveContact(widget.contact)) {
                   widget.settingsController.removeContact(widget.contact);
-                  widget.audioChat.stopController(contact: widget.contact);
+                  widget.audioChat.stopSession(contact: widget.contact);
                 } else {
                   showErrorDialog(context, 'Warning',
                       'Cannot delete a contact while in an active call');
@@ -1024,31 +992,50 @@ class Button extends StatelessWidget {
   final String text;
   final VoidCallback onPressed;
   final double? width;
+  final double? height;
+  final bool disabled;
 
   const Button(
-      {super.key, required this.text, required this.onPressed, this.width});
+      {super.key,
+      required this.text,
+      required this.onPressed,
+      this.width,
+      this.height,
+      required this.disabled});
 
   @override
   Widget build(BuildContext context) {
     Widget child;
 
-    if (width == null) {
+    if (width == null || height == null) {
       child = Text(text);
     } else {
       child = SizedBox(
         width: width!,
+        height: height,
         child: Center(child: Text(text)),
       );
     }
 
     return ElevatedButton(
-      onPressed: onPressed,
+      onPressed: () {
+        if (!disabled) {
+          onPressed();
+        }
+      },
       style: ButtonStyle(
-        backgroundColor:
-            MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
+        backgroundColor: disabled
+            ? MaterialStateProperty.all(Colors.grey)
+            : MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
         foregroundColor: MaterialStateProperty.all(Colors.white),
-        overlayColor:
-            MaterialStateProperty.all(Theme.of(context).colorScheme.secondary),
+        overlayColor: disabled
+            ? MaterialStateProperty.all(Colors.grey)
+            : MaterialStateProperty.all(
+                Theme.of(context).colorScheme.secondary),
+        surfaceTintColor: MaterialStateProperty.all(Colors.transparent),
+        mouseCursor: disabled
+            ? MaterialStateProperty.all(SystemMouseCursors.basic)
+            : MaterialStateProperty.all(SystemMouseCursors.click),
       ),
       child: child,
     );

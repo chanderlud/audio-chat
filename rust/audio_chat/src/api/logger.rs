@@ -3,7 +3,6 @@
 
 use std::sync::Once;
 
-use crate::api::logger;
 use fast_log::appender::{FastLogRecord, LogAppender};
 use fast_log::Config;
 use flutter_rust_bridge::frb;
@@ -23,6 +22,12 @@ lazy_static! {
 pub fn init_logger() {
     // https://stackoverflow.com/questions/30177845/how-to-initialize-the-logger-for-integration-tests
     INIT_LOGGER_ONCE.call_once(|| {
+        // let level = if cfg!(debug_assertions) {
+        //     LevelFilter::Debug
+        // } else {
+        //     LevelFilter::Warn
+        // };
+
         let level = LevelFilter::Debug;
 
         assert!(
@@ -34,7 +39,8 @@ pub fn init_logger() {
 
         fast_log::init(
             Config::new()
-                .custom(SendToDartLogger {})
+                // .custom(SendToDartLogger {})
+                .file("audio_chat.log")
                 .chan_len(Some(100))
                 .level(level),
         )
@@ -86,10 +92,10 @@ impl LogAppender for SendToDartLogger {
 
 #[frb(sync)]
 pub fn create_log_stream(s: StreamSink<String>) {
-    logger::SendToDartLogger::set_stream_sink(s);
+    SendToDartLogger::set_stream_sink(s);
 }
 
 #[frb(sync)]
 pub fn rust_set_up() {
-    logger::init_logger();
+    init_logger();
 }

@@ -1,2 +1,2 @@
-rust_input: rust/src/api/**/*.rs
+rust_input: rust/audio_chat/src/api/**/*.rs
 dart_output: lib/src/rust

@@ -2,22 +2,11 @@ syntax = "proto2";
 
 package audio_chat.items;
 
-message Ports {
-  required uint32 port = 1;
-}
-
 // The specification for the audio data
 message AudioHeader {
   required uint32 channels = 1;
   required uint32 sample_rate = 2;
   required string sample_format = 3;
-}
-
-// Verifies the clients identity
-message Identity {
-  required bytes nonce = 1;
-  required bytes signature = 2;
-  required bytes public_key = 3;
 }
 
 // Signals that one client wants to start a call
