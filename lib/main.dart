@@ -32,10 +32,12 @@ Future<void> main() async {
     DebugConsole.log(message);
   });
 
-  PermissionStatus status = await Permission.microphone.request();
+  if (Platform.isAndroid) {
+    PermissionStatus status = await Permission.microphone.request();
 
-  if (!status.isGranted) {
-    DebugConsole.error('Microphone permission not accepted');
+    if (!status.isGranted) {
+      DebugConsole.error('Microphone permission not accepted');
+    }
   }
 
   const storage = FlutterSecureStorage();

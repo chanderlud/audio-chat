@@ -93,7 +93,7 @@ BEGIN
             VALUE "FileDescription", "audio_chat" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "audio_chat" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2024 com.example. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2024 com.audio_chat. All rights reserved." "\0"
             VALUE "OriginalFilename", "audio_chat.exe" "\0"
             VALUE "ProductName", "audio_chat" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
