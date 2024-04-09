@@ -1,4 +1,3 @@
-use async_throttle::RateLimiter;
 use std::collections::{HashMap, VecDeque};
 use std::mem;
 pub use std::net::{IpAddr, SocketAddr};
@@ -8,18 +7,11 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_throttle::RateLimiter;
 use atomic_float::AtomicF32;
-use common::crypto::{identity_factory, key_exchange, verify_identity, PairedCipher};
-use common::items::Message as CommonMessage;
-use common::items::{Candidate, Identity, RequestOutcome, RequestSession};
-use common::time::synchronize;
-use common::{
-    read_message, write_message, Aes256, AesCipher, Ctr128BE, Hkdf, KeyIvInit, Sha256,
-    StreamCipher, StreamCipherSeek, Time, Transport,
-};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, Host, Stream};
-
+pub use cpal::Host;
+use cpal::{Device, Stream};
 use ed25519_dalek::{SecretKey, SigningKey};
 use flutter_rust_bridge::{frb, spawn, spawn_blocking_with, DartFnFuture};
 use kanal::{
@@ -50,6 +42,15 @@ use webrtc_sctp::association::{Association, Config};
 use webrtc_sctp::chunk::chunk_payload_data::PayloadProtocolIdentifier;
 use webrtc_sctp::stream::{PollStream, ReliabilityType};
 use webrtc_util::Conn;
+
+use common::crypto::{identity_factory, key_exchange, verify_identity, PairedCipher};
+use common::items::{Candidate, Identity, RequestOutcome, RequestSession};
+use common::items::{EndSession, Message as CommonMessage};
+use common::time::synchronize;
+use common::{
+    read_message, write_message, Aes256, AesCipher, Ctr128BE, Hkdf, KeyIvInit, Sha256,
+    StreamCipher, StreamCipherSeek, Time, Transport,
+};
 
 use crate::api::contact::Contact;
 use crate::api::error::{DartError, Error, ErrorKind};
@@ -163,6 +164,9 @@ pub struct AudioChat {
 
     /// Used to send chat messages to the frontend
     message_received: Arc<Mutex<dyn Fn(String) -> DartFnFuture<()> + Send>>,
+
+    /// Alerts the UI when the manager is active and restartable
+    manager_active: Arc<Mutex<dyn Fn(bool, bool) -> DartFnFuture<()> + Send>>,
 }
 
 impl AudioChat {
@@ -170,6 +174,7 @@ impl AudioChat {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         signing_key: Vec<u8>,
+        host: Arc<Host>,
         accept_call: impl Fn(String, Option<Vec<u8>>) -> DartFnFuture<bool> + Send + 'static,
         call_ended: impl Fn(String, bool) -> DartFnFuture<()> + Send + 'static,
         get_contact: impl Fn([u8; 32]) -> DartFnFuture<Option<Contact>> + Send + 'static,
@@ -181,15 +186,14 @@ impl AudioChat {
         load_ringtone: impl Fn() -> DartFnFuture<Option<Vec<u8>>> + Send + 'static,
         statistics: impl Fn(Statistics) -> DartFnFuture<()> + Send + 'static,
         message_received: impl Fn(String) -> DartFnFuture<()> + Send + 'static,
+        manager_active: impl Fn(bool, bool) -> DartFnFuture<()> + Send + 'static,
     ) -> AudioChat {
         let key_bytes: [u8; 32] = signing_key.try_into().unwrap();
-
-        let host = cpal::default_host();
 
         let (start_session, start) = unbounded_async::<[u8; 32]>();
 
         let chat = Self {
-            host: Arc::new(host),
+            host,
             rms_threshold: Default::default(),
             input_volume: Default::default(),
             output_volume: Default::default(),
@@ -217,6 +221,7 @@ impl AudioChat {
             load_ringtone: Arc::new(Mutex::new(load_ringtone)),
             statistics: Arc::new(Mutex::new(statistics)),
             message_received: Arc::new(Mutex::new(message_received)),
+            manager_active: Arc::new(Mutex::new(manager_active)),
         };
 
         // start the time synchronization background thread
@@ -233,10 +238,12 @@ impl AudioChat {
                     .throttle(|| async { chat_clone.session_manager(&start).await })
                     .await
                 {
+                    (chat_clone.manager_active.lock().await)(false, false).await;
                     error!("Session manager failed: {}", error);
                 }
 
                 debug!("Session manager waiting for restart signal");
+                (chat_clone.manager_active.lock().await)(false, true).await;
                 chat_clone.restart_manager.notified().await;
             }
         });
@@ -286,21 +293,9 @@ impl AudioChat {
             Err(ErrorKind::InCall.into())
         } else {
             self.restart_manager.notify_one();
-            self.restart_sessions().await;
+            (self.start_sessions.lock().await)(self.clone()).await;
             Ok(())
         }
-    }
-
-    // TODO when the session manager closes, shouldn't all the sessions just die cause the channels close?
-    /// Restarts the sessions
-    pub async fn restart_sessions(&self) {
-        for state in self.session_states.read().await.values() {
-            if !state.in_call.load(Relaxed) {
-                state.stop.notify_one();
-            }
-        }
-
-        (self.start_sessions.lock().await)(self.clone()).await;
     }
 
     /// Sets the signing key (called when the profile changes)
@@ -436,6 +431,9 @@ impl AudioChat {
 
         // the server's identity is not verified here because we do not trust it
 
+        // alerts the UI that the manager is active
+        (self.manager_active.lock().await)(true, true).await;
+
         // sends messages from sessions to the session manager for dispatch to the matchmaker
         let (message_sender, message_receiver) = unbounded_async::<CommonMessage>();
         // maps messages from the session manager to the sessions
@@ -443,8 +441,14 @@ impl AudioChat {
 
         let mut ice_agent = ice_factory().await?;
 
+        let mut interval = interval(Duration::from_secs(15));
+
         loop {
             select! {
+                _ = interval.tick() => {
+                    let ping = CommonMessage::ping();
+                    write_message(&mut transport, ping, &mut ss_cipher).await?;
+                }
                 _ = self.restart_manager.notified() => {
                     break Err(ErrorKind::ManagerRestarted.into());
                 }
@@ -476,6 +480,8 @@ impl AudioChat {
 
                             match &message.message {
                                 Some(common::items::message::Message::RequestSession(request)) => {
+                                    info!("Received request session from {:?}", &from[0..5]);
+
                                     let contact = match (self.get_contact.lock().await)(from).await {
                                         Some(contact) => contact,
                                         None => {
@@ -492,13 +498,15 @@ impl AudioChat {
                                     let channel = unbounded_async::<CommonMessage>();
                                     sender_map.insert(from, channel.0);
 
-                                    self._start_session(contact, (message_sender.clone(), channel.1), ice_agent, false, (request.ufrag.clone(), request.pwd.clone())).await;
+                                    self._start_session(contact, (message_sender.clone(), channel.1), ice_agent, false, (request.ufrag.clone(), request.pwd.clone()), local_verifying_key).await;
 
                                     ice_agent = ice_factory().await?;
                                 }
                                 Some(common::items::message::Message::RequestOutcome(outcome)) => {
+                                    info!("Received request outcome from {:?}", &from[0..5]);
+
                                     if !outcome.success {
-                                        warn!("Failed to start session for {:?} because {:?}", &from[0..5], outcome.reason);
+                                        warn!("Failed to start session for {:?} because {:?}", &message.to[0..5], outcome.reason);
                                         continue;
                                     }
 
@@ -506,6 +514,10 @@ impl AudioChat {
                                         Some(contact) => contact,
                                         None => {
                                             warn!("No contact found for {:?}", &from[0..5]);
+
+                                            let end_session = EndSession::new("contact not found");
+                                            let message = CommonMessage::new(end_session.into(), &from, &local_verifying_key);
+                                            write_message(&mut transport, message, &mut ss_cipher).await?;
                                             continue;
                                         }
                                     };
@@ -513,25 +525,33 @@ impl AudioChat {
                                     let channel = unbounded_async::<CommonMessage>();
                                     sender_map.insert(from, channel.0);
 
-                                    self._start_session(contact, (message_sender.clone(), channel.1), ice_agent, true, (outcome.ufrag.clone().ok_or(ErrorKind::MissingCredentials)?, outcome.pwd.clone().ok_or(ErrorKind::MissingCredentials)?)).await;
+                                    self._start_session(contact, (message_sender.clone(), channel.1), ice_agent, true, (outcome.ufrag.clone().ok_or(ErrorKind::MissingCredentials)?, outcome.pwd.clone().ok_or(ErrorKind::MissingCredentials)?), local_verifying_key).await;
 
                                     ice_agent = ice_factory().await?;
                                 }
                                 Some(common::items::message::Message::EndSession(_)) => {
                                     if let Some(sender) = sender_map.remove(&from) {
+                                                                            info!("Received end session from {:?}", &from[0..5]);
+
                                         _ = sender.send(message).await;
                                     } else {
                                         warn!("Received end session for a session which does not exist {:?}", &from[0..5]);
                                     }
                                 }
                                 Some(common::items::message::Message::ServerError(error)) => {
+                                    info!("Received server error from {:?}", &from[0..5]);
+
                                     match error.message.as_ref() {
                                         "Session already exists" => break Ok(()),
                                         _ => warn!("Server error: {:?}", error.message),
                                     }
                                 }
+                                // ping messages are ignored
+                                Some(common::items::message::Message::Ping(_)) => {}
                                 // all other messages are intended for the sessions
                                 _ => {
+                                    info!("Received session message {:?} from {:?}", message, &from[0..5]);
+
                                     if let Some(sender) = sender_map.get(&from) {
                                         if sender.send(message).await.is_err() {
                                             warn!("Failed to forward message to session");
@@ -570,6 +590,7 @@ impl AudioChat {
         agent: Arc<Agent>,
         controlling: bool,
         remote_credentials: (String, String),
+        local_verifying_key: [u8; 32],
     ) {
         let message_channel = unbounded_async::<Message>();
 
@@ -588,13 +609,12 @@ impl AudioChat {
 
         let chat_clone = self.clone();
         spawn(async move {
-            let id = contact.id.clone();
-            let nickname = contact.nickname.clone();
+            let contact_clone = contact.clone();
 
             if let Err(error) = chat_clone
                 .session(
                     contact,
-                    session_message_channel,
+                    session_message_channel.clone(),
                     message_channel,
                     agent,
                     controlling,
@@ -603,16 +623,32 @@ impl AudioChat {
                 )
                 .await
             {
-                error!("Session error: {}", error);
+                error!("Session error for {}: {}", contact_clone.nickname, error);
             } else {
-                debug!("Session for {} ended", nickname);
+                info!("Session for {} ended", contact_clone.nickname);
             }
 
-            // TODO ask the match maker to reconnect this session if possible
+            let end_session = EndSession::new("session ended");
+            let message = CommonMessage::new(
+                end_session.into(),
+                &contact_clone.verifying_key,
+                &local_verifying_key,
+            );
+
+            // the error is ignored because the state must be cleaned up still
+            _ = session_message_channel.0.send(message).await;
+
+            // TODO ask the match maker to reconnect this session if an error occurred
 
             // cleanup
-            chat_clone.session_states.write().await.remove(&id);
-            (chat_clone.contact_status.lock().await)(id, false).await;
+            chat_clone
+                .session_states
+                .write()
+                .await
+                .remove(&contact_clone.id);
+            (chat_clone.contact_status.lock().await)(contact_clone.id, false).await;
+
+            info!("Session for {} cleaned up", contact_clone.nickname);
         });
     }
 
@@ -630,7 +666,7 @@ impl AudioChat {
         state: Arc<SessionState>,
     ) -> Result<()> {
         let (message_sender, message_receiver) = session_channel;
-        let ice_done: Arc<Notify> = Default::default();
+        let stop: Arc<Notify> = Default::default();
         let (cancel_tx, cancel_rx) = mpsc::channel(1);
 
         let remote_public_key = contact.verifying_key;
@@ -653,12 +689,12 @@ impl AudioChat {
 
         // this monitors the matchmaker connection for messages
         let agent_clone = agent.clone();
-        let ice_done_clone = ice_done.clone();
+        let ice_done_clone = stop.clone();
         spawn(async move {
             while let Ok(message) = message_receiver.recv().await {
                 match message.message {
                     Some(common::items::message::Message::Candidate(candidate)) => {
-                        debug!("remote candidate {:?}", candidate.candidate);
+                        info!("remote candidate {:?}", candidate.candidate);
 
                         if let Ok(candidate) = unmarshal_candidate(&candidate.candidate) {
                             let c: Arc<dyn webrtc_ice::candidate::Candidate + Send + Sync> =
@@ -670,26 +706,28 @@ impl AudioChat {
                     }
                     Some(common::items::message::Message::ServerError(error)) => {
                         warn!("received server error: {:?}", error);
-                        ice_done_clone.notify_one();
                         break;
                     }
-                    Some(common::items::message::Message::EndSession(_)) => {
-                        ice_done_clone.notify_one();
-                        break;
-                    }
+                    Some(common::items::message::Message::EndSession(_)) => break,
                     _ => error!("session received unexpected message: {:?}", message),
                 }
             }
+
+            debug!("session message receiver closed");
+            ice_done_clone.notify_one();
         });
 
-        let ice_done_clone = ice_done.clone();
+        let ice_done_clone = stop.clone();
         agent.on_connection_state_change(Box::new(move |c| {
             if c == ConnectionState::Failed {
                 ice_done_clone.notify_one();
-            } else {
-                info!("ICE Connection State has changed: {c}");
             }
 
+            Box::pin(async move {})
+        }));
+
+        agent.on_selected_candidate_pair_change(Box::new(move |a, b| {
+            info!("selected candidate pair changed: {}:{}", a, b);
             Box::pin(async move {})
         }));
 
@@ -835,12 +873,18 @@ impl AudioChat {
             };
 
             select! {
-                _ = state.stop.notified() => break,
-                _ = ice_done.notified() => {
-                    if state.in_call.load(Relaxed) {
-                        (self.call_ended.lock().await)(String::from("ICE Failed"), false).await;
-                    } else {
-                        warn!("ICE failed for {}", contact.nickname);
+                // state will never notify while a call is active
+                _ = state.stop.notified() => {
+                    info!("session state stop notified for {}", contact.nickname);
+                    break;
+                },
+                // if stop notifies while a call is active then the call fails
+                _ = stop.notified() => {
+                    let in_call = state.in_call.load(Relaxed);
+                    info!("session local stop notified for {} in_call={}", contact.nickname, in_call);
+
+                    if in_call {
+                        (self.call_ended.lock().await)(String::from("Session failed"), false).await;
                     }
 
                     break;
@@ -868,6 +912,7 @@ impl AudioChat {
             state.in_call.store(false, Relaxed);
         }
 
+        // cancels the ice agent
         _ = cancel_tx.send(()).await;
         Ok(())
     }
@@ -1637,7 +1682,7 @@ async fn statistics_collector(
     let mut interval = interval(Duration::from_millis(100));
 
     let mut rms_window = VecDeque::with_capacity(10);
-    let i16_max = i16::MAX as f32;
+    // let i16_max = i16::MAX as f32;
 
     loop {
         select! {
@@ -1645,9 +1690,7 @@ async fn statistics_collector(
                 // TODO this is super broken
 
                 let rms = rms_window.iter().sum::<f32>() / 10_f32;
-                let db = multiplier_to_db(rms / i16_max);
-
-                (callback.lock().await)(Statistics { rms: db }).await;
+                (callback.lock().await)(Statistics { rms }).await;
             }
             result = rms_receiver.recv() => {
                 let rms = result?;
@@ -1903,10 +1946,6 @@ pub(crate) fn mul(frame: &mut [f32], factor: f32) {
 /// Converts a decibel value to a multiplier
 pub(crate) fn db_to_multiplier(db: f32) -> f32 {
     10_f32.powf(db / 20_f32)
-}
-
-fn multiplier_to_db(multiplier: f32) -> f32 {
-    20_f32 * multiplier.log10()
 }
 
 /// Produces a resampler if needed

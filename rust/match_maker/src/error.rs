@@ -2,17 +2,23 @@ use std::array::TryFromSliceError;
 use std::fmt::{Display, Formatter};
 use std::{fmt, io};
 
+use kanal::ReceiveError;
+
 #[derive(Debug)]
 pub(crate) struct Error {
-    kind: ErrorKind,
+    pub(crate) kind: ErrorKind,
 }
 
 #[derive(Debug)]
-enum ErrorKind {
+pub(crate) enum ErrorKind {
     Io(io::Error),
     TryFromSlice(TryFromSliceError),
     Ed25519(ed25519_dalek::ed25519::Error),
     CommonError(common::error::Error),
+    Receive(ReceiveError),
+    InvalidPublicKey(Vec<u8>),
+    MissingLocalState,
+    Timeout,
 }
 
 impl From<io::Error> for Error {
@@ -47,6 +53,14 @@ impl From<common::error::Error> for Error {
     }
 }
 
+impl From<ReceiveError> for Error {
+    fn from(error: ReceiveError) -> Self {
+        Self {
+            kind: ErrorKind::Receive(error),
+        }
+    }
+}
+
 impl From<ErrorKind> for Error {
     fn from(kind: ErrorKind) -> Self {
         Self { kind }
@@ -63,6 +77,10 @@ impl Display for Error {
                 ErrorKind::TryFromSlice(ref error) => error.to_string(),
                 ErrorKind::Ed25519(ref error) => error.to_string(),
                 ErrorKind::CommonError(ref error) => error.to_string(),
+                ErrorKind::Receive(ref error) => error.to_string(),
+                ErrorKind::InvalidPublicKey(_) => "Invalid public key".to_string(),
+                ErrorKind::MissingLocalState => "Missing local state".to_string(),
+                ErrorKind::Timeout => "Session timeout".to_string(),
             }
         )
     }

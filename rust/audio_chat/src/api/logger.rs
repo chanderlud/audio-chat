@@ -22,13 +22,13 @@ lazy_static! {
 pub fn init_logger() {
     // https://stackoverflow.com/questions/30177845/how-to-initialize-the-logger-for-integration-tests
     INIT_LOGGER_ONCE.call_once(|| {
-        // let level = if cfg!(debug_assertions) {
-        //     LevelFilter::Debug
-        // } else {
-        //     LevelFilter::Warn
-        // };
+        let level = if cfg!(debug_assertions) {
+            LevelFilter::Debug
+        } else {
+            LevelFilter::Warn
+        };
 
-        let level = LevelFilter::Debug;
+        // let level = LevelFilter::Info;
 
         assert!(
             level <= log::STATIC_MAX_LEVEL,
@@ -39,8 +39,8 @@ pub fn init_logger() {
 
         fast_log::init(
             Config::new()
-                // .custom(SendToDartLogger {})
-                .file("audio_chat.log")
+                .custom(SendToDartLogger {})
+                // .file("audio_chat.log")
                 .chan_len(Some(100))
                 .level(level),
         )

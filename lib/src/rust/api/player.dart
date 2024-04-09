@@ -4,6 +4,7 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../frb_generated.dart';
+import 'audio_chat.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::rust_async::RwLock<SoundHandle>>
@@ -46,6 +47,10 @@ class SoundPlayer extends RustOpaque {
     rustArcDecrementStrongCountPtr:
         RustLib.instance.api.rust_arc_decrement_strong_count_SoundPlayerPtr,
   );
+
+  ArcHost host({dynamic hint}) => RustLib.instance.api.soundPlayerHost(
+        that: this,
+      );
 
   factory SoundPlayer({required double outputVolume, dynamic hint}) =>
       RustLib.instance.api

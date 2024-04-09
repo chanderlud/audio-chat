@@ -10,6 +10,14 @@ impl Message {
             message: Some(message),
         }
     }
+
+    pub fn ping() -> Self {
+        Self {
+            to: [0; 32].to_vec(),
+            from: [255; 32].to_vec(),
+            message: Some(message::Message::Ping(Ping {})),
+        }
+    }
 }
 
 impl From<RequestSession> for message::Message {

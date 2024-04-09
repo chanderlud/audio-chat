@@ -14,6 +14,7 @@ import 'package:debug_console/debug_console.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mutex/mutex.dart';
 
@@ -21,6 +22,8 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 SoundHandle? outgoingSoundHandle;
 
 Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
   await RustLib.init();
 
   // get logs from rust
@@ -28,6 +31,12 @@ Future<void> main() async {
   createLogStream().listen((message) {
     DebugConsole.log(message);
   });
+
+  PermissionStatus status = await Permission.microphone.request();
+
+  if (!status.isGranted) {
+    DebugConsole.error('Microphone permission not accepted');
+  }
 
   const storage = FlutterSecureStorage();
   final SharedPreferences options = await SharedPreferences.getInstance();
@@ -39,6 +48,7 @@ Future<void> main() async {
   final StateController callStateController = StateController();
 
   final soundPlayer = SoundPlayer(outputVolume: settingsController.soundVolume);
+  var host = soundPlayer.host();
 
   final messageBus = MessageBus();
 
@@ -46,6 +56,7 @@ Future<void> main() async {
 
   final audioChat = await AudioChat.newInstance(
       signingKey: settingsController.signingKey,
+      host: host,
       // called when there is an incoming call
       acceptCall: (String id, ringtone) async {
         bool accepted = false;
@@ -172,7 +183,10 @@ Future<void> main() async {
         callStateController.setRms(statistics.rms);
       },
       // called when a new chat message is received by the backend
-      messageReceived: messageBus.sendMessage);
+      messageReceived: messageBus.sendMessage,
+      managerActive: (bool active, bool restartable) {
+        callStateController.setSessionManager(active, restartable);
+      });
 
   // apply options to the audio chat instance
   audioChat.setRmsThreshold(decimal: settingsController.inputSensitivity);
@@ -590,20 +604,49 @@ class CallControls extends StatelessWidget {
       ),
       child: Column(
         children: [
+          const SizedBox(height: 10),
+          ListenableBuilder(
+              listenable: stateController,
+              builder: (BuildContext context, Widget? child) {
+                Widget body;
+
+                if (stateController.sessionManagerActive) {
+                  body = Text(
+                      '${stateController.status}${stateController.latency}',
+                      style: const TextStyle(fontSize: 20));
+                } else {
+                  body = Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const SizedBox(width: 15),
+                      const Text('Session Manager Inactive',
+                          style: TextStyle(fontSize: 16, color: Colors.red)),
+                      stateController.sessionManagerRestartable
+                          ? const Spacer()
+                          : const SizedBox(width: 10),
+                      stateController.sessionManagerRestartable
+                          ? IconButton(
+                              onPressed: () {
+                                audioChat.restartManager();
+                              },
+                              icon: const Icon(Icons.restart_alt,
+                                  color: Colors.red))
+                          : Container(),
+                      const SizedBox(width: 5),
+                    ],
+                  );
+                }
+
+                return SizedBox(
+                  height: 40,
+                  child: Center(child: body),
+                );
+              }),
           Padding(
-            padding: const EdgeInsets.only(left: 25, right: 25, top: 10),
+            padding: const EdgeInsets.only(left: 25, right: 25, top: 20),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Center(
-                    child: ListenableBuilder(
-                        listenable: stateController,
-                        builder: (BuildContext context, Widget? child) {
-                          return Text(
-                              '${stateController.status}${stateController.latency}',
-                              style: const TextStyle(fontSize: 20));
-                        })),
-                const SizedBox(height: 20),
                 const Text('Output Volume', style: TextStyle(fontSize: 15)),
                 ListenableBuilder(
                     listenable: settingsController,
@@ -764,16 +807,20 @@ class EditContacts extends StatelessWidget {
       ),
       body: Padding(
           padding: const EdgeInsets.all(20),
-          child: ListView.builder(
-              itemCount: contacts.length,
-              itemBuilder: (BuildContext context, int index) {
-                Contact contact = contacts[index];
+          child: ListenableBuilder(
+              listenable: settingsController,
+              builder: (BuildContext context, Widget? child) {
+                return ListView.builder(
+                    itemCount: contacts.length,
+                    itemBuilder: (BuildContext context, int index) {
+                      Contact contact = contacts[index];
 
-                return EditContactWidget(
-                    contact: contact,
-                    audioChat: audioChat,
-                    settingsController: settingsController,
-                    stateController: stateController);
+                      return EditContactWidget(
+                          contact: contact,
+                          audioChat: audioChat,
+                          settingsController: settingsController,
+                          stateController: stateController);
+                    });
               })),
     );
   }
@@ -1122,6 +1169,9 @@ class StateController extends ChangeNotifier {
   bool _callEndedRecently = false;
   double rms = 0;
 
+  /// active, restartable
+  (bool, bool) _sessionManager = (false, false);
+
   Contact? get activeContact => _activeContact;
   bool get isCallActive => _activeContact != null;
   bool get isDeafened => _deafened;
@@ -1129,6 +1179,8 @@ class StateController extends ChangeNotifier {
   String get latency => _latency == null ? '' : ' $_latency ms';
   bool get callEndedRecently => _callEndedRecently;
   bool get blockAudioChanges => isCallActive || inAudioTest;
+  bool get sessionManagerActive => _sessionManager.$1;
+  bool get sessionManagerRestartable => _sessionManager.$2;
 
   void setActiveContact(Contact? contact) {
     _activeContact = contact;
@@ -1143,6 +1195,11 @@ class StateController extends ChangeNotifier {
 
   void setStatus(String status) {
     this.status = status;
+    notifyListeners();
+  }
+
+  void setSessionManager(bool active, bool restartable) {
+    _sessionManager = (active, restartable);
     notifyListeners();
   }
 

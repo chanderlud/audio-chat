@@ -240,7 +240,7 @@ impl Display for Error {
                 ErrorKind::InvalidWav => "Invalid WAV file".to_string(),
                 ErrorKind::AcceptStream => "Failed to accept stream".to_string(),
                 ErrorKind::MissingCredentials => "Missing credentials".to_string(),
-                ErrorKind::ManagerRestarted => "Listener restarted".to_string(),
+                ErrorKind::ManagerRestarted => "Session manager restarted".to_string(),
                 ErrorKind::InvalidSigningKey => "Invalid signing key".to_string(),
             }
         )

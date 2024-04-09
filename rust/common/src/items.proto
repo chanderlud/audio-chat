@@ -50,6 +50,8 @@ message ServerError {
   required string message = 1;
 }
 
+message Ping {}
+
 message Message {
   required bytes to = 1;
   required bytes from = 2;
@@ -60,5 +62,6 @@ message Message {
     Candidate candidate = 5;
     EndSession end_session = 6;
     ServerError server_error = 7;
+    Ping ping = 8;
   }
 }

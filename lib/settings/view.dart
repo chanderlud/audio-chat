@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:core';
 
 import 'package:audio_chat/settings/controller.dart';
 import 'package:audio_chat/src/rust/api/player.dart';
@@ -10,7 +12,7 @@ import '../main.dart';
 import '../src/rust/api/audio_chat.dart';
 import '../src/rust/api/error.dart';
 
-class SettingsPage extends StatelessWidget {
+class SettingsPage extends StatefulWidget {
   final SettingsController controller;
   final AudioChat audioChat;
   final StateController callStateController;
@@ -24,14 +26,47 @@ class SettingsPage extends StatelessWidget {
       required this.player});
 
   @override
-  Widget build(BuildContext context) {
-    // TODO it would be nice if there was a way to update when the devices change
-    var (inputDevices, outputDevices) = audioChat.listDevices();
+  SettingsPageState createState() => SettingsPageState();
+}
+
+class SettingsPageState extends State<SettingsPage> {
+  late List<String> inputDevices;
+  late List<String> outputDevices;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    updateDevices();
+
+    // update the audio devices every 500ms
+    _timer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
+      updateDevices();
+    });
+  }
+
+  @override
+  void dispose() {
+    // cancel the timer when the widget is disposed
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void updateDevices() {
+    var (inputDevices, outputDevices) = widget.audioChat.listDevices();
 
     // default devices map to null
     inputDevices.insert(0, 'Default');
     outputDevices.insert(0, 'Default');
 
+    setState(() {
+      this.inputDevices = inputDevices;
+      this.outputDevices = outputDevices;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Settings'),
@@ -52,26 +87,28 @@ class SettingsPage extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   ListenableBuilder(
-                      listenable: callStateController,
+                      listenable: widget.callStateController,
                       builder: (BuildContext context, Widget? child) {
                         String inputInitialSelection;
 
-                        if (controller.inputDevice == null) {
+                        if (widget.controller.inputDevice == null) {
                           inputInitialSelection = 'Default';
                         } else if (inputDevices
-                            .contains(controller.inputDevice)) {
-                          inputInitialSelection = controller.inputDevice!;
+                            .contains(widget.controller.inputDevice)) {
+                          inputInitialSelection =
+                              widget.controller.inputDevice!;
                         } else {
                           inputInitialSelection = 'Default';
                         }
 
                         String outputInitialSelection;
 
-                        if (controller.outputDevice == null) {
+                        if (widget.controller.outputDevice == null) {
                           outputInitialSelection = 'Default';
                         } else if (outputDevices
-                            .contains(controller.outputDevice)) {
-                          outputInitialSelection = controller.outputDevice!;
+                            .contains(widget.controller.outputDevice)) {
+                          outputInitialSelection =
+                              widget.controller.outputDevice!;
                         } else {
                           outputInitialSelection = 'Default';
                         }
@@ -82,7 +119,8 @@ class SettingsPage extends StatelessWidget {
                             DropdownMenu<String>(
                               width: 310,
                               label: const Text('Input device'),
-                              enabled: !callStateController.blockAudioChanges,
+                              enabled:
+                                  !widget.callStateController.blockAudioChanges,
                               dropdownMenuEntries: inputDevices
                                   .map<DropdownMenuEntry<String>>((device) {
                                 return DropdownMenuEntry(
@@ -92,15 +130,16 @@ class SettingsPage extends StatelessWidget {
                               }).toList(),
                               onSelected: (String? value) {
                                 if (value == 'Default') value = null;
-                                controller.updateInputDevice(value);
-                                audioChat.setInputDevice(device: value);
+                                widget.controller.updateInputDevice(value);
+                                widget.audioChat.setInputDevice(device: value);
                               },
                               initialSelection: inputInitialSelection,
                             ),
                             DropdownMenu<String>(
                               width: 310,
                               label: const Text('Output device'),
-                              enabled: !callStateController.blockAudioChanges,
+                              enabled:
+                                  !widget.callStateController.blockAudioChanges,
                               dropdownMenuEntries: outputDevices
                                   .map<DropdownMenuEntry<String>>((device) {
                                 return DropdownMenuEntry(
@@ -110,9 +149,9 @@ class SettingsPage extends StatelessWidget {
                               }).toList(),
                               onSelected: (String? value) {
                                 if (value == 'Default') value = null;
-                                controller.updateOutputDevice(value);
-                                audioChat.setOutputDevice(device: value);
-                                player.updateOutputDevice(name: value);
+                                widget.controller.updateOutputDevice(value);
+                                widget.audioChat.setOutputDevice(device: value);
+                                widget.player.updateOutputDevice(name: value);
                               },
                               initialSelection: outputInitialSelection,
                             ),
@@ -121,35 +160,35 @@ class SettingsPage extends StatelessWidget {
                       }),
                   const SizedBox(height: 20),
                   ListenableBuilder(
-                      listenable: callStateController,
+                      listenable: widget.callStateController,
                       builder: (BuildContext context, Widget? child) {
                         return Row(children: [
                           Button(
-                            text: callStateController.inAudioTest
+                            text: widget.callStateController.inAudioTest
                                 ? 'End Test'
                                 : 'Sound Test',
                             width: 75,
                             height: 25,
-                            disabled: callStateController.isCallActive,
+                            disabled: widget.callStateController.isCallActive,
                             onPressed: () async {
-                              if (callStateController.inAudioTest) {
-                                callStateController.setInAudioTest();
-                                audioChat.endCall();
+                              if (widget.callStateController.inAudioTest) {
+                                widget.callStateController.setInAudioTest();
+                                widget.audioChat.endCall();
                               } else {
-                                callStateController.setInAudioTest();
+                                widget.callStateController.setInAudioTest();
                                 try {
-                                  await audioChat.audioTest();
+                                  await widget.audioChat.audioTest();
                                 } on DartError catch (e) {
                                   if (!context.mounted) return;
                                   showErrorDialog(context,
                                       'Error in Audio Test', e.message);
-                                  callStateController.setInAudioTest();
+                                  widget.callStateController.setInAudioTest();
                                 }
                               }
                             },
                           ),
                           const SizedBox(width: 20),
-                          AudioLevel(level: callStateController.rms)
+                          AudioLevel(level: widget.callStateController.rms)
                         ]);
                       }),
                   const SizedBox(height: 10),
@@ -161,18 +200,19 @@ class SettingsPage extends StatelessWidget {
                           style: TextStyle(fontSize: 18)),
                       // const SizedBox(width: 55),
                       ListenableBuilder(
-                          listenable: controller,
+                          listenable: widget.controller,
                           builder: (BuildContext context, Widget? child) {
                             return ListenableBuilder(
-                                listenable: callStateController,
+                                listenable: widget.callStateController,
                                 builder: (BuildContext context, Widget? child) {
                                   return CustomSwitch(
-                                      value: controller.useDenoise,
-                                      disabled:
-                                          callStateController.blockAudioChanges,
+                                      value: widget.controller.useDenoise,
+                                      disabled: widget.callStateController
+                                          .blockAudioChanges,
                                       onChanged: (use) {
-                                        controller.updateUseDenoise(use);
-                                        audioChat.setDenoise(denoise: use);
+                                        widget.controller.updateUseDenoise(use);
+                                        widget.audioChat
+                                            .setDenoise(denoise: use);
                                       });
                                 });
                           }),
@@ -187,13 +227,15 @@ class SettingsPage extends StatelessWidget {
                           style: TextStyle(fontSize: 18)),
                       // const SizedBox(width: 20),
                       ListenableBuilder(
-                          listenable: controller,
+                          listenable: widget.controller,
                           builder: (BuildContext context, Widget? child) {
                             return CustomSwitch(
-                                value: controller.playCustomRingtones,
+                                value: widget.controller.playCustomRingtones,
                                 onChanged: (play) {
-                                  controller.updatePlayCustomRingtones(play);
-                                  audioChat.setPlayCustomRingtones(play: play);
+                                  widget.controller
+                                      .updatePlayCustomRingtones(play);
+                                  widget.audioChat
+                                      .setPlayCustomRingtones(play: play);
                                 });
                           }),
                     ],
@@ -215,16 +257,16 @@ class SettingsPage extends StatelessWidget {
 
                             if (result != null) {
                               String? path = result.files.single.path;
-                              controller.updateCustomRingtoneFile(path);
+                              widget.controller.updateCustomRingtoneFile(path);
                             } else {
-                              controller.updateCustomRingtoneFile(null);
+                              widget.controller.updateCustomRingtoneFile(null);
                             }
                           }),
                       ListenableBuilder(
-                          listenable: controller,
+                          listenable: widget.controller,
                           builder: (BuildContext context, Widget? child) {
                             return Text(
-                                controller.customRingtoneFile ??
+                                widget.controller.customRingtoneFile ??
                                     'No file selected',
                                 style: const TextStyle(fontSize: 16));
                           }),
@@ -234,63 +276,68 @@ class SettingsPage extends StatelessWidget {
                   const Text('Sound Effect Volume',
                       style: TextStyle(fontSize: 16)),
                   ListenableBuilder(
-                      listenable: controller,
+                      listenable: widget.controller,
                       builder: (BuildContext context, Widget? child) {
                         return Slider(
-                            value: controller.soundVolume,
+                            value: widget.controller.soundVolume,
                             onChanged: (value) {
-                              controller.updateSoundVolume(value);
-                              player.updateOutputVolume(volume: value);
+                              widget.controller.updateSoundVolume(value);
+                              widget.player.updateOutputVolume(volume: value);
                             },
                             min: -20,
                             max: 20,
                             label:
-                                '${controller.soundVolume.toStringAsFixed(2)} db');
+                                '${widget.controller.soundVolume.toStringAsFixed(2)} db');
                       }),
                   const Divider(height: 30),
+                  // TODO finish the profile UI
                   Button(
                       text: 'Create profile',
                       disabled: false,
                       onPressed: () {
-                        controller.createProfile(
-                            controller.profiles.length.toString());
+                        widget.controller.createProfile(
+                            widget.controller.profiles.length.toString());
                       }),
                   const SizedBox(height: 20),
                   Expanded(
                       child: ListenableBuilder(
-                          listenable: controller,
+                          listenable: widget.controller,
                           builder: (BuildContext context, Widget? child) {
                             return ListView.builder(
-                                itemCount: controller.profiles.length,
+                                itemCount: widget.controller.profiles.length,
                                 itemBuilder: (context, index) {
-                                  Profile profile = controller.profiles.values
+                                  Profile profile = widget
+                                      .controller.profiles.values
                                       .elementAt(index);
                                   String verifyingKey =
                                       base64Encode(profile.verifyingKey);
 
                                   Widget leading;
 
-                                  if (callStateController.isCallActive ||
-                                      controller.activeProfile == profile.id) {
+                                  if (widget.callStateController.isCallActive ||
+                                      widget.controller.activeProfile ==
+                                          profile.id) {
                                     leading = Text(
-                                        controller.activeProfile == profile.id
+                                        widget.controller.activeProfile ==
+                                                profile.id
                                             ? 'Active'
                                             : 'Set Active');
                                   } else {
                                     leading = Button(
-                                        text: (controller.activeProfile ==
-                                                profile.id)
-                                            ? 'Active'
-                                            : 'Set Active',
+                                        text:
+                                            (widget.controller.activeProfile ==
+                                                    profile.id)
+                                                ? 'Active'
+                                                : 'Set Active',
                                         width: 75,
                                         height: 25,
                                         disabled: false,
                                         onPressed: () {
-                                          controller
+                                          widget.controller
                                               .setActiveProfile(profile.id);
-                                          audioChat.setSigningKey(
+                                          widget.audioChat.setSigningKey(
                                               key: profile.signingKey);
-                                          audioChat.restartManager();
+                                          widget.audioChat.restartManager();
                                         });
                                   }
 

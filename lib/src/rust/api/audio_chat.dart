@@ -16,6 +16,24 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 // The type `SendStream` is not used by any `pub` functions, thus it is ignored.
 // The type `SessionState` is not used by any `pub` functions, thus it is ignored.
 
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::rust_async::RwLock<Arc < Host >>>
+@sealed
+class ArcHost extends RustOpaque {
+  ArcHost.dcoDecode(List<dynamic> wire) : super.dcoDecode(wire, _kStaticData);
+
+  ArcHost.sseDecode(int ptr, int externalSizeOnNative)
+      : super.sseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        RustLib.instance.api.rust_arc_increment_strong_count_ArcHost,
+    rustArcDecrementStrongCount:
+        RustLib.instance.api.rust_arc_decrement_strong_count_ArcHost,
+    rustArcDecrementStrongCountPtr:
+        RustLib.instance.api.rust_arc_decrement_strong_count_ArcHostPtr,
+  );
+}
+
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::rust_async::RwLock<AudioChat>>
 @sealed
 class AudioChat extends RustOpaque {
@@ -53,6 +71,7 @@ class AudioChat extends RustOpaque {
   // HINT: Make it `#[frb(sync)]` to let it become the default constructor of Dart class.
   static Future<AudioChat> newInstance(
           {required List<int> signingKey,
+          required ArcHost host,
           required FutureOr<bool> Function(String, Uint8List?) acceptCall,
           required FutureOr<void> Function(String, bool) callEnded,
           required FutureOr<Contact?> Function(U8Array32) getContact,
@@ -64,9 +83,11 @@ class AudioChat extends RustOpaque {
           required FutureOr<Uint8List?> Function() loadRingtone,
           required FutureOr<void> Function(Statistics) statistics,
           required FutureOr<void> Function(String) messageReceived,
+          required FutureOr<void> Function(bool, bool) managerActive,
           dynamic hint}) =>
       RustLib.instance.api.audioChatNew(
           signingKey: signingKey,
+          host: host,
           acceptCall: acceptCall,
           callEnded: callEnded,
           getContact: getContact,
@@ -78,17 +99,12 @@ class AudioChat extends RustOpaque {
           loadRingtone: loadRingtone,
           statistics: statistics,
           messageReceived: messageReceived,
+          managerActive: managerActive,
           hint: hint);
 
   /// Restarts the session manager
   Future<void> restartManager({dynamic hint}) =>
       RustLib.instance.api.audioChatRestartManager(
-        that: this,
-      );
-
-  /// Restarts the sessions
-  Future<void> restartSessions({dynamic hint}) =>
-      RustLib.instance.api.audioChatRestartSessions(
         that: this,
       );
 

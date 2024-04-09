@@ -99,7 +99,7 @@ class SettingsController with ChangeNotifier {
     outputVolume = options.getDouble('outputVolume') ?? 0;
     inputVolume = options.getDouble('inputVolume') ?? 0;
     soundVolume = options.getDouble('soundVolume') ?? -10;
-    inputSensitivity = options.getDouble('inputSensitivity') ?? -50;
+    inputSensitivity = options.getDouble('inputSensitivity') ?? -16;
     useDenoise = options.getBool('useDenoise') ?? true;
     outputDevice = options.getString('outputDevice');
     inputDevice = options.getString('inputDevice');

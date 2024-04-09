@@ -17,10 +17,8 @@ message Hello {
 // Signals that the client does not want to start a call
 message Reject {}
 
-// Signals that the client is already in a call
-message Busy {
-  // TODO required string reason = 1;
-}
+// Signals that the client is already in a call or audio test
+message Busy {}
 
 // Alerts the client that the call has been ended by the other party
 message Goodbye {

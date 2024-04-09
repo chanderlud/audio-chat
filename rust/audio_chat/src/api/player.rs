@@ -46,6 +46,11 @@ impl SoundPlayer {
         }
     }
 
+    #[frb(sync)]
+    pub fn host(&self) -> Arc<Host> {
+        self.host.clone()
+    }
+
     /// Public play function
     pub async fn play(&self, bytes: Vec<u8>) -> SoundHandle {
         let cancel = Arc::new(Notify::new());
