@@ -289,50 +289,73 @@ class HomePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    ContactForm contactForm = ContactForm(
+        audioChat: audioChat, settingsController: settingsController);
+
+    ListenableBuilder contactsList = ListenableBuilder(
+        listenable: settingsController,
+        builder: (BuildContext context, Widget? child) {
+          return ContactsList(
+              audioChat: audioChat,
+              contacts: settingsController.contacts.values.toList(),
+              stateController: callStateController,
+              settingsController: settingsController,
+              player: player);
+        });
+
+    CallControls callControls = CallControls(
+        audioChat: audioChat,
+        settingsController: settingsController,
+        stateController: callStateController,
+        player: player);
+
     return DebugConsolePopup(
         child: Scaffold(
       body: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                ContactForm(
-                    audioChat: audioChat,
-                    settingsController: settingsController),
-                const SizedBox(width: 20),
-                Expanded(
-                    child: ListenableBuilder(
-                        listenable: settingsController,
-                        builder: (BuildContext context, Widget? child) {
-                          return ContactsList(
-                              audioChat: audioChat,
-                              contacts:
-                                  settingsController.contacts.values.toList(),
-                              stateController: callStateController,
-                              settingsController: settingsController,
-                              player: player);
-                        }))
-              ],
-            ),
-            const SizedBox(height: 20),
-            Expanded(
-                child: Row(children: [
-              CallControls(
-                  audioChat: audioChat,
-                  settingsController: settingsController,
-                  stateController: callStateController,
-                  player: player),
-              const SizedBox(width: 20),
-              // Expanded(
-              //     child: ChatWidget(
-              //         audioChat: audioChat,
-              //         stateController: callStateController,
-              //         messageBus: messageBus))
-            ])),
-          ],
-        ),
-      ),
+          padding: const EdgeInsets.all(20.0),
+          child: LayoutBuilder(
+              builder: (BuildContext context, BoxConstraints constraints) {
+            if (constraints.maxWidth > 600) {
+              return Column(
+                children: [
+                  Container(
+                    constraints: BoxConstraints(
+                        maxHeight: 250, maxWidth: constraints.maxWidth),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Container(
+                        constraints: const BoxConstraints(maxWidth: 300),
+                        child: contactForm,
+                      ),
+                      const SizedBox(width: 20),
+                      Flexible(fit: FlexFit.loose, child: contactsList)
+                    ]),
+                  ),
+                  const SizedBox(height: 20),
+                  Flexible(
+                      fit: FlexFit.loose,
+                      child: Row(children: [
+                        Flexible(fit: FlexFit.loose, child: callControls),
+                        const SizedBox(width: 20),
+                        // Expanded(
+                        //     child: ChatWidget(
+                        //         audioChat: audioChat,
+                        //         stateController: callStateController,
+                        //         messageBus: messageBus))
+                      ])),
+                ],
+              );
+            } else {
+              return Column(children: [
+                Container(
+                  constraints: BoxConstraints(
+                      maxHeight: 250, maxWidth: constraints.maxWidth),
+                  child: contactsList,
+                ),
+                const SizedBox(height: 20),
+                Flexible(fit: FlexFit.loose, child: callControls),
+              ]);
+            }
+          })),
     ));
   }
 }
@@ -358,7 +381,6 @@ class _ContactFormState extends State<ContactForm> {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 15.0, horizontal: 20.0),
-      constraints: const BoxConstraints(maxWidth: 300),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.secondaryContainer,
         borderRadius: BorderRadius.circular(10.0),
@@ -367,15 +389,15 @@ class _ContactFormState extends State<ContactForm> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text("Add Contact", style: TextStyle(fontSize: 20)),
-          const SizedBox(height: 15),
+          const SizedBox(height: 21),
           TextInput(controller: _nicknameInput, labelText: 'Nickname'),
-          const SizedBox(height: 10),
+          const SizedBox(height: 15),
           TextInput(
               controller: _verifyingKeyInput,
               labelText: 'Verifying Key',
-              hintText: 'base64 encoded verifying (public) key',
+              hintText: 'base64 encoded verifying key',
               obscureText: true),
-          const SizedBox(height: 10),
+          const SizedBox(height: 26),
           Center(
             child: Button(
               text: 'Add Contact',
@@ -427,66 +449,64 @@ class ContactsList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (BuildContext context, BoxConstraints viewportConstraints) {
-        return Container(
-          constraints: const BoxConstraints(maxHeight: 280),
-          padding: const EdgeInsets.symmetric(vertical: 15.0, horizontal: 12.0),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.secondaryContainer,
-            borderRadius: BorderRadius.circular(10.0),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                  child: Row(
-                    children: [
-                      const Text("Contacts", style: TextStyle(fontSize: 20)),
-                      const SizedBox(width: 10),
-                      IconButton(
-                          onPressed: () {
-                            Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => EditContacts(
-                                      settingsController: settingsController,
-                                      stateController: stateController,
-                                      audioChat: audioChat,
-                                      contacts: contacts),
-                                ));
-                          },
-                          icon: const Icon(Icons.edit))
-                    ],
-                  )),
-              const SizedBox(height: 10.0),
-              Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.tertiaryContainer,
-                    borderRadius: BorderRadius.circular(10.0),
-                  ),
-                  child: ListView.builder(
-                    itemCount: contacts.length,
-                    itemBuilder: (BuildContext context, int index) {
-                      return ListenableBuilder(
-                          listenable: stateController,
-                          builder: (BuildContext context, Widget? child) {
-                            return ContactWidget(
-                                contact: contacts[index],
-                                audioChat: audioChat,
-                                controller: stateController,
-                                player: player);
-                          });
-                    },
-                  ),
-                ),
+    return Container(
+      padding: const EdgeInsets.only(
+          bottom: 15.0, left: 12.0, right: 12.0, top: 8.0),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(10.0),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: Row(
+                children: [
+                  const Text("Contacts", style: TextStyle(fontSize: 20)),
+                  const SizedBox(width: 10),
+                  IconButton(
+                      onPressed: () {
+                        Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => EditContacts(
+                                  settingsController: settingsController,
+                                  stateController: stateController,
+                                  audioChat: audioChat,
+                                  contacts: contacts),
+                            ));
+                      },
+                      icon: const Icon(Icons.edit))
+                ],
+              )),
+          const SizedBox(height: 10.0),
+          Flexible(
+            fit: FlexFit.loose,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.tertiaryContainer,
+                borderRadius: BorderRadius.circular(10.0),
               ),
-            ],
+              child: ListView.builder(
+                itemCount: contacts.length,
+                itemBuilder: (BuildContext context, int index) {
+                  return ListenableBuilder(
+                      listenable: stateController,
+                      builder: (BuildContext context, Widget? child) {
+                        return ContactWidget(
+                            contact: contacts[index],
+                            audioChat: audioChat,
+                            controller: stateController,
+                            player: player);
+                      });
+                },
+              ),
+            ),
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 }
@@ -599,7 +619,6 @@ class CallControls extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      constraints: const BoxConstraints(maxWidth: 250.0),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.tertiaryContainer,
         borderRadius: BorderRadius.circular(10.0),
@@ -809,21 +828,30 @@ class EditContacts extends StatelessWidget {
       ),
       body: Padding(
           padding: const EdgeInsets.all(20),
-          child: ListenableBuilder(
-              listenable: settingsController,
-              builder: (BuildContext context, Widget? child) {
-                return ListView.builder(
-                    itemCount: contacts.length,
-                    itemBuilder: (BuildContext context, int index) {
-                      Contact contact = contacts[index];
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                  fit: FlexFit.loose,
+                  child: ListenableBuilder(
+                      listenable: settingsController,
+                      builder: (BuildContext context, Widget? child) {
+                        return ListView.builder(
+                            itemCount: contacts.length,
+                            itemBuilder: (BuildContext context, int index) {
+                              Contact contact = contacts[index];
 
-                      return EditContactWidget(
-                          contact: contact,
-                          audioChat: audioChat,
-                          settingsController: settingsController,
-                          stateController: stateController);
-                    });
-              })),
+                              return EditContactWidget(
+                                  contact: contact,
+                                  audioChat: audioChat,
+                                  settingsController: settingsController,
+                                  stateController: stateController);
+                            });
+                      })),
+              ContactForm(
+                  audioChat: audioChat, settingsController: settingsController)
+            ],
+          )),
     );
   }
 }

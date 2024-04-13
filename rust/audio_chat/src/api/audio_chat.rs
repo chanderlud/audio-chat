@@ -408,7 +408,17 @@ impl AudioChat {
 
     /// Starts new sessions and communicates with the matchmaker
     async fn session_manager(&self, start: &AsyncReceiver<[u8; 32]>) -> Result<()> {
-        let local_verifying_key = self.signing_key.read().await.verifying_key().to_bytes();
+        // TODO allow configuring stun and turn servers from the UI
+        let urls = vec![
+            Url::parse_url("stun:stun.l.google.com:19302")?,
+            Url::parse_url("stun:stun1.l.google.com:19302")?,
+            Url::parse_url("stun:stun2.l.google.com:19302")?,
+            Url::parse_url("stun:stun3.l.google.com:19302")?,
+            Url::parse_url("stun:stun4.l.google.com:19302")?,
+        ];
+
+        // the local verifying key
+        let verifying_key = self.signing_key.read().await.verifying_key().to_bytes();
 
         // TODO allow for changing the match maker addr from the UI
         let mut stream = TcpStream::connect("match-maker.chanchan.dev:8957").await?;
@@ -435,149 +445,197 @@ impl AudioChat {
         (self.manager_active.lock().await)(true, true).await;
 
         // sends messages from sessions to the session manager for dispatch to the matchmaker
-        let (message_sender, message_receiver) = unbounded_async::<CommonMessage>();
+        let (sender, receiver) = unbounded_async::<CommonMessage>();
         // maps messages from the session manager to the sessions
         let mut sender_map: HashMap<[u8; 32], AsyncSender<CommonMessage>> = Default::default();
 
-        let mut ice_agent = ice_factory().await?;
+        let mut ice_agent = ice_factory(&urls).await?;
 
+        // controls the application level pings
         let mut interval = interval(Duration::from_secs(15));
 
         loop {
-            select! {
+            let result = select! {
                 _ = interval.tick() => {
                     let ping = CommonMessage::ping();
                     write_message(&mut transport, ping, &mut ss_cipher).await?;
+                    continue;
                 }
                 _ = self.restart_manager.notified() => {
                     break Err(ErrorKind::ManagerRestarted.into());
                 }
-                result = message_receiver.recv() => {
-                    write_message(&mut transport, result?, &mut ss_cipher).await?
+                result = receiver.recv() => {
+                    write_message(&mut transport, result?, &mut ss_cipher).await?;
+                    continue;
                 }
                 result = start.recv() => {
                     let public = result?;
 
-                    if (self.get_contact.lock().await)(public).await.is_none() {
+                    if (self.get_contact.lock().await)(public).await.is_some() {
+                        let (local_ufrag, local_pwd) = ice_agent.get_local_user_credentials().await;
+                        let request = RequestSession::new(&local_ufrag, &local_pwd);
+                        let message = CommonMessage::new(request.into(), &public, &verifying_key);
+                        write_message(&mut transport, message, &mut ss_cipher).await?;
+                    } else {
                         warn!("No contact found for {:?}", &public[0..5]);
-                        continue;
                     }
 
-                    let (local_ufrag, local_pwd) = ice_agent.get_local_user_credentials().await;
-                    let request = RequestSession::new(&local_ufrag, &local_pwd);
-                    let message = CommonMessage::new(request.into(), &public, &local_verifying_key);
-                    write_message(&mut transport, message, &mut ss_cipher).await?;
+                    continue;
                 }
                 result = read_message::<CommonMessage, _, _>(&mut transport, &mut sr_cipher) => {
-                    match result {
-                        Ok(message) => {
-                            let from: [u8; 32] = if let Ok(from) = message.from.clone().try_into() {
-                                from
-                            } else {
-                                error!("Failed to parse public key");
-                                continue;
+                    result
+                }
+            };
+
+            match result {
+                Ok(message) => {
+                    let from: [u8; 32] = if let Ok(from) = message.from.clone().try_into() {
+                        from
+                    } else {
+                        error!("Failed to parse public key");
+                        continue;
+                    };
+
+                    match &message.message {
+                        Some(common::items::message::Message::RequestSession(request)) => {
+                            info!("Received request session from {:?}", &from[0..5]);
+
+                            let contact = match (self.get_contact.lock().await)(from).await {
+                                Some(contact) => contact,
+                                None => {
+                                    warn!("[RequestSession] No contact found for {:?}", from);
+                                    continue;
+                                }
                             };
 
-                            match &message.message {
-                                Some(common::items::message::Message::RequestSession(request)) => {
-                                    info!("Received request session from {:?}", &from[0..5]);
+                            let channel = unbounded_async::<CommonMessage>();
+                            let (local_ufrag, local_pwd) =
+                                ice_agent.get_local_user_credentials().await;
 
-                                    let contact = match (self.get_contact.lock().await)(from).await {
-                                        Some(contact) => contact,
-                                        None => {
-                                            warn!("No contact found for {:?}", from);
-                                            continue;
-                                        }
-                                    };
+                            let started = self
+                                ._start_session(
+                                    contact,
+                                    (sender.clone(), channel.1),
+                                    ice_agent,
+                                    false,
+                                    (request.ufrag.clone(), request.pwd.clone()),
+                                    verifying_key,
+                                )
+                                .await;
 
-                                    let (local_ufrag, local_pwd) = ice_agent.get_local_user_credentials().await;
-                                    let outcome = RequestOutcome::success(&local_ufrag, &local_pwd);
-                                    let message = CommonMessage::new(outcome.into(), &from, &local_verifying_key);
-                                    write_message(&mut transport, message, &mut ss_cipher).await?;
+                            let outcome = if started {
+                                sender_map.insert(from, channel.0); // only update the sender map if the session starts
+                                RequestOutcome::success(&local_ufrag, &local_pwd)
+                            } else {
+                                RequestOutcome::failure("Session in call")
+                            };
 
-                                    let channel = unbounded_async::<CommonMessage>();
-                                    sender_map.insert(from, channel.0);
+                            let message = CommonMessage::new(outcome.into(), &from, &verifying_key);
+                            write_message(&mut transport, message, &mut ss_cipher).await?;
 
-                                    self._start_session(contact, (message_sender.clone(), channel.1), ice_agent, false, (request.ufrag.clone(), request.pwd.clone()), local_verifying_key).await;
+                            ice_agent = ice_factory(&urls).await?; // generate a new ice agent for the next session
+                        }
+                        Some(common::items::message::Message::RequestOutcome(outcome)) => {
+                            info!("Received request outcome from {:?}", &from[0..5]);
 
-                                    ice_agent = ice_factory().await?;
+                            if !outcome.success {
+                                warn!(
+                                    "Failed to start session for {:?} because {:?}",
+                                    &message.to[0..5],
+                                    outcome.reason
+                                );
+                                continue;
+                            }
+
+                            let contact = match (self.get_contact.lock().await)(from).await {
+                                Some(contact) => contact,
+                                None => {
+                                    warn!(
+                                        "[RequestOutcome] No contact found for {:?}",
+                                        &from[0..5]
+                                    );
+                                    continue;
                                 }
-                                Some(common::items::message::Message::RequestOutcome(outcome)) => {
-                                    info!("Received request outcome from {:?}", &from[0..5]);
+                            };
 
-                                    if !outcome.success {
-                                        warn!("Failed to start session for {:?} because {:?}", &message.to[0..5], outcome.reason);
-                                        continue;
-                                    }
+                            let channel = unbounded_async::<CommonMessage>();
 
-                                    let contact = match (self.get_contact.lock().await)(from).await {
-                                        Some(contact) => contact,
-                                        None => {
-                                            warn!("No contact found for {:?}", &from[0..5]);
+                            let started = self
+                                ._start_session(
+                                    contact,
+                                    (sender.clone(), channel.1),
+                                    ice_agent,
+                                    true,
+                                    (
+                                        outcome
+                                            .ufrag
+                                            .clone()
+                                            .ok_or(ErrorKind::MissingCredentials)?,
+                                        outcome.pwd.clone().ok_or(ErrorKind::MissingCredentials)?,
+                                    ),
+                                    verifying_key,
+                                )
+                                .await;
 
-                                            let end_session = EndSession::new("contact not found");
-                                            let message = CommonMessage::new(end_session.into(), &from, &local_verifying_key);
-                                            write_message(&mut transport, message, &mut ss_cipher).await?;
-                                            continue;
-                                        }
-                                    };
+                            if started {
+                                // only update the sender map if the session starts
+                                sender_map.insert(from, channel.0);
+                            }
 
-                                    let channel = unbounded_async::<CommonMessage>();
-                                    sender_map.insert(from, channel.0);
-
-                                    self._start_session(contact, (message_sender.clone(), channel.1), ice_agent, true, (outcome.ufrag.clone().ok_or(ErrorKind::MissingCredentials)?, outcome.pwd.clone().ok_or(ErrorKind::MissingCredentials)?), local_verifying_key).await;
-
-                                    ice_agent = ice_factory().await?;
-                                }
-                                Some(common::items::message::Message::EndSession(_)) => {
-                                    if let Some(sender) = sender_map.remove(&from) {
-                                                                            info!("Received end session from {:?}", &from[0..5]);
-
-                                        _ = sender.send(message).await;
-                                    } else {
-                                        warn!("Received end session for a session which does not exist {:?}", &from[0..5]);
-                                    }
-                                }
-                                Some(common::items::message::Message::ServerError(error)) => {
-                                    info!("Received server error from {:?}", &from[0..5]);
-
-                                    match error.message.as_ref() {
-                                        "Session already exists" => break Ok(()),
-                                        _ => warn!("Server error: {:?}", error.message),
-                                    }
-                                }
-                                // ping messages are ignored
-                                Some(common::items::message::Message::Ping(_)) => {}
-                                // all other messages are intended for the sessions
-                                _ => {
-                                    info!("Received session message {:?} from {:?}", message, &from[0..5]);
-
-                                    if let Some(sender) = sender_map.get(&from) {
-                                        if sender.send(message).await.is_err() {
-                                            warn!("Failed to forward message to session");
-                                        } else {
-                                            debug!("Forwarded message to session {:?}", &from[0..5]);
-                                        }
-                                    } else {
-                                        warn!("No session found for {:?}", from);
-                                    }
-                                }
+                            ice_agent = ice_factory(&urls).await?;
+                        }
+                        Some(common::items::message::Message::EndSession(reason)) => {
+                            if let Some(sender) = sender_map.remove(&from) {
+                                info!(
+                                    "Received end session from {:?} with reason {}",
+                                    &from[0..5],
+                                    reason.reason
+                                );
+                                _ = sender.send(message).await;
+                            } else {
+                                warn!("Received end session with reason {} for a session which does not exist {:?}",reason.reason, &from[0..5]);
                             }
                         }
-                        Err(error) => {
-                            match error.kind {
-                                common::error::ErrorKind::Io(ref io_error) => match io_error.kind() {
-                                    io::ErrorKind::UnexpectedEof => {
-                                        error!("Match maker connection closed");
-                                        break Err(error.into());
-                                    }
-                                    _ => error!("error receiving message {:?}", error),
-                                }
-                                _ => error!("error receiving message {:?}", error),
+                        Some(common::items::message::Message::ServerError(error)) => {
+                            info!("Received server error from {:?}", &from[0..5]);
+
+                            match error.message.as_ref() {
+                                "Session already exists" => break Ok(()),
+                                _ => warn!("Server error: {:?}", error.message),
                             }
-                        },
+                        }
+                        // ping messages are ignored
+                        Some(common::items::message::Message::Ping(_)) => {}
+                        // all other messages are intended for the sessions
+                        _ => {
+                            info!(
+                                "Received session message {:?} from {:?}",
+                                message,
+                                &from[0..5]
+                            );
+
+                            if let Some(sender) = sender_map.get(&from) {
+                                if sender.send(message).await.is_err() {
+                                    warn!("Failed to forward message to session");
+                                } else {
+                                    debug!("Forwarded message to session {:?}", &from[0..5]);
+                                }
+                            } else {
+                                warn!("No session found for {:?}", &from[0..5]);
+                            }
+                        }
                     }
                 }
+                Err(error) => match error.kind {
+                    common::error::ErrorKind::Io(ref io_error) => match io_error.kind() {
+                        io::ErrorKind::UnexpectedEof => {
+                            error!("Match maker connection closed");
+                            break Err(error.into());
+                        }
+                        _ => error!("error receiving message {:?}", error),
+                    },
+                    _ => error!("error receiving message {:?}", error),
+                },
             }
         }
     }
@@ -591,7 +649,7 @@ impl AudioChat {
         controlling: bool,
         remote_credentials: (String, String),
         local_verifying_key: [u8; 32],
-    ) {
+    ) -> bool {
         let message_channel = unbounded_async::<Message>();
 
         // create the state and a clone of it for the session
@@ -600,9 +658,15 @@ impl AudioChat {
 
         let mut states = self.session_states.write().await;
 
-        if states.contains_key(&contact.id) {
+        if let Some(state) = states.get(&contact.id) {
             warn!("{} already has a session", contact.nickname);
-            return;
+
+            if state.in_call.load(Relaxed) {
+                return false;
+            } else {
+                // if the state is not in a call we can replace it with the new state
+                state.terminate.notify_one();
+            }
         }
 
         states.insert(contact.id.clone(), state.clone());
@@ -611,7 +675,7 @@ impl AudioChat {
         spawn(async move {
             let contact_clone = contact.clone();
 
-            if let Err(error) = chat_clone
+            let session_future = chat_clone
                 .session(
                     contact,
                     session_message_channel.clone(),
@@ -619,16 +683,26 @@ impl AudioChat {
                     agent,
                     controlling,
                     remote_credentials,
-                    state_clone,
-                )
-                .await
-            {
-                error!("Session error for {}: {}", contact_clone.nickname, error);
-            } else {
-                info!("Session for {} ended", contact_clone.nickname);
-            }
+                    &state_clone,
+                );
 
-            let end_session = EndSession::new("session ended");
+            let reason = select! {
+                result = session_future => {
+                    if let Err(error) = result {
+                        error!("Session error for {}: {}", contact_clone.nickname, error);
+                        error.to_string()
+                    } else {
+                        info!("Session for {} ended", contact_clone.nickname);
+                        "session ended".to_string()
+                    }
+                }
+                _ = state_clone.terminate.notified() => {
+                    info!("Session for {} terminated", contact_clone.nickname);
+                    return;
+                }
+            };
+
+            let end_session = EndSession::new(&reason);
             let message = CommonMessage::new(
                 end_session.into(),
                 &contact_clone.verifying_key,
@@ -646,10 +720,13 @@ impl AudioChat {
                 .write()
                 .await
                 .remove(&contact_clone.id);
+
             (chat_clone.contact_status.lock().await)(contact_clone.id, false).await;
 
             info!("Session for {} cleaned up", contact_clone.nickname);
         });
+
+        true
     }
 
     /// A session with a contact
@@ -663,7 +740,7 @@ impl AudioChat {
         agent: Arc<Agent>,
         controlling: bool,
         credentials: (String, String),
-        state: Arc<SessionState>,
+        state: &Arc<SessionState>,
     ) -> Result<()> {
         let (message_sender, message_receiver) = session_channel;
         let stop: Arc<Notify> = Default::default();
@@ -689,7 +766,7 @@ impl AudioChat {
 
         // this monitors the matchmaker connection for messages
         let agent_clone = agent.clone();
-        let ice_done_clone = stop.clone();
+        let stop_clone = stop.clone();
         spawn(async move {
             while let Ok(message) = message_receiver.recv().await {
                 match message.message {
@@ -714,24 +791,46 @@ impl AudioChat {
             }
 
             debug!("session message receiver closed");
-            ice_done_clone.notify_one();
+            stop_clone.notify_one();
         });
 
-        let ice_done_clone = stop.clone();
+        let stop_clone = stop.clone();
         agent.on_connection_state_change(Box::new(move |c| {
             if c == ConnectionState::Failed {
-                ice_done_clone.notify_one();
+                stop_clone.notify_one();
             }
 
             Box::pin(async move {})
         }));
 
         agent.on_selected_candidate_pair_change(Box::new(move |a, b| {
-            info!("selected candidate pair changed: {}:{}", a, b);
+            warn!("selected candidate pair changed: {}:{}", a, b);
             Box::pin(async move {})
         }));
 
         agent.gather_candidates()?;
+
+        // TODO is the timeout necessary with the new session termination?
+        // let future = async {
+        //     let conn: Arc<dyn Conn + Send + Sync> = if controlling {
+        //         agent.dial(cancel_rx, credentials.0, credentials.1).await?
+        //     } else {
+        //         agent
+        //             .accept(cancel_rx, credentials.0, credentials.1)
+        //             .await?
+        //     };
+        //
+        //     Ok::<_, Error>(conn)
+        // };
+        //
+        // let conn = match timeout(HELLO_TIMEOUT, future).await {
+        //     Ok(conn) => conn?,
+        //     Err(elapsed) => {
+        //         _ = cancel_tx.send(()).await;
+        //         stop.notify_one();
+        //         return Err(ErrorKind::Timeout(elapsed).into());
+        //     }
+        // };
 
         let conn: Arc<dyn Conn + Send + Sync> = if controlling {
             agent.dial(cancel_rx, credentials.0, credentials.1).await?
@@ -745,7 +844,7 @@ impl AudioChat {
             net_conn: conn,
             max_receive_buffer_size: 0,
             max_message_size: 0,
-            name: "audio-chat".to_owned(),
+            name: String::from("audio-chat"),
         };
 
         let association = if controlling {
@@ -945,28 +1044,22 @@ impl AudioChat {
         }
 
         let stream = if controlling {
-            debug!("accepting stream");
             association
                 .open_stream(*iv_seed as u16, PayloadProtocolIdentifier::Binary)
                 .await?
         } else {
-            debug!("opening stream");
             association
                 .accept_stream()
                 .await
                 .ok_or(ErrorKind::AcceptStream)?
         };
 
-        debug!("stream available");
-
-        // for some reason, sending a message through the stream here causes it to open correctly
+        // sending a byte through the stream here causes it to open correctly
         if controlling {
             stream.write(&Bytes::copy_from_slice(&[0])).await?;
-            debug!("wrote to stream");
         } else {
             let mut buffer = [0; 1];
             stream.read(&mut buffer).await?;
-            debug!("read from stream");
         }
 
         stream.set_reliability_params(true, ReliabilityType::Rexmit, 0);
@@ -1361,8 +1454,11 @@ struct SessionState {
     /// Signals the session to initiate a call
     start: Notify,
 
-    /// Stops the session
+    /// Stops the session normally
     stop: Notify,
+
+    /// Stops the session when it is being replaced
+    terminate: Notify,
 
     /// If the session is in a call
     in_call: AtomicBool,
@@ -1376,6 +1472,7 @@ impl SessionState {
         Self {
             start: Notify::new(),
             stop: Notify::new(),
+            terminate: Notify::new(),
             in_call: AtomicBool::new(false),
             channel: message_channel.clone(),
         }
@@ -1437,6 +1534,13 @@ impl CachedAtomicFloat {
 pub struct Statistics {
     pub rms: f32,
 }
+
+// TODO get this setup
+// struct NetworkConfig {
+//     stun_servers: Vec<Url>,
+//
+//     match_maker: SocketAddr,
+// }
 
 async fn call_controller<C: StreamCipher + StreamCipherSeek>(
     transport: &mut Transport<SendPollStream>,
@@ -1525,7 +1629,6 @@ async fn socket_input<C: StreamCipher>(
                     byte_buffer[..8].copy_from_slice(&sequence_number.to_be_bytes());
                     sequence_number += TRANSFER_BUFFER_SIZE as u64; // increment the sequence number
 
-                    // TODO i guess we need to copy byte_buffer here but i still do not love it
                     // send the bytes to the socket
                     socket.write(&Bytes::copy_from_slice(&byte_buffer)).await?;
                 }
@@ -1687,8 +1790,7 @@ async fn statistics_collector(
     loop {
         select! {
             _ = interval.tick() => {
-                // TODO this is super broken
-
+                // TODO this is kind of broken
                 let rms = rms_window.iter().sum::<f32>() / 10_f32;
                 (callback.lock().await)(Statistics { rms }).await;
             }
@@ -1993,13 +2095,13 @@ pub(crate) async fn get_output_device(
     }
 }
 
-async fn ice_factory() -> Result<Arc<Agent>> {
+async fn ice_factory(urls: &Vec<Url>) -> Result<Arc<Agent>> {
     let udp_network = UDPNetwork::Ephemeral(Default::default());
 
     Ok(Arc::new(
         Agent::new(AgentConfig {
-            urls: vec![Url::parse_url("stun:stun.l.google.com:19302")?],
-            network_types: vec![NetworkType::Udp4],
+            urls: urls.clone(),
+            network_types: vec![NetworkType::Udp4, NetworkType::Udp6],
             udp_network,
             ..Default::default()
         })

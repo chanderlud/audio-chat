@@ -83,312 +83,334 @@ class SettingsPageState extends State<SettingsPage> {
             padding: const EdgeInsets.all(20),
             child: SizedBox(
               width: 650,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  ListenableBuilder(
-                      listenable: widget.callStateController,
-                      builder: (BuildContext context, Widget? child) {
-                        String inputInitialSelection;
+              child: LayoutBuilder(builder: (context, constraints) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    ListenableBuilder(
+                        listenable: widget.callStateController,
+                        builder: (BuildContext context, Widget? child) {
+                          String inputInitialSelection;
 
-                        if (widget.controller.inputDevice == null) {
-                          inputInitialSelection = 'Default';
-                        } else if (inputDevices
-                            .contains(widget.controller.inputDevice)) {
-                          inputInitialSelection =
-                              widget.controller.inputDevice!;
-                        } else {
-                          inputInitialSelection = 'Default';
-                        }
+                          if (widget.controller.inputDevice == null) {
+                            inputInitialSelection = 'Default';
+                          } else if (inputDevices
+                              .contains(widget.controller.inputDevice)) {
+                            inputInitialSelection =
+                                widget.controller.inputDevice!;
+                          } else {
+                            inputInitialSelection = 'Default';
+                          }
 
-                        String outputInitialSelection;
+                          String outputInitialSelection;
 
-                        if (widget.controller.outputDevice == null) {
-                          outputInitialSelection = 'Default';
-                        } else if (outputDevices
-                            .contains(widget.controller.outputDevice)) {
-                          outputInitialSelection =
-                              widget.controller.outputDevice!;
-                        } else {
-                          outputInitialSelection = 'Default';
-                        }
+                          if (widget.controller.outputDevice == null) {
+                            outputInitialSelection = 'Default';
+                          } else if (outputDevices
+                              .contains(widget.controller.outputDevice)) {
+                            outputInitialSelection =
+                                widget.controller.outputDevice!;
+                          } else {
+                            outputInitialSelection = 'Default';
+                          }
 
-                        return Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            DropdownMenu<String>(
-                              width: 310,
-                              label: const Text('Input device'),
-                              enabled:
-                                  !widget.callStateController.blockAudioChanges,
-                              dropdownMenuEntries: inputDevices
-                                  .map<DropdownMenuEntry<String>>((device) {
-                                return DropdownMenuEntry(
-                                  value: device,
-                                  label: device,
-                                );
-                              }).toList(),
-                              onSelected: (String? value) {
-                                if (value == 'Default') value = null;
-                                widget.controller.updateInputDevice(value);
-                                widget.audioChat.setInputDevice(device: value);
-                              },
-                              initialSelection: inputInitialSelection,
+                          return Center(
+                            child: Wrap(
+                              spacing: 20,
+                              runSpacing: 20,
+                              children: [
+                                DropdownMenu<String>(
+                                  width: constraints.maxWidth < 650
+                                      ? constraints.maxWidth
+                                      : 310,
+                                  label: const Text('Input device'),
+                                  enabled: !widget
+                                      .callStateController.blockAudioChanges,
+                                  dropdownMenuEntries: inputDevices
+                                      .map<DropdownMenuEntry<String>>((device) {
+                                    return DropdownMenuEntry(
+                                      value: device,
+                                      label: device,
+                                    );
+                                  }).toList(),
+                                  onSelected: (String? value) {
+                                    if (value == 'Default') value = null;
+                                    widget.controller.updateInputDevice(value);
+                                    widget.audioChat
+                                        .setInputDevice(device: value);
+                                  },
+                                  initialSelection: inputInitialSelection,
+                                ),
+                                DropdownMenu<String>(
+                                  width: constraints.maxWidth < 650
+                                      ? constraints.maxWidth
+                                      : 310,
+                                  label: const Text('Output device'),
+                                  enabled: !widget
+                                      .callStateController.blockAudioChanges,
+                                  dropdownMenuEntries: outputDevices
+                                      .map<DropdownMenuEntry<String>>((device) {
+                                    return DropdownMenuEntry(
+                                      value: device,
+                                      label: device,
+                                    );
+                                  }).toList(),
+                                  onSelected: (String? value) {
+                                    if (value == 'Default') value = null;
+                                    widget.controller.updateOutputDevice(value);
+                                    widget.audioChat
+                                        .setOutputDevice(device: value);
+                                    widget.player
+                                        .updateOutputDevice(name: value);
+                                  },
+                                  initialSelection: outputInitialSelection,
+                                ),
+                              ],
                             ),
-                            DropdownMenu<String>(
-                              width: 310,
-                              label: const Text('Output device'),
-                              enabled:
-                                  !widget.callStateController.blockAudioChanges,
-                              dropdownMenuEntries: outputDevices
-                                  .map<DropdownMenuEntry<String>>((device) {
-                                return DropdownMenuEntry(
-                                  value: device,
-                                  label: device,
-                                );
-                              }).toList(),
-                              onSelected: (String? value) {
-                                if (value == 'Default') value = null;
-                                widget.controller.updateOutputDevice(value);
-                                widget.audioChat.setOutputDevice(device: value);
-                                widget.player.updateOutputDevice(name: value);
-                              },
-                              initialSelection: outputInitialSelection,
-                            ),
-                          ],
-                        );
-                      }),
-                  const SizedBox(height: 20),
-                  ListenableBuilder(
-                      listenable: widget.callStateController,
-                      builder: (BuildContext context, Widget? child) {
-                        return Row(children: [
-                          Button(
-                            text: widget.callStateController.inAudioTest
-                                ? 'End Test'
-                                : 'Sound Test',
-                            width: 75,
-                            height: 25,
-                            disabled: widget.callStateController.isCallActive,
-                            onPressed: () async {
-                              if (widget.callStateController.inAudioTest) {
-                                widget.callStateController.setInAudioTest();
-                                widget.audioChat.endCall();
-                              } else {
-                                widget.callStateController.setInAudioTest();
-                                try {
-                                  await widget.audioChat.audioTest();
-                                } on DartError catch (e) {
-                                  if (!context.mounted) return;
-                                  showErrorDialog(context,
-                                      'Error in Audio Test', e.message);
+                          );
+                        }),
+                    const SizedBox(height: 20),
+                    ListenableBuilder(
+                        listenable: widget.callStateController,
+                        builder: (BuildContext context, Widget? child) {
+                          return Row(children: [
+                            Button(
+                              text: widget.callStateController.inAudioTest
+                                  ? 'End Test'
+                                  : 'Sound Test',
+                              width: 80,
+                              height: 25,
+                              disabled: widget.callStateController.isCallActive,
+                              onPressed: () async {
+                                if (widget.callStateController.inAudioTest) {
                                   widget.callStateController.setInAudioTest();
-                                }
-                              }
-                            },
-                          ),
-                          const SizedBox(width: 20),
-                          AudioLevel(level: widget.callStateController.rms)
-                        ]);
-                      }),
-                  const SizedBox(height: 10),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    mainAxisSize: MainAxisSize.max,
-                    children: [
-                      const Text('Noise Suppression',
-                          style: TextStyle(fontSize: 18)),
-                      // const SizedBox(width: 55),
-                      ListenableBuilder(
-                          listenable: widget.controller,
-                          builder: (BuildContext context, Widget? child) {
-                            return ListenableBuilder(
-                                listenable: widget.callStateController,
-                                builder: (BuildContext context, Widget? child) {
-                                  return CustomSwitch(
-                                      value: widget.controller.useDenoise,
-                                      disabled: widget.callStateController
-                                          .blockAudioChanges,
-                                      onChanged: (use) {
-                                        widget.controller.updateUseDenoise(use);
-                                        widget.audioChat
-                                            .setDenoise(denoise: use);
-                                      });
-                                });
-                          }),
-                    ],
-                  ),
-                  const SizedBox(height: 5),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    mainAxisSize: MainAxisSize.max,
-                    children: [
-                      const Text('Play Custom Ringtones',
-                          style: TextStyle(fontSize: 18)),
-                      // const SizedBox(width: 20),
-                      ListenableBuilder(
-                          listenable: widget.controller,
-                          builder: (BuildContext context, Widget? child) {
-                            return CustomSwitch(
-                                value: widget.controller.playCustomRingtones,
-                                onChanged: (play) {
-                                  widget.controller
-                                      .updatePlayCustomRingtones(play);
-                                  widget.audioChat
-                                      .setPlayCustomRingtones(play: play);
-                                });
-                          }),
-                    ],
-                  ),
-                  const SizedBox(height: 15),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    mainAxisSize: MainAxisSize.max,
-                    children: [
-                      Button(
-                          text: 'Select custom ringtone file',
-                          disabled: false,
-                          onPressed: () async {
-                            FilePickerResult? result =
-                                await FilePicker.platform.pickFiles(
-                              type: FileType.custom,
-                              allowedExtensions: ['wav'],
-                            );
-
-                            if (result != null) {
-                              String? path = result.files.single.path;
-                              widget.controller.updateCustomRingtoneFile(path);
-                            } else {
-                              widget.controller.updateCustomRingtoneFile(null);
-                            }
-                          }),
-                      ListenableBuilder(
-                          listenable: widget.controller,
-                          builder: (BuildContext context, Widget? child) {
-                            return Text(
-                                widget.controller.customRingtoneFile ??
-                                    'No file selected',
-                                style: const TextStyle(fontSize: 16));
-                          }),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  const Text('Sound Effect Volume',
-                      style: TextStyle(fontSize: 16)),
-                  ListenableBuilder(
-                      listenable: widget.controller,
-                      builder: (BuildContext context, Widget? child) {
-                        return Slider(
-                            value: widget.controller.soundVolume,
-                            onChanged: (value) {
-                              widget.controller.updateSoundVolume(value);
-                              widget.player.updateOutputVolume(volume: value);
-                            },
-                            min: -20,
-                            max: 20,
-                            label:
-                                '${widget.controller.soundVolume.toStringAsFixed(2)} db');
-                      }),
-                  const Divider(height: 30),
-                  // TODO finish the profile UI
-                  Button(
-                      text: 'Create profile',
-                      disabled: false,
-                      onPressed: () {
-                        widget.controller.createProfile(
-                            widget.controller.profiles.length.toString());
-                      }),
-                  const SizedBox(height: 20),
-                  Expanded(
-                      child: ListenableBuilder(
-                          listenable: widget.controller,
-                          builder: (BuildContext context, Widget? child) {
-                            return ListView.builder(
-                                itemCount: widget.controller.profiles.length,
-                                itemBuilder: (context, index) {
-                                  Profile profile = widget
-                                      .controller.profiles.values
-                                      .elementAt(index);
-                                  String verifyingKey =
-                                      base64Encode(profile.verifyingKey);
-
-                                  Widget leading;
-
-                                  if (widget.callStateController.isCallActive ||
-                                      widget.controller.activeProfile ==
-                                          profile.id) {
-                                    leading = Text(
-                                        widget.controller.activeProfile ==
-                                                profile.id
-                                            ? 'Active'
-                                            : 'Set Active');
-                                  } else {
-                                    leading = Button(
-                                        text:
-                                            (widget.controller.activeProfile ==
-                                                    profile.id)
-                                                ? 'Active'
-                                                : 'Set Active',
-                                        width: 75,
-                                        height: 25,
-                                        disabled: false,
-                                        onPressed: () {
-                                          widget.controller
-                                              .setActiveProfile(profile.id);
-                                          widget.audioChat.setSigningKey(
-                                              key: profile.signingKey);
-                                          widget.audioChat.restartManager();
-                                        });
+                                  widget.audioChat.endCall();
+                                } else {
+                                  widget.callStateController.setInAudioTest();
+                                  try {
+                                    await widget.audioChat.audioTest();
+                                  } on DartError catch (e) {
+                                    if (!context.mounted) return;
+                                    showErrorDialog(context,
+                                        'Error in Audio Test', e.message);
+                                    widget.callStateController.setInAudioTest();
                                   }
+                                }
+                              },
+                            ),
+                            const SizedBox(width: 20),
+                            AudioLevel(
+                                level: widget.callStateController.rms,
+                                numRectangles:
+                                    (constraints.maxWidth - 145) ~/ 13.5)
+                          ]);
+                        }),
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      mainAxisSize: MainAxisSize.max,
+                      children: [
+                        const Text('Noise Suppression',
+                            style: TextStyle(fontSize: 18)),
+                        // const SizedBox(width: 55),
+                        ListenableBuilder(
+                            listenable: widget.controller,
+                            builder: (BuildContext context, Widget? child) {
+                              return ListenableBuilder(
+                                  listenable: widget.callStateController,
+                                  builder:
+                                      (BuildContext context, Widget? child) {
+                                    return CustomSwitch(
+                                        value: widget.controller.useDenoise,
+                                        disabled: widget.callStateController
+                                            .blockAudioChanges,
+                                        onChanged: (use) {
+                                          widget.controller
+                                              .updateUseDenoise(use);
+                                          widget.audioChat
+                                              .setDenoise(denoise: use);
+                                        });
+                                  });
+                            }),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      mainAxisSize: MainAxisSize.max,
+                      children: [
+                        const Text('Play Custom Ringtones',
+                            style: TextStyle(fontSize: 18)),
+                        // const SizedBox(width: 20),
+                        ListenableBuilder(
+                            listenable: widget.controller,
+                            builder: (BuildContext context, Widget? child) {
+                              return CustomSwitch(
+                                  value: widget.controller.playCustomRingtones,
+                                  onChanged: (play) {
+                                    widget.controller
+                                        .updatePlayCustomRingtones(play);
+                                    widget.audioChat
+                                        .setPlayCustomRingtones(play: play);
+                                  });
+                            }),
+                      ],
+                    ),
+                    const SizedBox(height: 15),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      mainAxisSize: MainAxisSize.max,
+                      children: [
+                        Button(
+                            text: 'Select custom ringtone file',
+                            disabled: false,
+                            onPressed: () async {
+                              FilePickerResult? result =
+                                  await FilePicker.platform.pickFiles(
+                                type: FileType.custom,
+                                allowedExtensions: ['wav'],
+                              );
 
-                                  return ListTile(
-                                    leading: leading,
-                                    title: Text(profile.nickname),
-                                    trailing: Button(
-                                        text: 'View Verifying Key',
-                                        disabled: false,
-                                        onPressed: () {
-                                          showDialog(
-                                            context: context,
-                                            builder: (BuildContext context) {
-                                              return AlertDialog(
-                                                title:
-                                                    const Text('Verifying Key'),
-                                                content: SelectableText(
-                                                    verifyingKey),
-                                                actions: <Widget>[
-                                                  TextButton(
+                              if (result != null) {
+                                String? path = result.files.single.path;
+                                widget.controller
+                                    .updateCustomRingtoneFile(path);
+                              } else {
+                                widget.controller
+                                    .updateCustomRingtoneFile(null);
+                              }
+                            }),
+                        ListenableBuilder(
+                            listenable: widget.controller,
+                            builder: (BuildContext context, Widget? child) {
+                              return Text(
+                                  widget.controller.customRingtoneFile ??
+                                      'No file selected',
+                                  style: const TextStyle(fontSize: 16));
+                            }),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    const Text('Sound Effect Volume',
+                        style: TextStyle(fontSize: 16)),
+                    ListenableBuilder(
+                        listenable: widget.controller,
+                        builder: (BuildContext context, Widget? child) {
+                          return Slider(
+                              value: widget.controller.soundVolume,
+                              onChanged: (value) {
+                                widget.controller.updateSoundVolume(value);
+                                widget.player.updateOutputVolume(volume: value);
+                              },
+                              min: -20,
+                              max: 20,
+                              label:
+                                  '${widget.controller.soundVolume.toStringAsFixed(2)} db');
+                        }),
+                    const Divider(height: 30),
+                    // TODO finish the profile UI
+                    Button(
+                        text: 'Create profile',
+                        disabled: false,
+                        onPressed: () {
+                          widget.controller.createProfile(
+                              widget.controller.profiles.length.toString());
+                        }),
+                    const SizedBox(height: 20),
+                    Expanded(
+                        child: ListenableBuilder(
+                            listenable: widget.controller,
+                            builder: (BuildContext context, Widget? child) {
+                              return ListView.builder(
+                                  itemCount: widget.controller.profiles.length,
+                                  itemBuilder: (context, index) {
+                                    Profile profile = widget
+                                        .controller.profiles.values
+                                        .elementAt(index);
+                                    String verifyingKey =
+                                        base64Encode(profile.verifyingKey);
+
+                                    Widget leading;
+
+                                    if (widget
+                                            .callStateController.isCallActive ||
+                                        widget.controller.activeProfile ==
+                                            profile.id) {
+                                      leading = Text(
+                                          widget.controller.activeProfile ==
+                                                  profile.id
+                                              ? 'Active'
+                                              : 'Set Active');
+                                    } else {
+                                      leading = Button(
+                                          text: (widget.controller
+                                                      .activeProfile ==
+                                                  profile.id)
+                                              ? 'Active'
+                                              : 'Set Active',
+                                          width: 75,
+                                          height: 25,
+                                          disabled: false,
+                                          onPressed: () {
+                                            widget.controller
+                                                .setActiveProfile(profile.id);
+                                            widget.audioChat.setSigningKey(
+                                                key: profile.signingKey);
+                                            widget.audioChat.restartManager();
+                                          });
+                                    }
+
+                                    return ListTile(
+                                      leading: leading,
+                                      title: Text(profile.nickname),
+                                      trailing: Button(
+                                          text: 'View Verifying Key',
+                                          disabled: false,
+                                          onPressed: () {
+                                            showDialog(
+                                              context: context,
+                                              builder: (BuildContext context) {
+                                                return AlertDialog(
+                                                  title: const Text(
+                                                      'Verifying Key'),
+                                                  content: SelectableText(
+                                                      verifyingKey),
+                                                  actions: <Widget>[
+                                                    TextButton(
+                                                        onPressed: () {
+                                                          Clipboard.setData(
+                                                              ClipboardData(
+                                                                  text:
+                                                                      verifyingKey));
+                                                          Navigator.of(context)
+                                                              .pop();
+                                                        },
+                                                        child:
+                                                            const Text('Copy')),
+                                                    TextButton(
                                                       onPressed: () {
-                                                        Clipboard.setData(
-                                                            ClipboardData(
-                                                                text:
-                                                                    verifyingKey));
                                                         Navigator.of(context)
                                                             .pop();
                                                       },
                                                       child:
-                                                          const Text('Copy')),
-                                                  TextButton(
-                                                    onPressed: () {
-                                                      Navigator.of(context)
-                                                          .pop();
-                                                    },
-                                                    child: const Text('Close'),
+                                                          const Text('Close'),
+                                                    ),
+                                                  ],
+                                                  shape: RoundedRectangleBorder(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            10),
                                                   ),
-                                                ],
-                                                shape: RoundedRectangleBorder(
-                                                  borderRadius:
-                                                      BorderRadius.circular(10),
-                                                ),
-                                              );
-                                            },
-                                          );
-                                        }),
-                                  );
-                                });
-                          })),
-                ],
-              ),
+                                                );
+                                              },
+                                            );
+                                          }),
+                                    );
+                                  });
+                            })),
+                  ],
+                );
+              }),
             )),
       ),
     );
@@ -397,13 +419,14 @@ class SettingsPageState extends State<SettingsPage> {
 
 class AudioLevel extends StatelessWidget {
   final double level;
-  static const int numRectangles = 39;
+  final int numRectangles;
   static const Color grey = Color(0xFF80848e);
   static const Color quietColor = Colors.green;
   static const Color mediumColor = Colors.yellow;
   static const Color loudColor = Colors.red;
 
-  const AudioLevel({super.key, required this.level});
+  const AudioLevel(
+      {super.key, required this.level, required this.numRectangles});
 
   /// Calculates a color for the given index
   Color getColor(int index, int maxIndex) {
