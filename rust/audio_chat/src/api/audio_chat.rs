@@ -1,9 +1,10 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::mem;
+use std::net::ToSocketAddrs;
 pub use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
-use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,7 +19,7 @@ use kanal::{
     bounded, bounded_async, unbounded_async, AsyncReceiver, AsyncSender, Receiver, Sender,
 };
 use log::{debug, error, info, warn};
-use nnnoiseless::{DenoiseState, FRAME_SIZE};
+use nnnoiseless::{DenoiseState, RnnModel, FRAME_SIZE};
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelRefMutIterator;
 use rubato::{
@@ -27,7 +28,7 @@ use rubato::{
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex, Notify, RwLock};
-use tokio::time::{interval, timeout};
+use tokio::time::{interval, sleep, timeout, Instant};
 use tokio::{io, select};
 use tokio_util::bytes::Bytes;
 use tokio_util::codec::LengthDelimitedCodec;
@@ -63,6 +64,7 @@ type TransferBuffer = [u8; TRANSFER_BUFFER_SIZE];
 
 /// The number of bytes in a single UDP packet
 const TRANSFER_BUFFER_SIZE: usize = FRAME_SIZE * mem::size_of::<i16>();
+const PACKET_SIZE: usize = TRANSFER_BUFFER_SIZE + 16;
 /// Parameters used for resampling throughout the application
 const RESAMPLER_PARAMETERS: SincInterpolationParameters = SincInterpolationParameters {
     sinc_len: 256,
@@ -75,6 +77,10 @@ const RESAMPLER_PARAMETERS: SincInterpolationParameters = SincInterpolationParam
 const RECEIVE_TIMEOUT: Duration = Duration::from_secs(2);
 /// A timeout used when initializing the call
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
+/// Times out a session if no pings are received
+const SESSION_TIMEOUT: Duration = Duration::from_secs(30);
+/// Controls the frequency of application level pings
+const PING_INTERVAL: Duration = Duration::from_secs(1);
 /// the number of frames to hold in a channel
 const CHANNEL_SIZE: usize = 2_400;
 
@@ -95,6 +101,9 @@ pub struct AudioChat {
 
     /// Enables rnnoise denoising
     denoise: Arc<AtomicBool>,
+
+    /// The rnnoise model
+    denoise_model: Arc<RwLock<RnnModel>>,
 
     /// Notifies the call to end
     end_call: Arc<Notify>,
@@ -132,6 +141,9 @@ pub struct AudioChat {
     /// Restarts the session manager when needed
     restart_manager: Arc<Notify>,
 
+    /// Network configuration for p2p connections
+    network_config: NetworkConfig,
+
     /// Prompts the user to accept a call
     accept_call: Arc<Mutex<dyn Fn(String, Option<Vec<u8>>) -> DartFnFuture<bool> + Send>>,
 
@@ -147,14 +159,11 @@ pub struct AudioChat {
     /// Notifies the frontend that the call has disconnected or reconnected
     call_state: Arc<Mutex<dyn Fn(bool) -> DartFnFuture<()> + Send>>,
 
-    /// Alerts the UI when a contact comes online or goes offline
-    contact_status: Arc<Mutex<dyn Fn(String, bool) -> DartFnFuture<()> + Send>>,
+    /// Alerts the UI when the status of a session changes
+    session_status: Arc<Mutex<dyn Fn(String, String) -> DartFnFuture<()> + Send>>,
 
     /// Starts a session for each of the UI's contacts
     start_sessions: Arc<Mutex<dyn Fn(AudioChat) -> DartFnFuture<()> + Send>>,
-
-    /// Used to report the call latency to the frontend
-    call_latency: Arc<Mutex<dyn Fn(i32) -> DartFnFuture<()> + Send>>,
 
     /// Used to load custom ringtones
     load_ringtone: Arc<Mutex<dyn Fn() -> DartFnFuture<Option<Vec<u8>>> + Send>>,
@@ -175,14 +184,14 @@ impl AudioChat {
     pub async fn new(
         signing_key: Vec<u8>,
         host: Arc<Host>,
+        network_config: &NetworkConfig,
         accept_call: impl Fn(String, Option<Vec<u8>>) -> DartFnFuture<bool> + Send + 'static,
         call_ended: impl Fn(String, bool) -> DartFnFuture<()> + Send + 'static,
         get_contact: impl Fn([u8; 32]) -> DartFnFuture<Option<Contact>> + Send + 'static,
         connected: impl Fn() -> DartFnFuture<()> + Send + 'static,
         call_state: impl Fn(bool) -> DartFnFuture<()> + Send + 'static,
-        contact_status: impl Fn(String, bool) -> DartFnFuture<()> + Send + 'static,
+        session_status: impl Fn(String, String) -> DartFnFuture<()> + Send + 'static,
         start_sessions: impl Fn(AudioChat) -> DartFnFuture<()> + Send + 'static,
-        call_latency: impl Fn(i32) -> DartFnFuture<()> + Send + 'static,
         load_ringtone: impl Fn() -> DartFnFuture<Option<Vec<u8>>> + Send + 'static,
         statistics: impl Fn(Statistics) -> DartFnFuture<()> + Send + 'static,
         message_received: impl Fn(String) -> DartFnFuture<()> + Send + 'static,
@@ -198,6 +207,7 @@ impl AudioChat {
             input_volume: Default::default(),
             output_volume: Default::default(),
             denoise: Default::default(),
+            denoise_model: Default::default(),
             end_call: Default::default(),
             input_device: Default::default(),
             output_device: Default::default(),
@@ -210,14 +220,14 @@ impl AudioChat {
             time: Default::default(),
             start_session,
             restart_manager: Default::default(),
+            network_config: network_config.clone(),
             accept_call: Arc::new(Mutex::new(accept_call)),
             call_ended: Arc::new(Mutex::new(call_ended)),
             get_contact: Arc::new(Mutex::new(get_contact)),
             connected: Arc::new(Mutex::new(connected)),
             call_state: Arc::new(Mutex::new(call_state)),
-            contact_status: Arc::new(Mutex::new(contact_status)),
+            session_status: Arc::new(Mutex::new(session_status)),
             start_sessions: Arc::new(Mutex::new(start_sessions)),
-            call_latency: Arc::new(Mutex::new(call_latency)),
             load_ringtone: Arc::new(Mutex::new(load_ringtone)),
             statistics: Arc::new(Mutex::new(statistics)),
             message_received: Arc::new(Mutex::new(message_received)),
@@ -260,6 +270,8 @@ impl AudioChat {
             "start_session called for {:?}",
             &contact.verifying_key[0..5]
         );
+
+        (self.session_status.lock().await)(contact.id.clone(), "Connecting".to_string()).await;
 
         if self
             .start_session
@@ -406,22 +418,23 @@ impl AudioChat {
         Ok((input_devices, output_devices))
     }
 
+    pub async fn set_model(&self, model: Vec<u8>) -> std::result::Result<(), DartError> {
+        let model = if !model.is_empty() {
+            RnnModel::from_bytes(&model).ok_or(String::from("invalid model"))?
+        } else {
+            RnnModel::default()
+        };
+
+        *self.denoise_model.write().await = model;
+        Ok(())
+    }
+
     /// Starts new sessions and communicates with the matchmaker
     async fn session_manager(&self, start: &AsyncReceiver<[u8; 32]>) -> Result<()> {
-        // TODO allow configuring stun and turn servers from the UI
-        let urls = vec![
-            Url::parse_url("stun:stun.l.google.com:19302")?,
-            Url::parse_url("stun:stun1.l.google.com:19302")?,
-            Url::parse_url("stun:stun2.l.google.com:19302")?,
-            Url::parse_url("stun:stun3.l.google.com:19302")?,
-            Url::parse_url("stun:stun4.l.google.com:19302")?,
-        ];
-
         // the local verifying key
         let verifying_key = self.signing_key.read().await.verifying_key().to_bytes();
 
-        // TODO allow for changing the match maker addr from the UI
-        let mut stream = TcpStream::connect("match-maker.chanchan.dev:8957").await?;
+        let mut stream = TcpStream::connect(*self.network_config.match_maker.read().await).await?;
         let shared_secret = key_exchange(&mut stream).await?;
 
         // HKDF for the key derivation
@@ -449,7 +462,7 @@ impl AudioChat {
         // maps messages from the session manager to the sessions
         let mut sender_map: HashMap<[u8; 32], AsyncSender<CommonMessage>> = Default::default();
 
-        let mut ice_agent = ice_factory(&urls).await?;
+        let mut ice_agents: HashMap<[u8; 32], Arc<Agent>> = HashMap::new();
 
         // controls the application level pings
         let mut interval = interval(Duration::from_secs(15));
@@ -472,10 +485,14 @@ impl AudioChat {
                     let public = result?;
 
                     if (self.get_contact.lock().await)(public).await.is_some() {
-                        let (local_ufrag, local_pwd) = ice_agent.get_local_user_credentials().await;
+                        let agent = ice_factory(&self.network_config.stun_servers.read().await).await?;
+                        let (local_ufrag, local_pwd) = agent.get_local_user_credentials().await;
+
                         let request = RequestSession::new(&local_ufrag, &local_pwd);
                         let message = CommonMessage::new(request.into(), &public, &verifying_key);
                         write_message(&mut transport, message, &mut ss_cipher).await?;
+
+                        ice_agents.insert(public, agent);
                     } else {
                         warn!("No contact found for {:?}", &public[0..5]);
                     }
@@ -509,92 +526,83 @@ impl AudioChat {
                             };
 
                             let channel = unbounded_async::<CommonMessage>();
-                            let (local_ufrag, local_pwd) =
-                                ice_agent.get_local_user_credentials().await;
 
-                            let started = self
-                                ._start_session(
-                                    contact,
-                                    (sender.clone(), channel.1),
-                                    ice_agent,
-                                    false,
-                                    (request.ufrag.clone(), request.pwd.clone()),
-                                    verifying_key,
-                                )
-                                .await;
+                            let agent =
+                                ice_factory(&self.network_config.stun_servers.read().await).await?;
+                            let (local_ufrag, local_pwd) = agent.get_local_user_credentials().await;
+                            let contact_id = contact.id.clone();
 
-                            let outcome = if started {
-                                sender_map.insert(from, channel.0); // only update the sender map if the session starts
-                                RequestOutcome::success(&local_ufrag, &local_pwd)
-                            } else {
-                                RequestOutcome::failure("Session in call")
-                            };
+                            self._start_session(
+                                contact,
+                                (sender.clone(), channel.1),
+                                agent,
+                                false,
+                                (request.ufrag.clone(), request.pwd.clone()),
+                                verifying_key,
+                            )
+                            .await;
 
+                            // alert the UI that this session is connecting
+                            (self.session_status.lock().await)(
+                                contact_id,
+                                "Connecting".to_string(),
+                            )
+                            .await;
+                            // only update the sender map if the session starts
+                            sender_map.insert(from, channel.0);
+
+                            let outcome = RequestOutcome::success(&local_ufrag, &local_pwd);
                             let message = CommonMessage::new(outcome.into(), &from, &verifying_key);
                             write_message(&mut transport, message, &mut ss_cipher).await?;
-
-                            ice_agent = ice_factory(&urls).await?; // generate a new ice agent for the next session
                         }
                         Some(common::items::message::Message::RequestOutcome(outcome)) => {
-                            info!("Received request outcome from {:?}", &from[0..5]);
+                            info!("Received request outcome {:?}", message);
 
-                            if !outcome.success {
-                                warn!(
-                                    "Failed to start session for {:?} because {:?}",
-                                    &message.to[0..5],
-                                    outcome.reason
-                                );
+                            let contact;
+
+                            if ice_agents.get(&from).is_none() {
+                                warn!("No agent found for {:?}", &from[0..5]);
+                                continue;
+                            } else if let Some(x) = (self.get_contact.lock().await)(from).await {
+                                contact = x;
+                            } else {
+                                warn!("[RequestOutcome] No contact found for {:?}", &from[0..5]);
+
                                 continue;
                             }
 
-                            let contact = match (self.get_contact.lock().await)(from).await {
-                                Some(contact) => contact,
-                                None => {
-                                    warn!(
-                                        "[RequestOutcome] No contact found for {:?}",
-                                        &from[0..5]
-                                    );
-                                    continue;
-                                }
-                            };
+                            if !outcome.success {
+                                warn!(
+                                    "RequestSession for {:?} failed because {:?}",
+                                    &from[0..5],
+                                    outcome.reason
+                                );
 
-                            let channel = unbounded_async::<CommonMessage>();
-
-                            let started = self
-                                ._start_session(
-                                    contact,
-                                    (sender.clone(), channel.1),
-                                    ice_agent,
-                                    true,
-                                    (
-                                        outcome
-                                            .ufrag
-                                            .clone()
-                                            .ok_or(ErrorKind::MissingCredentials)?,
-                                        outcome.pwd.clone().ok_or(ErrorKind::MissingCredentials)?,
-                                    ),
-                                    verifying_key,
+                                (self.session_status.lock().await)(
+                                    contact.id.clone(),
+                                    "Inactive".to_string(),
                                 )
                                 .await;
-
-                            if started {
-                                // only update the sender map if the session starts
-                                sender_map.insert(from, channel.0);
+                                continue;
                             }
 
-                            ice_agent = ice_factory(&urls).await?;
-                        }
-                        Some(common::items::message::Message::EndSession(reason)) => {
-                            if let Some(sender) = sender_map.remove(&from) {
-                                info!(
-                                    "Received end session from {:?} with reason {}",
-                                    &from[0..5],
-                                    reason.reason
-                                );
-                                _ = sender.send(message).await;
-                            } else {
-                                warn!("Received end session with reason {} for a session which does not exist {:?}",reason.reason, &from[0..5]);
-                            }
+                            let channel = unbounded_async::<CommonMessage>();
+                            let agent = ice_agents.remove(&from).ok_or(ErrorKind::AgentNotFound)?;
+
+                            self._start_session(
+                                contact,
+                                (sender.clone(), channel.1),
+                                agent,
+                                true,
+                                (
+                                    outcome.ufrag.clone().ok_or(ErrorKind::MissingCredentials)?,
+                                    outcome.pwd.clone().ok_or(ErrorKind::MissingCredentials)?,
+                                ),
+                                verifying_key,
+                            )
+                            .await;
+
+                            sender_map.insert(from, channel.0);
                         }
                         Some(common::items::message::Message::ServerError(error)) => {
                             info!("Received server error from {:?}", &from[0..5]);
@@ -615,8 +623,14 @@ impl AudioChat {
                             );
 
                             if let Some(sender) = sender_map.get(&from) {
+                                let warning = format!(
+                                    "Failed to forward message {:?} to session {:?}",
+                                    message,
+                                    &from[0..5]
+                                );
+
                                 if sender.send(message).await.is_err() {
-                                    warn!("Failed to forward message to session");
+                                    warn!("{}", warning);
                                 } else {
                                     debug!("Forwarded message to session {:?}", &from[0..5]);
                                 }
@@ -627,13 +641,7 @@ impl AudioChat {
                     }
                 }
                 Err(error) => match error.kind {
-                    common::error::ErrorKind::Io(ref io_error) => match io_error.kind() {
-                        io::ErrorKind::UnexpectedEof => {
-                            error!("Match maker connection closed");
-                            break Err(error.into());
-                        }
-                        _ => error!("error receiving message {:?}", error),
-                    },
+                    common::error::ErrorKind::TransportRecv => break Err(error.into()),
                     _ => error!("error receiving message {:?}", error),
                 },
             }
@@ -649,7 +657,7 @@ impl AudioChat {
         controlling: bool,
         remote_credentials: (String, String),
         local_verifying_key: [u8; 32],
-    ) -> bool {
+    ) {
         let message_channel = unbounded_async::<Message>();
 
         // create the state and a clone of it for the session
@@ -658,15 +666,18 @@ impl AudioChat {
 
         let mut states = self.session_states.write().await;
 
-        if let Some(state) = states.get(&contact.id) {
+        // we assume here that any existing session is invalid if the remote wants a new session
+        if let Some(state) = states.remove(&contact.id) {
             warn!("{} already has a session", contact.nickname);
 
             if state.in_call.load(Relaxed) {
-                return false;
-            } else {
-                // if the state is not in a call we can replace it with the new state
-                state.terminate.notify_one();
+                warn!("{} is in a call, terminating", contact.nickname);
+                self.end_call.notify_one();
+                self.in_call.store(false, Relaxed);
+                (self.call_ended.lock().await)("Call terminated".to_string(), false).await;
             }
+
+            state.terminate.notify_waiters();
         }
 
         states.insert(contact.id.clone(), state.clone());
@@ -675,16 +686,15 @@ impl AudioChat {
         spawn(async move {
             let contact_clone = contact.clone();
 
-            let session_future = chat_clone
-                .session(
-                    contact,
-                    session_message_channel.clone(),
-                    message_channel,
-                    agent,
-                    controlling,
-                    remote_credentials,
-                    &state_clone,
-                );
+            let session_future = chat_clone.session(
+                contact,
+                session_message_channel.clone(),
+                message_channel,
+                agent,
+                controlling,
+                remote_credentials,
+                &state_clone,
+            );
 
             let reason = select! {
                 result = session_future => {
@@ -692,13 +702,13 @@ impl AudioChat {
                         error!("Session error for {}: {}", contact_clone.nickname, error);
                         error.to_string()
                     } else {
-                        info!("Session for {} ended", contact_clone.nickname);
+                        warn!("Session for {} ended", contact_clone.nickname);
                         "session ended".to_string()
                     }
                 }
                 _ = state_clone.terminate.notified() => {
-                    info!("Session for {} terminated", contact_clone.nickname);
-                    return;
+                    warn!("Session for {} terminated", contact_clone.nickname);
+                    return; // terminated sessions do not need cleanup
                 }
             };
 
@@ -721,12 +731,11 @@ impl AudioChat {
                 .await
                 .remove(&contact_clone.id);
 
-            (chat_clone.contact_status.lock().await)(contact_clone.id, false).await;
+            (chat_clone.session_status.lock().await)(contact_clone.id, "Inactive".to_string())
+                .await;
 
             info!("Session for {} cleaned up", contact_clone.nickname);
         });
-
-        true
     }
 
     /// A session with a contact
@@ -785,12 +794,15 @@ impl AudioChat {
                         warn!("received server error: {:?}", error);
                         break;
                     }
-                    Some(common::items::message::Message::EndSession(_)) => break,
+                    Some(common::items::message::Message::EndSession(_)) => {
+                        info!("received end session message in session");
+                        break;
+                    }
                     _ => error!("session received unexpected message: {:?}", message),
                 }
             }
 
-            debug!("session message receiver closed");
+            info!("session message receiver closed");
             stop_clone.notify_one();
         });
 
@@ -809,28 +821,6 @@ impl AudioChat {
         }));
 
         agent.gather_candidates()?;
-
-        // TODO is the timeout necessary with the new session termination?
-        // let future = async {
-        //     let conn: Arc<dyn Conn + Send + Sync> = if controlling {
-        //         agent.dial(cancel_rx, credentials.0, credentials.1).await?
-        //     } else {
-        //         agent
-        //             .accept(cancel_rx, credentials.0, credentials.1)
-        //             .await?
-        //     };
-        //
-        //     Ok::<_, Error>(conn)
-        // };
-        //
-        // let conn = match timeout(HELLO_TIMEOUT, future).await {
-        //     Ok(conn) => conn?,
-        //     Err(elapsed) => {
-        //         _ = cancel_tx.send(()).await;
-        //         stop.notify_one();
-        //         return Err(ErrorKind::Timeout(elapsed).into());
-        //     }
-        // };
 
         let conn: Arc<dyn Conn + Send + Sync> = if controlling {
             agent.dial(cancel_rx, credentials.0, credentials.1).await?
@@ -852,6 +842,8 @@ impl AudioChat {
         } else {
             Association::server(config).await?
         };
+
+        info!("session associated successfully");
 
         let stream = if controlling {
             association
@@ -898,18 +890,32 @@ impl AudioChat {
 
         verify_identity(&self.time, &identity).await?;
 
-        // alert the UI that this contact is now online
-        (self.contact_status.lock().await)(contact.id.clone(), true).await;
+        // alert the UI that this session is now connected
+        (self.session_status.lock().await)(contact.id.clone(), "Connected".to_string()).await;
 
         // seeds the IV so subsequent calls in the same session are unique
         let mut i = 0;
 
-        loop {
+        // controls application level pings
+        let mut interval = interval(PING_INTERVAL);
+        let mut last_ping = Instant::now();
+
+        let result = loop {
             let future = async {
                 debug!("[{}] session waiting for event", contact.nickname);
 
                 select! {
+                    _ = interval.tick() => {
+                        if last_ping.elapsed() > SESSION_TIMEOUT {
+                            return Err(ErrorKind::SessionTimeout.into());
+                        }
+
+                        let ping = Message::ping();
+                        write_message(&mut transport, ping, &mut stream_cipher.send_cipher).await.map_err(Error::from)
+                    }
                     result = read_message::<Message, _, _>(&mut transport, &mut stream_cipher.receive_cipher) => {
+                        info!("read_message result: {:?}", result);
+
                         let message = result?;
                         let mut ringtone = None;
 
@@ -919,8 +925,17 @@ impl AudioChat {
                                     ringtone = Some(message.ringtone);
                                 }
                             }
+                            Message { message: Some(message::Message::Ping(_)) } => {
+                                last_ping = Instant::now();
+                                return Ok(());
+                            }
                             _ => {
                                 warn!("received unexpected {:?} from {}", message, contact.nickname);
+
+                                // let the other client know we are not in a call
+                                let goodbye = Message::goodbye_reason("Not in call".to_string());
+                                write_message(&mut transport, goodbye, &mut stream_cipher.send_cipher).await.map_err(Error::from)?;
+
                                 return Ok(());
                             },
                         }
@@ -930,19 +945,22 @@ impl AudioChat {
                         if self.in_call.load(Relaxed) {
                             // do not accept another call if already in one
                             let busy = Message::busy();
-                            write_message(&mut transport, busy, &mut stream_cipher.send_cipher).await.map_err(Error::from)
+                            write_message(&mut transport, busy, &mut stream_cipher.send_cipher).await.map_err(Error::from)?;
                         } else if (self.accept_call.lock().await)(contact.id.clone(), ringtone).await {
                             // respond with hello if the call is accepted
                             let hello = Message::hello(None);
                             write_message(&mut transport, hello, &mut stream_cipher.send_cipher).await?;
 
                             // start the handshake
-                            self.handshake(&mut transport, controlling, &hk, &mut stream_cipher, &mut i, &call_message_channel, &association).await
+                            self.handshake(&mut transport, controlling, &hk, &mut stream_cipher, &mut i, &call_message_channel, &association).await?;
                         } else {
                             // reject the call if not accepted
                             let reject = Message::reject();
-                            write_message(&mut transport, reject, &mut stream_cipher.send_cipher).await.map_err(Error::from)
+                            write_message(&mut transport, reject, &mut stream_cipher.send_cipher).await.map_err(Error::from)?;
                         }
+
+                        last_ping = Instant::now();
+                        Ok(())
                     }
                     _ = state.start.notified() => {
                         state.in_call.store(true, Relaxed); // blocks the session from being restarted
@@ -952,19 +970,38 @@ impl AudioChat {
                         let hello = Message::hello(ringtone);
                         write_message(&mut transport, hello, &mut stream_cipher.send_cipher).await?;
 
-                        // handles a variety of messages sent in response to Hello
-                        match timeout(HELLO_TIMEOUT, read_message(&mut transport, &mut stream_cipher.receive_cipher)).await?? {
-                            Message { message: Some(message::Message::Hello(_)) } => {
-                                self.handshake(&mut transport, controlling, &hk, &mut stream_cipher, &mut i, &call_message_channel, &association).await?;
+                        let mut retries = 0;
+
+                        while retries < 4 {
+                            retries += 1;
+
+                            let message = timeout(HELLO_TIMEOUT, read_message(&mut transport, &mut stream_cipher.receive_cipher)).await??;
+
+                            // handles a variety of messages sent in response to Hello
+                            match message {
+                                Message { message: Some(message::Message::Hello(_)) } => {
+                                    self.handshake(&mut transport, controlling, &hk, &mut stream_cipher, &mut i, &call_message_channel, &association).await?;
+                                    break;
+                                }
+                                Message { message: Some(message::Message::Reject(_)) } => {
+                                    (self.call_ended.lock().await)(format!("{} did not accept the call", contact.nickname), true).await;
+                                    break;
+                                },
+                                Message { message: Some(message::Message::Busy(_)) } => {
+                                    (self.call_ended.lock().await)(format!("{} is busy", contact.nickname), true).await;
+                                    break;
+                                }
+                                // if we receive one of these messages we retry as there may still be a hello message
+                                Message { message: Some(message::Message::Ping(_)) } | Message { message: Some(message::Message::LatencyTest(_)) } => (),
+                                _ => {
+                                    (self.call_ended.lock().await)(format!("Received an unexpected message from {}", contact.nickname), true).await;
+                                    warn!("received unexpected {:?} from {} [stopped call process]", message, contact.nickname);
+                                },
                             }
-                            Message { message: Some(message::Message::Reject(_)) } => {
-                                (self.call_ended.lock().await)(format!("{} did not accept the call", contact.nickname), true).await;
-                            },
-                            Message { message: Some(message::Message::Busy(_)) } => {
-                                (self.call_ended.lock().await)(format!("{} is busy", contact.nickname), true).await;
-                            }
-                            _ => warn!("received unexpected message from {}", contact.nickname),
                         }
+
+                        // prevent the session from timing out
+                        last_ping = Instant::now();
 
                         Ok(())
                     }
@@ -975,7 +1012,7 @@ impl AudioChat {
                 // state will never notify while a call is active
                 _ = state.stop.notified() => {
                     info!("session state stop notified for {}", contact.nickname);
-                    break;
+                    break Ok(());
                 },
                 // if stop notifies while a call is active then the call fails
                 _ = stop.notified() => {
@@ -986,21 +1023,25 @@ impl AudioChat {
                         (self.call_ended.lock().await)(String::from("Session failed"), false).await;
                     }
 
-                    break;
+                    break Ok(());
                 }
                 result = future => {
                     if let Err(error) = result {
+                        // prevent errors from causing the session to timeout unexpectedly
+                        last_ping = Instant::now();
+
                         if state.in_call.load(Relaxed) {
                             (self.call_ended.lock().await)(error.to_string(), false).await;
                         }
 
                         match error.kind {
-                            ErrorKind::Io(error) => match error.kind() {
-                                // these errors indicate that the stream is closed
-                                io::ErrorKind::ConnectionReset | io::ErrorKind::UnexpectedEof => break,
-                                _ => error!("Session io error: {}", error),
+                            ErrorKind::KanalReceive(_) => break Err(error),
+                            ErrorKind::Common(ref kind) => match kind {
+                                // these errors indicate the transport has failed
+                                common::error::ErrorKind::TransportSend | common::error::ErrorKind::TransportRecv => break Err(error),
+                                _ => error!("Session error: {:?}", error),
                             }
-                            ErrorKind::KanalReceive(_) => break,
+                            ErrorKind::SessionTimeout => break Err(error),
                             _ => error!("Session error: {:?}", error),
                         }
                     }
@@ -1009,11 +1050,17 @@ impl AudioChat {
 
             // the session is now safe to restart
             state.in_call.store(false, Relaxed);
+        };
+
+        // cleanup the ice agent
+        _ = cancel_tx.send(()).await;
+
+        if let Err(error) = agent.close().await {
+            error!("Failed to close agent: {:?}", error);
         }
 
-        // cancels the ice agent
-        _ = cancel_tx.send(()).await;
-        Ok(())
+        info!("session for {} returning", contact.nickname);
+        result
     }
 
     /// Gets everything ready for the call
@@ -1079,7 +1126,6 @@ impl AudioChat {
                 Some(transport),
                 Some(stream_cipher),
                 Some(data_cipher),
-                // message_sender.clone(),
                 Some(message_channel.1.clone()),
             )
             .await;
@@ -1139,18 +1185,22 @@ impl AudioChat {
         // sends samples from the input to the input processor
         let (input_sender, input_receiver) = bounded::<f32>(CHANNEL_SIZE);
 
-        // channels used for moving values to the collector
-        let (rms_sender, rms_receiver) = unbounded_async::<f32>();
+        // channels used for moving values to the statistics collector
+        let (input_rms_sender, input_rms_receiver) = unbounded_async::<f32>();
+        let (output_rms_sender, output_rms_receiver) = unbounded_async::<f32>();
+        let latency: Arc<AtomicUsize> = Default::default();
+        let upload_bandwidth: Arc<AtomicUsize> = Default::default();
+        let download_bandwidth: Arc<AtomicUsize> = Default::default();
 
         // get the output device and its default configuration
         let output_device = get_output_device(&self.output_device, &self.host).await?;
         let output_config = output_device.default_output_config()?;
-        debug!("output_device: {:?}", output_device.name());
+        info!("output device: {:?}", output_device.name());
 
         // get the input device and its default configuration
         let input_device = self.get_input_device().await?;
         let input_config = input_device.default_input_config()?;
-        debug!("input_device: {:?}", input_device.name());
+        info!("input_device: {:?}", input_device.name());
 
         let mut audio_header = AudioHeader::from(&input_config);
 
@@ -1166,6 +1216,7 @@ impl AudioChat {
             let (send_cipher, receive_cipher) = stream_cipher.as_mut().unwrap().mut_parts();
             let transport = transport.as_mut().unwrap();
 
+            info!("sending audio header");
             write_message(transport, audio_header, send_cipher).await?;
             read_message(transport, receive_cipher).await?
         };
@@ -1180,6 +1231,10 @@ impl AudioChat {
         let processed_input_sender = processed_input_sender.to_sync();
         // the input processor needs the sample rate
         let sample_rate = input_config.sample_rate().0 as f64;
+        // the rnnoise denoiser
+        let denoiser = denoise.then_some(DenoiseState::from_model(
+            self.denoise_model.read().await.clone(),
+        ));
 
         // spawn the input processor thread
         let input_processor_handle = std::thread::spawn(move || {
@@ -1190,8 +1245,8 @@ impl AudioChat {
                 input_volume,
                 rms_threshold,
                 muted,
-                denoise,
-                rms_sender.to_sync(),
+                denoiser,
+                input_rms_sender.to_sync(),
             )
         });
 
@@ -1207,6 +1262,7 @@ impl AudioChat {
                 processed_output_sender,
                 ratio,
                 output_volume,
+                output_rms_sender.to_sync(),
             )
         });
 
@@ -1283,7 +1339,11 @@ impl AudioChat {
         );
 
         let statistics_handle = spawn(statistics_collector(
-            rms_receiver,
+            input_rms_receiver,
+            output_rms_receiver,
+            Arc::clone(&latency),
+            Arc::clone(&upload_bandwidth),
+            Arc::clone(&download_bandwidth),
             Arc::clone(&self.statistics),
             Arc::clone(&stop_io),
         ));
@@ -1313,6 +1373,7 @@ impl AudioChat {
                 Arc::clone(&stream),
                 send_cipher,
                 Arc::clone(&stop_io),
+                Arc::clone(&upload_bandwidth),
             ));
 
             let output_handle = spawn(socket_output(
@@ -1320,12 +1381,15 @@ impl AudioChat {
                 Arc::clone(&stream),
                 receive_cipher,
                 Arc::clone(&stop_io),
-                Arc::clone(&self.call_state),
+                Arc::clone(&download_bandwidth),
             ));
 
             let cipher = stream_cipher.unwrap();
             let transport = transport.as_mut().unwrap();
             let message_receiver = message_receiver.unwrap();
+
+            let message_received = Arc::clone(&self.message_received);
+            let call_state = Arc::clone(&self.call_state);
 
             select! {
                 result = input_handle => result?,
@@ -1335,7 +1399,7 @@ impl AudioChat {
                 // this unwrap is safe because the processor thread will not panic
                 result = input_processor_future => result?.unwrap(),
                 result = statistics_handle => result?,
-                message = call_controller(transport, cipher, message_receiver, end_call, time, self.call_latency.clone(), self.message_received.clone()) => {
+                message = call_controller(transport, cipher, message_receiver, end_call, time, latency, message_received, call_state) => {
                     debug!("controller exited: {:?}", message);
 
                     match message {
@@ -1531,16 +1595,67 @@ impl CachedAtomicFloat {
 }
 
 /// Processed statistics for the frontend
+#[derive(Default)]
 pub struct Statistics {
-    pub rms: f32,
+    /// a percentage of the max input volume in the window
+    pub input_level: f32,
+
+    /// a percentage of the max output volume in the window
+    pub output_level: f32,
+
+    /// the current call latency
+    pub latency: usize,
+
+    /// the approximate upload bandwidth used by the current call
+    pub upload_bandwidth: usize,
+
+    /// the approximate download bandwidth used by the current call
+    pub download_bandwidth: usize,
 }
 
-// TODO get this setup
-// struct NetworkConfig {
-//     stun_servers: Vec<Url>,
-//
-//     match_maker: SocketAddr,
-// }
+#[frb(opaque)]
+#[derive(Clone)]
+pub struct NetworkConfig {
+    /// The STUN servers to use for NAT traversal
+    stun_servers: Arc<RwLock<Vec<Url>>>,
+
+    /// The match-maker server to use for signaling
+    match_maker: Arc<RwLock<SocketAddr>>,
+}
+
+impl NetworkConfig {
+    #[frb(sync)]
+    pub fn new(
+        stun_servers: Vec<String>,
+        match_maker: String,
+    ) -> std::result::Result<Self, DartError> {
+        Ok(Self {
+            stun_servers: Arc::new(RwLock::new(
+                stun_servers
+                    .into_iter()
+                    .filter_map(|server| Url::parse_url(&server).ok())
+                    .collect(),
+            )),
+            match_maker: Arc::new(RwLock::new(
+                match_maker
+                    .to_socket_addrs()
+                    .map_err(|_| String::from("invalid address"))?
+                    .next()
+                    .ok_or(String::from("no address found"))?,
+            )),
+        })
+    }
+
+    // pub fn add_url(&mut self, url: String) -> std::result::Result<(), DartError> {
+    //     self.stun_servers.push(Url::parse_url(&url).map_err(|_| String::from("invalid url"))?);
+    //     Ok(())
+    // }
+    //
+    // pub fn remove_url(&mut self, url: String) -> std::result::Result<(), DartError> {
+    //     self.stun_servers.retain(|server| server.to_string() != url);
+    //     Ok(())
+    // }
+}
 
 async fn call_controller<C: StreamCipher + StreamCipherSeek>(
     transport: &mut Transport<SendPollStream>,
@@ -1548,14 +1663,28 @@ async fn call_controller<C: StreamCipher + StreamCipherSeek>(
     receiver: AsyncReceiver<Message>,
     end_call: Arc<Notify>,
     time: Time,
-    call_latency: Arc<Mutex<dyn Fn(i32) -> DartFnFuture<()> + Send>>,
+    latency: Arc<AtomicUsize>,
     message_received: Arc<Mutex<dyn Fn(String) -> DartFnFuture<()> + Send>>,
+    disconnected_callback: Arc<Mutex<dyn Fn(bool) -> DartFnFuture<()> + Send>>,
 ) -> Result<String> {
+    let mut ping_interval = interval(PING_INTERVAL);
+    let mut last_ping = Instant::now();
+    let mut next_ping = Instant::now() + PING_INTERVAL + RECEIVE_TIMEOUT;
+
+    let mut disconnected = false;
+
     loop {
         select! {
             // receives and handles messages from the callee
             result = read_message(transport, &mut cipher.receive_cipher) => {
+                info!("call controller read_message result: {:?}", result);
+
                 let message: Message = result?;
+
+                if disconnected {
+                    disconnected = false;
+                    (disconnected_callback.lock().await)(disconnected).await;
+                }
 
                 match message.message {
                     Some(message::Message::Goodbye(message)) => {
@@ -1565,12 +1694,11 @@ async fn call_controller<C: StreamCipher + StreamCipherSeek>(
                     Some(message::Message::LatencyTest(message)) => {
                         // get the current timestamp and remote
                         let current_timestamp = time.lock().await.current_timestamp();
-                        let remote_timestap = u128::from_be_bytes(message.timestamp.try_into().unwrap());
 
-                        if current_timestamp > remote_timestap {
+                        if current_timestamp > message.timestamp {
                             // calculate the latency
-                            let delta_ms = (current_timestamp - remote_timestap) / 1000;
-                            (call_latency.lock().await)(delta_ms as i32).await;
+                            let delta_ms = current_timestamp - message.timestamp;
+                            latency.store(delta_ms as usize, Relaxed);
                         } else {
                             warn!("received invalid latency test (ping from future)");
                         }
@@ -1578,6 +1706,12 @@ async fn call_controller<C: StreamCipher + StreamCipherSeek>(
                     Some(message::Message::Chat(message)) => {
                         (message_received.lock().await)(message.message).await;
                     }
+                    Some(message::Message::Ping(_)) => {
+                        let delta = Instant::now() - last_ping;
+
+                        last_ping = Instant::now();
+                        next_ping = last_ping + delta + RECEIVE_TIMEOUT;
+                    },
                     _ => error!("received unexpected message: {:?}", message),
                 }
             },
@@ -1596,6 +1730,28 @@ async fn call_controller<C: StreamCipher + StreamCipherSeek>(
                 write_message(transport, message, &mut cipher.send_cipher).await?;
                 break Ok(String::new());
             },
+            // sends normal pings and checks for timeouts
+            _ = ping_interval.tick() => {
+                if last_ping.elapsed() > SESSION_TIMEOUT {
+                    warn!("ping timeout in call controller");
+                    break Ok(String::from("Ping timeout"));
+                }
+
+                let message = Message::ping();
+                write_message(transport, message, &mut cipher.send_cipher).await?;
+            },
+            // handles temporary disconnects
+            _ = sleep(next_ping - Instant::now()) => {
+                warn!("ping timeout in call controller");
+
+                // prevent an infinite loop of ping timeouts
+                next_ping = Instant::now() + PING_INTERVAL + RECEIVE_TIMEOUT;
+
+                if !disconnected {
+                    disconnected = true;
+                    (disconnected_callback.lock().await)(disconnected).await;
+                }
+            },
         }
     }
 }
@@ -1605,7 +1761,8 @@ async fn socket_input<C: StreamCipher>(
     input_receiver: AsyncReceiver<ProcessorMessage>,
     socket: Arc<webrtc_sctp::stream::Stream>,
     mut cipher: C,
-    notify: Arc<Notify>,
+    stop: Arc<Notify>,
+    bandwidth: Arc<AtomicUsize>,
 ) -> Result<()> {
     let mut byte_buffer = [0; TRANSFER_BUFFER_SIZE + 8];
     let mut sequence_number = 0_u64;
@@ -1618,6 +1775,7 @@ async fn socket_input<C: StreamCipher>(
                 ProcessorMessage::Silence => {
                     // send the silence signal
                     socket.write(&silence).await?;
+                    bandwidth.fetch_add(9, Relaxed); // udp header + 1 byte
                 }
                 ProcessorMessage::Data(bytes) => {
                     // encrypt the audio data (unwrap is safe because we know the buffer is the correct length)
@@ -1631,6 +1789,7 @@ async fn socket_input<C: StreamCipher>(
 
                     // send the bytes to the socket
                     socket.write(&Bytes::copy_from_slice(&byte_buffer)).await?;
+                    bandwidth.fetch_add(PACKET_SIZE, Relaxed); // udp header + sequence number + TRANSFER_BUFFER_SIZE
                 }
             }
         }
@@ -1640,7 +1799,7 @@ async fn socket_input<C: StreamCipher>(
 
     select! {
         result = future => result,
-        _ = notify.notified() => {
+        _ = stop.notified() => {
             debug!("Input to socket ended");
             Ok(())
         },
@@ -1653,21 +1812,17 @@ async fn socket_output<C: StreamCipher + StreamCipherSeek>(
     socket: Arc<webrtc_sctp::stream::Stream>,
     mut cipher: C,
     notify: Arc<Notify>,
-    disconnected_callback: Arc<Mutex<dyn Fn(bool) -> DartFnFuture<()> + Send>>,
+    bandwidth: Arc<AtomicUsize>,
 ) {
     let mut in_buffer = [0; TRANSFER_BUFFER_SIZE + 8];
     let mut out_buffer = [0; TRANSFER_BUFFER_SIZE];
-    let mut disconnected = false;
 
     let future = async {
         loop {
-            match timeout(RECEIVE_TIMEOUT, socket.read(&mut in_buffer)).await {
+            match socket.read(&mut in_buffer).await {
                 // normal chunk of audio data
-                Ok(Ok(len)) if len == TRANSFER_BUFFER_SIZE + 8 => {
-                    if disconnected {
-                        disconnected = false;
-                        (disconnected_callback.lock().await)(disconnected).await;
-                    }
+                Ok(len) if len == TRANSFER_BUFFER_SIZE + 8 => {
+                    bandwidth.fetch_add(PACKET_SIZE, Relaxed); // udp header + sequence number + TRANSFER_BUFFER_SIZE
 
                     // unwrap is safe because we know the buffer is the correct length
                     let sequence_number = u64::from_be_bytes(in_buffer[..8].try_into().unwrap());
@@ -1694,11 +1849,8 @@ async fn socket_output<C: StreamCipher + StreamCipherSeek>(
                     _ = sender.try_send(ProcessorMessage::frame(out_buffer));
                 }
                 // control signals
-                Ok(Ok(1)) => {
-                    if disconnected {
-                        disconnected = false;
-                        (disconnected_callback.lock().await)(disconnected).await;
-                    }
+                Ok(1) => {
+                    bandwidth.fetch_add(9, Relaxed); // udp header + 1 byte
 
                     match in_buffer[0] {
                         0 => _ = sender.try_send(ProcessorMessage::silence()), // silence
@@ -1706,23 +1858,9 @@ async fn socket_output<C: StreamCipher + StreamCipherSeek>(
                     }
                 }
                 // malformed packets (never happens)
-                Ok(Ok(len)) => error!("Received {} < {} data", len, TRANSFER_BUFFER_SIZE + 8),
-                // timeouts
-                Err(_) => {
-                    if !disconnected {
-                        disconnected = true;
-                        (disconnected_callback.lock().await)(disconnected).await;
-                    }
-                }
+                Ok(len) => error!("Received {} < {} data", len, TRANSFER_BUFFER_SIZE + 8),
                 // socket errors
-                Ok(Err(error)) => {
-                    // match error {
-                    //     io::ErrorKind::ConnectionReset => {
-                    //         error!("connection reset");
-                    //         break;
-                    //     }
-                    //     _ => error!("error receiving: {}", error.kind()),
-                    // }
+                Err(error) => {
                     error!("error receiving: {}", error);
                 }
             }
@@ -1778,37 +1916,47 @@ async fn send_timestamps(sender: AsyncSender<Message>, time: Time) {
 
 /// Collects statistics from throughout the application, processes them, and provides them to the frontend
 async fn statistics_collector(
-    rms_receiver: AsyncReceiver<f32>,
+    input_receiver: AsyncReceiver<f32>,
+    output_receiver: AsyncReceiver<f32>,
+    latency: Arc<AtomicUsize>,
+    upload_bandwidth: Arc<AtomicUsize>,
+    download_bandwidth: Arc<AtomicUsize>,
     callback: Arc<Mutex<dyn Fn(Statistics) -> DartFnFuture<()> + Send>>,
     notify: Arc<Notify>,
 ) -> Result<()> {
     let mut interval = interval(Duration::from_millis(100));
+    let mut input_max = 0_f32;
+    let mut output_max = 0_f32;
 
-    let mut rms_window = VecDeque::with_capacity(10);
-    // let i16_max = i16::MAX as f32;
+    let future = async {
+        loop {
+            interval.tick().await;
 
-    loop {
-        select! {
-            _ = interval.tick() => {
-                // TODO this is kind of broken
-                let rms = rms_window.iter().sum::<f32>() / 10_f32;
-                (callback.lock().await)(Statistics { rms }).await;
-            }
-            result = rms_receiver.recv() => {
-                let rms = result?;
+            let statistics = Statistics {
+                input_level: level_from_window(&input_receiver, &mut input_max).await,
+                output_level: level_from_window(&output_receiver, &mut output_max).await,
+                latency: latency.load(Relaxed),
+                upload_bandwidth: upload_bandwidth.load(Relaxed),
+                download_bandwidth: download_bandwidth.load(Relaxed),
+            };
 
-                if rms_window.len() == 10 {
-                    rms_window.pop_front();
-                }
-
-                rms_window.push_back(rms);
-            }
-            _ = notify.notified() => {
-                debug!("Statistics collector ended");
-                break Ok(());
-            }
+            (callback.lock().await)(statistics).await;
         }
-    }
+    };
+
+    let result = select! {
+        result = future => result,
+        _ = notify.notified() => {
+            debug!("Statistics collector ended");
+            Ok(())
+        }
+    };
+
+    // zero out the statistics when the collector ends
+    let statistics = Statistics::default();
+    (callback.lock().await)(statistics).await;
+
+    result
 }
 
 // TODO consider using a SincFixedOut resampler here
@@ -1820,14 +1968,14 @@ fn input_processor(
     input_factor: Arc<AtomicF32>,
     rms_threshold: Arc<AtomicF32>,
     muted: Arc<AtomicBool>,
-    denoise: bool,
+    mut denoiser: Option<Box<DenoiseState>>,
     rms_sender: Sender<f32>,
 ) -> Result<()> {
     // the maximum and minimum values for i16 as f32
     let max_i16_f32 = i16::MAX as f32;
     let min_i16_f32 = i16::MIN as f32;
 
-    let ratio = if denoise {
+    let ratio = if denoiser.is_some() {
         // rnnoise requires a 48kHz sample rate
         48_000.0 / sample_rate
     } else {
@@ -1840,7 +1988,6 @@ fn input_processor(
     let in_len = (FRAME_SIZE as f64 / ratio).ceil() as usize;
 
     let mut resampler = resampler_factory(ratio, 1, in_len)?;
-    let mut denoiser = denoise.then_some(DenoiseState::new());
 
     // the input for the resampler
     let mut pre_buf = [vec![0_f32; in_len]];
@@ -1954,6 +2101,7 @@ fn output_processor(
     sender: Sender<f32>,
     ratio: f64,
     output_volume: Arc<AtomicF32>,
+    rms_sender: Sender<f32>,
 ) -> Result<()> {
     let max_i16_f32 = i16::MAX as f32;
 
@@ -1993,6 +2141,9 @@ fn output_processor(
 
                 // apply the output volume
                 mul(pre_buf[0], output_volume.load());
+
+                let rms = calculate_rms(pre_buf[0]);
+                rms_sender.send(rms)?;
 
                 if let Some(resampler) = &mut resampler {
                     // resample the data
@@ -2095,16 +2246,45 @@ pub(crate) async fn get_output_device(
     }
 }
 
-async fn ice_factory(urls: &Vec<Url>) -> Result<Arc<Agent>> {
+/// Creates an ICE agent
+async fn ice_factory(urls: &[Url]) -> Result<Arc<Agent>> {
     let udp_network = UDPNetwork::Ephemeral(Default::default());
 
     Ok(Arc::new(
         Agent::new(AgentConfig {
-            urls: urls.clone(),
+            urls: urls.to_vec(),
             network_types: vec![NetworkType::Udp4, NetworkType::Udp6],
             udp_network,
             ..Default::default()
         })
         .await?,
     ))
+}
+
+/// Returns the percentage of the max input volume in the window compared to the max volume
+async fn level_from_window(receiver: &AsyncReceiver<f32>, max: &mut f32) -> f32 {
+    let mut window = Vec::new();
+
+    while let Ok(Some(rms)) = receiver.try_recv() {
+        window.push(rms);
+    }
+
+    let level = if window.is_empty() {
+        0_f32
+    } else {
+        let local_max = window.iter().cloned().fold(0_f32, f32::max);
+        *max = max.max(local_max);
+
+        if *max != 0_f32 {
+            local_max / *max
+        } else {
+            0_f32
+        }
+    };
+
+    if level < 0.01 {
+        0_f32
+    } else {
+        level
+    }
 }

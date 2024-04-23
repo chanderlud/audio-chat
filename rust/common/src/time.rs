@@ -27,8 +27,8 @@ impl SyncedTime {
     }
 
     /// Returns the current timestamp in microseconds
-    pub fn current_timestamp(&self) -> u128 {
-        self.datetime.timestamp_micros() as u128 + self.instant.elapsed().as_micros()
+    pub fn current_timestamp(&self) -> i64 {
+        self.datetime.timestamp_millis() + self.instant.elapsed().as_millis() as i64
     }
 }
 

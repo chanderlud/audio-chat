@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:collection';
 import 'dart:io';
 
 import 'package:audio_chat/settings/view.dart';
@@ -47,9 +46,13 @@ Future<void> main() async {
       SettingsController(storage: storage, options: options);
   await settingsController.init();
 
-  final StateController callStateController = StateController();
+  final StateController stateController = StateController();
+  final StatisticsController statisticsController = StatisticsController();
 
   final soundPlayer = SoundPlayer(outputVolume: settingsController.soundVolume);
+  soundPlayer.updateOutputDevice(name: settingsController.outputDevice);
+  soundPlayer.updateOutputVolume(volume: settingsController.outputVolume);
+
   var host = soundPlayer.host();
 
   final messageBus = MessageBus();
@@ -59,6 +62,7 @@ Future<void> main() async {
   final audioChat = await AudioChat.newInstance(
       signingKey: settingsController.signingKey,
       host: host,
+      networkConfig: settingsController.networkConfig,
       // called when there is an incoming call
       acceptCall: (String id, ringtone) async {
         bool accepted = false;
@@ -67,7 +71,7 @@ Future<void> main() async {
         await inPrompt.protect(() async {
           Contact? contact = settingsController.getContact(id);
 
-          if (callStateController.isCallActive) {
+          if (stateController.isCallActive) {
             return false;
           } else if (contact == null) {
             DebugConsole.warning('contact is null');
@@ -92,8 +96,8 @@ Future<void> main() async {
           handle.cancel();
 
           if (accepted) {
-            callStateController.setStatus('Connecting');
-            callStateController.setActiveContact(contact);
+            stateController.setStatus('Connecting');
+            stateController.setActiveContact(contact);
           }
         });
 
@@ -101,7 +105,7 @@ Future<void> main() async {
       },
       // called when a call ends
       callEnded: (String message, bool remote) async {
-        if (!callStateController.isCallActive) {
+        if (!stateController.isCallActive) {
           DebugConsole.warning(
               "call ended entered but there is no active call");
           return;
@@ -109,9 +113,9 @@ Future<void> main() async {
 
         outgoingSoundHandle?.cancel();
 
-        callStateController.setActiveContact(null);
-        callStateController.setStatus('Inactive');
-        callStateController.disableCallsTemporarily();
+        stateController.setActiveContact(null);
+        stateController.setStatus('Inactive');
+        stateController.disableCallsTemporarily();
 
         List<int> bytes = await readWavBytes('call_ended');
         await soundPlayer.play(bytes: bytes);
@@ -136,40 +140,31 @@ Future<void> main() async {
         List<int> bytes = await readWavBytes('connected');
         await soundPlayer.play(bytes: bytes);
 
-        callStateController.setStatus('Active');
+        stateController.setStatus('Active');
       },
       // called when the call disconnects or reconnects
       callState: (disconnected) async {
-        if (disconnected) {
+        if (disconnected && stateController.isCallActive) {
           List<int> bytes = await readWavBytes('disconnected');
           await soundPlayer.play(bytes: bytes);
 
-          callStateController.setStatus('Reconnecting');
-        } else {
+          stateController.setStatus('Reconnecting');
+        } else if (!disconnected && stateController.isCallActive) {
           List<int> bytes = await readWavBytes('reconnected');
           await soundPlayer.play(bytes: bytes);
 
-          callStateController.setStatus('Active');
-        }
-      },
-      // called when a contact goes online or offline
-      contactStatus: (String id, bool online) {
-        if (online) {
-          callStateController.addOnlineContact(id);
+          stateController.setStatus('Active');
         } else {
-          callStateController.removeOnlineContact(id);
+          DebugConsole.warning('callState entered but there is no active call');
         }
       },
+      // called when a session changes status
+      sessionStatus: stateController.updateSession,
       // called when the backend wants to start sessions
       startSessions: (AudioChat audioChat) {
         for (Contact contact in settingsController.contacts.values) {
           audioChat.startSession(contact: contact);
         }
-      },
-      // TODO this callback could potentially be merged with the statisticsCallback
-      // called during calls after a latency test
-      callLatency: (latency) {
-        callStateController.setLatency(latency);
       },
       // called when the backend wants a custom ringtone
       loadRingtone: () async {
@@ -181,13 +176,11 @@ Future<void> main() async {
         }
       },
       // called when the backend has updated statistics
-      statistics: (Statistics statistics) {
-        callStateController.setRms(statistics.rms);
-      },
+      statistics: statisticsController.setStatistics,
       // called when a new chat message is received by the backend
       messageReceived: messageBus.sendMessage,
       managerActive: (bool active, bool restartable) {
-        callStateController.setSessionManager(active, restartable);
+        stateController.setSessionManager(active, restartable);
       });
 
   // apply options to the audio chat instance
@@ -200,12 +193,17 @@ Future<void> main() async {
   audioChat.setInputDevice(device: settingsController.inputDevice);
   audioChat.setOutputDevice(device: settingsController.outputDevice);
 
+  if (settingsController.denoiseModel != null) {
+    updateDenoiseModel(settingsController.denoiseModel!, audioChat);
+  }
+
   runApp(AudioChatApp(
       audioChat: audioChat,
       settingsController: settingsController,
-      callStateController: callStateController,
+      callStateController: stateController,
       player: soundPlayer,
-      messageBus: messageBus));
+      messageBus: messageBus,
+      statisticsController: statisticsController));
 }
 
 /// The main app
@@ -213,6 +211,7 @@ class AudioChatApp extends StatelessWidget {
   final AudioChat audioChat;
   final SettingsController settingsController;
   final StateController callStateController;
+  final StatisticsController statisticsController;
   final SoundPlayer player;
   final MessageBus messageBus;
 
@@ -222,7 +221,8 @@ class AudioChatApp extends StatelessWidget {
       required this.settingsController,
       required this.callStateController,
       required this.player,
-      required this.messageBus});
+      required this.messageBus,
+      required this.statisticsController});
 
   @override
   Widget build(BuildContext context) {
@@ -264,9 +264,10 @@ class AudioChatApp extends StatelessWidget {
       home: HomePage(
           audioChat: audioChat,
           settingsController: settingsController,
-          callStateController: callStateController,
+          stateController: callStateController,
           player: player,
-          messageBus: messageBus),
+          messageBus: messageBus,
+          statisticsController: statisticsController),
     );
   }
 }
@@ -275,7 +276,8 @@ class AudioChatApp extends StatelessWidget {
 class HomePage extends StatelessWidget {
   final AudioChat audioChat;
   final SettingsController settingsController;
-  final StateController callStateController;
+  final StateController stateController;
+  final StatisticsController statisticsController;
   final SoundPlayer player;
   final MessageBus messageBus;
 
@@ -283,31 +285,73 @@ class HomePage extends StatelessWidget {
       {super.key,
       required this.audioChat,
       required this.settingsController,
-      required this.callStateController,
+      required this.stateController,
       required this.player,
-      required this.messageBus});
+      required this.messageBus,
+      required this.statisticsController});
 
   @override
   Widget build(BuildContext context) {
-    ContactForm contactForm = ContactForm(
-        audioChat: audioChat, settingsController: settingsController);
+    ListenableBuilder contactForm = ListenableBuilder(
+        listenable: stateController,
+        builder: (BuildContext context, Widget? child) {
+          if (stateController.isCallActive) {
+            return CallDetailsWidget(
+                statisticsController: statisticsController,
+                stateController: stateController);
+          } else {
+            return ContactForm(
+                audioChat: audioChat, settingsController: settingsController);
+          }
+        });
 
     ListenableBuilder contactsList = ListenableBuilder(
         listenable: settingsController,
         builder: (BuildContext context, Widget? child) {
-          return ContactsList(
-              audioChat: audioChat,
-              contacts: settingsController.contacts.values.toList(),
-              stateController: callStateController,
-              settingsController: settingsController,
-              player: player);
+          return ListenableBuilder(
+              listenable: stateController,
+              builder: (BuildContext context, Widget? child) {
+                List<Contact> contacts =
+                    settingsController.contacts.values.toList();
+
+                // sort contacts by session status then nickname
+                contacts.sort((a, b) {
+                  String aStatus = stateController.sessionStatus(a.id());
+                  String bStatus = stateController.sessionStatus(b.id());
+
+                  if (aStatus == bStatus) {
+                    return a.nickname().compareTo(b.nickname());
+                  } else if (aStatus == 'Connected') {
+                    return -1;
+                  } else if (bStatus == 'Connected') {
+                    return 1;
+                  } else if (aStatus == 'Connecting') {
+                    return -1;
+                  } else if (bStatus == 'Connecting') {
+                    return 1;
+                  } else {
+                    return 0;
+                  }
+                });
+
+                return ContactsList(
+                    audioChat: audioChat,
+                    contacts: contacts,
+                    stateController: stateController,
+                    settingsController: settingsController,
+                    player: player);
+              });
         });
+
+    PeriodicNotifier notifier = PeriodicNotifier();
 
     CallControls callControls = CallControls(
         audioChat: audioChat,
         settingsController: settingsController,
-        stateController: callStateController,
-        player: player);
+        stateController: stateController,
+        statisticsController: statisticsController,
+        player: player,
+        notifier: notifier);
 
     return DebugConsolePopup(
         child: Scaffold(
@@ -319,8 +363,7 @@ class HomePage extends StatelessWidget {
               return Column(
                 children: [
                   Container(
-                    constraints: BoxConstraints(
-                        maxHeight: 250, maxWidth: constraints.maxWidth),
+                    constraints: const BoxConstraints(maxHeight: 250),
                     child: Row(mainAxisSize: MainAxisSize.min, children: [
                       Container(
                         constraints: const BoxConstraints(maxWidth: 300),
@@ -333,14 +376,18 @@ class HomePage extends StatelessWidget {
                   const SizedBox(height: 20),
                   Flexible(
                       fit: FlexFit.loose,
-                      child: Row(children: [
-                        Flexible(fit: FlexFit.loose, child: callControls),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Container(
+                            constraints: const BoxConstraints(maxWidth: 260),
+                            child: callControls),
                         const SizedBox(width: 20),
-                        // Expanded(
-                        //     child: ChatWidget(
-                        //         audioChat: audioChat,
-                        //         stateController: callStateController,
-                        //         messageBus: messageBus))
+                        Flexible(
+                            fit: FlexFit.loose,
+                            child: ChatWidget(
+                                audioChat: audioChat,
+                                stateController: stateController,
+                                messageBus: messageBus,
+                                player: player))
                       ])),
                 ],
               );
@@ -369,11 +416,11 @@ class ContactForm extends StatefulWidget {
       {super.key, required this.audioChat, required this.settingsController});
 
   @override
-  State<ContactForm> createState() => _ContactFormState();
+  State<ContactForm> createState() => ContactFormState();
 }
 
 /// The state for ContactForm
-class _ContactFormState extends State<ContactForm> {
+class ContactFormState extends State<ContactForm> {
   final TextEditingController _nicknameInput = TextEditingController();
   final TextEditingController _verifyingKeyInput = TextEditingController();
 
@@ -431,7 +478,7 @@ class _ContactFormState extends State<ContactForm> {
   }
 }
 
-/// A widget which displays a list of ContactWidget's
+/// A widget which displays a list of ContactWidgets
 class ContactsList extends StatelessWidget {
   final AudioChat audioChat;
   final StateController stateController;
@@ -529,15 +576,39 @@ class ContactWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     bool online = controller.isOnlineContact(contact);
     bool active = controller.isActiveContact(contact);
+    String status = controller.sessions[contact.id()] ?? 'Unknown';
 
-    Widget trailing;
+    List<Widget> widgets = [
+      const CircleAvatar(
+        maxRadius: 17,
+        child: Icon(Icons.person),
+      ),
+      const SizedBox(width: 10),
+      Text(contact.nickname(), style: const TextStyle(fontSize: 16)),
+      const Spacer(),
+    ];
+
+    if (status == 'Inactive') {
+      widgets.add(IconButton(
+          onPressed: () {
+            audioChat.startSession(contact: contact);
+          },
+          icon: const Icon(Icons.refresh)));
+      widgets.add(const SizedBox(width: 4));
+    } else if (status == 'Connecting') {
+      widgets.add(const SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 3)));
+      widgets.add(const SizedBox(width: 10));
+    }
 
     if (!online) {
-      trailing = const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 7),
-          child: Icon(Icons.dark_mode_outlined));
+      widgets.add(const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 7, vertical: 8),
+          child: Icon(Icons.dark_mode_outlined)));
     } else if (active) {
-      trailing = IconButton(
+      widgets.add(IconButton(
         icon: const Icon(Icons.call_end, color: Colors.red),
         onPressed: () async {
           outgoingSoundHandle?.cancel();
@@ -550,9 +621,9 @@ class ContactWidget extends StatelessWidget {
           List<int> bytes = await readWavBytes('call_ended');
           await player.play(bytes: bytes);
         },
-      );
+      ));
     } else {
-      trailing = IconButton(
+      widgets.add(IconButton(
         icon: const Icon(Icons.call),
         onPressed: () async {
           if (controller.isCallActive) {
@@ -582,7 +653,7 @@ class ContactWidget extends StatelessWidget {
             showErrorDialog(context, 'Call failed', e.message);
           }
         },
-      );
+      ));
     }
 
     return Container(
@@ -591,12 +662,10 @@ class ContactWidget extends StatelessWidget {
         color: Theme.of(context).colorScheme.secondaryContainer,
         borderRadius: BorderRadius.circular(10.0),
       ),
-      child: ListTile(
-        leading: const CircleAvatar(
-          child: Icon(Icons.person),
-        ),
-        title: Text(contact.nickname()),
-        trailing: trailing,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6.5),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: widgets,
       ),
     );
   }
@@ -607,14 +676,18 @@ class CallControls extends StatelessWidget {
   final AudioChat audioChat;
   final SettingsController settingsController;
   final StateController stateController;
+  final StatisticsController statisticsController;
   final SoundPlayer player;
+  final PeriodicNotifier notifier;
 
   const CallControls(
       {super.key,
       required this.audioChat,
       required this.settingsController,
       required this.stateController,
-      required this.player});
+      required this.player,
+      required this.statisticsController,
+      required this.notifier});
 
   @override
   Widget build(BuildContext context) {
@@ -632,9 +705,17 @@ class CallControls extends StatelessWidget {
                 Widget body;
 
                 if (stateController.sessionManagerActive) {
-                  body = Text(
-                      '${stateController.status}${stateController.latency}',
-                      style: const TextStyle(fontSize: 20));
+                  if (stateController.isCallActive) {
+                    body = ListenableBuilder(
+                        listenable: notifier,
+                        builder: (BuildContext context, Widget? child) {
+                          return Text(stateController.callDuration,
+                              style: const TextStyle(fontSize: 20));
+                        });
+                  } else {
+                    body = Text(stateController.status,
+                        style: const TextStyle(fontSize: 20));
+                  }
                 } else {
                   body = Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -789,7 +870,8 @@ class CallControls extends StatelessWidget {
                                 builder: (context) => SettingsPage(
                                     controller: settingsController,
                                     audioChat: audioChat,
-                                    callStateController: stateController,
+                                    stateController: stateController,
+                                    statisticsController: statisticsController,
                                     player: player),
                               ));
                         },
@@ -871,11 +953,11 @@ class EditContactWidget extends StatefulWidget {
       required this.stateController});
 
   @override
-  State<StatefulWidget> createState() => _EditContactWidgetState();
+  State<StatefulWidget> createState() => EditContactWidgetState();
 }
 
 /// The state for EditContactWidget
-class _EditContactWidgetState extends State<EditContactWidget> {
+class EditContactWidgetState extends State<EditContactWidget> {
   late final TextEditingController _nicknameInput;
 
   @override
@@ -932,21 +1014,23 @@ class ChatWidget extends StatefulWidget {
   final AudioChat audioChat;
   final StateController stateController;
   final MessageBus messageBus;
+  final SoundPlayer player;
 
   const ChatWidget(
       {super.key,
       required this.audioChat,
       required this.stateController,
-      required this.messageBus});
+      required this.messageBus,
+      required this.player});
 
   @override
-  State<StatefulWidget> createState() => _ChatWidgetState();
+  State<StatefulWidget> createState() => ChatWidgetState();
 }
 
 // TODO switch from String to Chat (rust)
 // TODO differentiate between sent and received messages
 // TODO a halfway decent UI
-class _ChatWidgetState extends State<ChatWidget> {
+class ChatWidgetState extends State<ChatWidget> {
   late TextEditingController _messageInput;
   List<String> messages = [];
   late StreamSubscription<String> messageSubscription;
@@ -955,17 +1039,8 @@ class _ChatWidgetState extends State<ChatWidget> {
   @override
   void initState() {
     super.initState();
-
-    messageSubscription = widget.messageBus.messageStream.listen((message) {
-      DebugConsole.debug('messageSubscription got $message | active=$active');
-
-      if (active) {
-        setState(() {
-          messages.add(message);
-        });
-      }
-    });
-
+    messageSubscription =
+        widget.messageBus.messageStream.listen(receivedMessage);
     _messageInput = TextEditingController();
   }
 
@@ -976,6 +1051,7 @@ class _ChatWidgetState extends State<ChatWidget> {
     super.dispose();
   }
 
+  // TODO add a sound effect here too
   void sendMessage(String message) {
     if (!active) return;
 
@@ -993,6 +1069,17 @@ class _ChatWidgetState extends State<ChatWidget> {
     }
   }
 
+  void receivedMessage(String message) async {
+    if (!active) return;
+
+    // TODO add the sound effect
+    // widget.player.play(bytes: await readWavBytes('message'));
+
+    setState(() {
+      messages.add(message);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -1001,32 +1088,30 @@ class _ChatWidgetState extends State<ChatWidget> {
         borderRadius: BorderRadius.circular(10.0),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
+          Flexible(
+              fit: FlexFit.loose,
               child: ListView.builder(
                   itemCount: messages.length,
                   itemBuilder: (BuildContext context, int index) {
-                    DebugConsole.debug('chat widget got $index');
                     String message = messages[index];
                     return ListTile(
-                      title: Text(message),
+                      title: ListTile(
+                        title: Text(message),
+                      ),
                     );
                   })),
           ListenableBuilder(
               listenable: widget.stateController,
               builder: (BuildContext context, Widget? child) {
+                // TODO these changes need to trigger rebuilds to prevent issues with the message display
                 if (!widget.stateController.isCallActive && active) {
-                  DebugConsole.debug('chat widget is inactive');
-                  setState(() {
-                    messages.clear();
-                    _messageInput.clear();
-                    active = false;
-                  });
+                  messages.clear();
+                  _messageInput.clear();
+                  active = false;
                 } else if (widget.stateController.isCallActive && !active) {
-                  DebugConsole.debug('chat widget is active');
-                  setState(() {
-                    active = true;
-                  });
+                  active = true;
                 }
 
                 return Padding(
@@ -1036,17 +1121,17 @@ class _ChatWidgetState extends State<ChatWidget> {
                       mainAxisAlignment: MainAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        TextInput(
-                          controller: _messageInput,
-                          labelText: widget.stateController.isCallActive
-                              ? 'Message'
-                              : 'Chat disabled',
-                          enabled: widget.stateController.isCallActive,
-                          onSubmitted: (message) {
-                            if (message.isEmpty) return;
-                            sendMessage(message);
-                          },
-                        ),
+                        Flexible(
+                            fit: FlexFit.loose,
+                            child: TextInput(
+                              controller: _messageInput,
+                              labelText: active ? 'Message' : 'Chat disabled',
+                              enabled: active,
+                              onSubmitted: (message) {
+                                if (message.isEmpty) return;
+                                sendMessage(message);
+                              },
+                            )),
                         IconButton(
                           onPressed: () {
                             String message = _messageInput.text;
@@ -1058,6 +1143,104 @@ class _ChatWidgetState extends State<ChatWidget> {
                       ],
                     ));
               }),
+        ],
+      ),
+    );
+  }
+}
+
+/// A widget which displays details about the call
+class CallDetailsWidget extends StatelessWidget {
+  final StatisticsController statisticsController;
+  final StateController stateController;
+
+  const CallDetailsWidget(
+      {super.key,
+      required this.statisticsController,
+      required this.stateController});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 15.0, horizontal: 20.0),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(10.0),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ListenableBuilder(
+              listenable: stateController,
+              builder: (BuildContext context, Widget? child) {
+                return Text('Call ${stateController.status.toLowerCase()}',
+                    style: const TextStyle(fontSize: 20));
+              }),
+          const Spacer(),
+          const Text('Input level'),
+          const SizedBox(height: 7),
+          ListenableBuilder(
+              listenable: statisticsController,
+              builder: (BuildContext context, Widget? child) {
+                return AudioLevel(
+                    level: statisticsController.inputLevel, numRectangles: 20);
+              }),
+          const SizedBox(height: 9),
+          const Text('Output level'),
+          const SizedBox(height: 7),
+          ListenableBuilder(
+              listenable: statisticsController,
+              builder: (BuildContext context, Widget? child) {
+                return AudioLevel(
+                    level: statisticsController.outputLevel, numRectangles: 20);
+              }),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListenableBuilder(
+                  listenable: statisticsController,
+                  builder: (BuildContext context, Widget? child) {
+                    Color color;
+
+                    if (statisticsController.latency < 50) {
+                      color = Colors.green;
+                    } else if (statisticsController.latency < 150) {
+                      color = Colors.yellow;
+                    } else {
+                      color = Colors.red;
+                    }
+
+                    return Icon(Icons.monitor_heart_rounded, color: color);
+                  }),
+              const SizedBox(width: 7),
+              ListenableBuilder(
+                  listenable: statisticsController,
+                  builder: (BuildContext context, Widget? child) {
+                    return Text('${statisticsController.latency} ms',
+                        style: const TextStyle(height: 0));
+                  }),
+              const Spacer(),
+              Icon(Icons.upload, color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 4),
+              ListenableBuilder(
+                  listenable: statisticsController,
+                  builder: (BuildContext context, Widget? child) {
+                    return Text(statisticsController.upload,
+                        style: const TextStyle(height: 0));
+                  }),
+              const Spacer(),
+              Icon(Icons.download,
+                  color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 4),
+              ListenableBuilder(
+                  listenable: statisticsController,
+                  builder: (BuildContext context, Widget? child) {
+                    return Text(statisticsController.download,
+                        style: const TextStyle(height: 0));
+                  }),
+            ],
+          ),
         ],
       ),
     );
@@ -1194,10 +1377,11 @@ class StateController extends ChangeNotifier {
   bool _deafened = false;
   bool _muted = false;
   bool inAudioTest = false;
-  final HashSet<String> _onlineContacts = HashSet();
-  int? _latency;
   bool _callEndedRecently = false;
-  double rms = 0;
+  final Stopwatch _callTimer = Stopwatch();
+
+  /// id, status
+  final Map<String, String> sessions = {};
 
   /// active, restartable
   (bool, bool) _sessionManager = (false, false);
@@ -1206,25 +1390,29 @@ class StateController extends ChangeNotifier {
   bool get isCallActive => _activeContact != null;
   bool get isDeafened => _deafened;
   bool get isMuted => _muted;
-  String get latency => _latency == null ? '' : ' $_latency ms';
   bool get callEndedRecently => _callEndedRecently;
   bool get blockAudioChanges => isCallActive || inAudioTest;
   bool get sessionManagerActive => _sessionManager.$1;
   bool get sessionManagerRestartable => _sessionManager.$2;
+  String get callDuration =>
+      formatElapsedTime(_callTimer.elapsed.inMilliseconds);
 
   void setActiveContact(Contact? contact) {
     _activeContact = contact;
-
-    if (contact == null) {
-      _latency = null;
-      rms = 0; // reset rms
-    }
-
     notifyListeners();
   }
 
   void setStatus(String status) {
     this.status = status;
+
+    if (status == 'Inactive') {
+      _activeContact = null;
+      _callTimer.stop();
+      _callTimer.reset();
+    } else if (status == 'Active') {
+      _callTimer.start();
+    }
+
     notifyListeners();
   }
 
@@ -1238,17 +1426,17 @@ class StateController extends ChangeNotifier {
   }
 
   bool isOnlineContact(Contact contact) {
-    return _onlineContacts.contains(contact.id());
+    String status = sessions[contact.id()] ?? 'Unknown';
+    return status == 'Connected';
   }
 
-  void addOnlineContact(String id) {
-    _onlineContacts.add(id);
+  void updateSession(String id, String status) {
+    sessions[id] = status;
     notifyListeners();
   }
 
-  void removeOnlineContact(String id) {
-    _onlineContacts.remove(id);
-    notifyListeners();
+  String sessionStatus(String id) {
+    return sessions[id] ?? 'Unknown';
   }
 
   void deafen() {
@@ -1265,13 +1453,7 @@ class StateController extends ChangeNotifier {
   void setInAudioTest() {
     inAudioTest = !inAudioTest;
     status = inAudioTest ? 'In Audio Test' : 'Inactive';
-    rms = 0; // reset rms
 
-    notifyListeners();
-  }
-
-  void setLatency(int latency) {
-    _latency = latency;
     notifyListeners();
   }
 
@@ -1282,13 +1464,23 @@ class StateController extends ChangeNotifier {
       _callEndedRecently = false;
     });
   }
+}
 
-  void setRms(double rms) {
-    // currently the rms is only used when in an audio test
-    if (inAudioTest) {
-      this.rms = rms;
-      notifyListeners();
-    }
+class StatisticsController extends ChangeNotifier {
+  Statistics? _statistics;
+
+  int get latency => _statistics == null ? 0 : _statistics!.latency;
+  double get inputLevel => _statistics == null ? 0 : _statistics!.inputLevel;
+  double get outputLevel => _statistics == null ? 0 : _statistics!.outputLevel;
+  String get upload =>
+      _statistics == null ? '?' : formatBandwidth(_statistics!.uploadBandwidth);
+  String get download => _statistics == null
+      ? '?'
+      : formatBandwidth(_statistics!.downloadBandwidth);
+
+  void setStatistics(Statistics statistics) {
+    _statistics = statistics;
+    notifyListeners();
   }
 }
 
@@ -1325,6 +1517,15 @@ class MessageBus {
   // close the stream controller when it's no longer needed
   void dispose() {
     _messageController.close();
+  }
+}
+
+/// Notifies listeners every second
+class PeriodicNotifier extends ChangeNotifier {
+  PeriodicNotifier() {
+    Timer.periodic(const Duration(seconds: 1), (timer) {
+      notifyListeners();
+    });
   }
 }
 
@@ -1394,10 +1595,40 @@ Future<bool> acceptCallPrompt(BuildContext context, Contact contact) async {
 }
 
 /// Reads the bytes of a wav file from the assets
-Future<List<int>> readWavBytes(String assetName) async {
-  // Load the asset bytes
-  final ByteData data = await rootBundle.load('assets/sounds/$assetName.wav');
-  // Convert ByteData to Uint8List
+Future<List<int>> readWavBytes(String assetName) {
+  return readAssetBytes('sounds/$assetName.wav');
+}
+
+Future<void> updateDenoiseModel(String model, AudioChat audioChat) async {
+  List<int> bytes = await readAssetBytes('models/$model.rnn');
+  audioChat.setModel(model: bytes);
+}
+
+/// Reads the bytes of a file from the assets
+Future<List<int>> readAssetBytes(String assetName) async {
+  final ByteData data = await rootBundle.load('assets/$assetName');
   final List<int> bytes = data.buffer.asUint8List();
   return bytes;
+}
+
+/// Formats milliseconds into hours:minutes:seconds
+String formatElapsedTime(int milliseconds) {
+  int hundredths = (milliseconds / 10).truncate();
+  int seconds = (hundredths / 100).truncate();
+  int minutes = (seconds / 60).truncate();
+  int hours = (minutes / 60).truncate();
+
+  String hoursStr = (hours % 60).toString().padLeft(2, '0');
+  String minutesStr = (minutes % 60).toString().padLeft(2, '0');
+  String secondsStr = (seconds % 60).toString().padLeft(2, '0');
+
+  return "$hoursStr:$minutesStr:$secondsStr";
+}
+
+String formatBandwidth(int bytes) {
+  if (bytes < 100000000) {
+    return '${(bytes / 1000000).toStringAsFixed(2)} MB';
+  } else {
+    return '${(bytes / 1000000000).toStringAsFixed(2)} GB';
+  }
 }

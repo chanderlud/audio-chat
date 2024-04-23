@@ -69,11 +69,9 @@ impl Message {
         }
     }
 
-    pub(crate) fn latency_test(timestamp: u128) -> Self {
+    pub(crate) fn latency_test(timestamp: i64) -> Self {
         Self {
-            message: Some(message::Message::LatencyTest(LatencyTest {
-                timestamp: timestamp.to_be_bytes().to_vec(),
-            })),
+            message: Some(message::Message::LatencyTest(LatencyTest { timestamp })),
         }
     }
 
@@ -83,6 +81,12 @@ impl Message {
                 message,
                 attachment: vec![],
             })),
+        }
+    }
+
+    pub(crate) fn ping() -> Self {
+        Self {
+            message: Some(message::Message::Ping(Ping {})),
         }
     }
 }

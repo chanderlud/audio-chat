@@ -8,7 +8,6 @@ use futures::{Sink, SinkExt};
 use hex_literal::hex;
 pub use hkdf::{Hkdf, InvalidLength};
 pub use sha2::Sha256;
-use tokio::io;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Mutex;
 use tokio_util::bytes::Bytes;
@@ -64,11 +63,9 @@ pub async fn read_message<
 ) -> Result<M> {
     if let Some(Ok(mut buffer)) = transport.next().await {
         cipher.apply_keystream(&mut buffer); // apply the keystream to the buffer
-
         let message = M::decode(&buffer[..])?; // decode the message
-
         Ok(message)
     } else {
-        Err(io::Error::new(io::ErrorKind::UnexpectedEof, "read failed").into())
+        Err(ErrorKind::TransportRecv.into())
     }
 }

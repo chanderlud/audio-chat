@@ -16,6 +16,7 @@ pub enum ErrorKind {
     Ed25519(ed25519_dalek::ed25519::Error),
     InvalidIdentity,
     TransportSend,
+    TransportRecv,
 }
 
 impl From<std::io::Error> for Error {
@@ -77,6 +78,7 @@ impl Display for Error {
                 ErrorKind::Ed25519(ref error) => error.to_string(),
                 ErrorKind::InvalidIdentity => "Invalid identity".to_string(),
                 ErrorKind::TransportSend => "Failed to send message".to_string(),
+                ErrorKind::TransportRecv => "Failed to receive message".to_string(),
             }
         )
     }

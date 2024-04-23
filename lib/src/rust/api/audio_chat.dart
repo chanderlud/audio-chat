@@ -72,14 +72,14 @@ class AudioChat extends RustOpaque {
   static Future<AudioChat> newInstance(
           {required List<int> signingKey,
           required ArcHost host,
+          required NetworkConfig networkConfig,
           required FutureOr<bool> Function(String, Uint8List?) acceptCall,
           required FutureOr<void> Function(String, bool) callEnded,
           required FutureOr<Contact?> Function(U8Array32) getContact,
           required FutureOr<void> Function() connected,
           required FutureOr<void> Function(bool) callState,
-          required FutureOr<void> Function(String, bool) contactStatus,
+          required FutureOr<void> Function(String, String) sessionStatus,
           required FutureOr<void> Function(AudioChat) startSessions,
-          required FutureOr<void> Function(int) callLatency,
           required FutureOr<Uint8List?> Function() loadRingtone,
           required FutureOr<void> Function(Statistics) statistics,
           required FutureOr<void> Function(String) messageReceived,
@@ -88,14 +88,14 @@ class AudioChat extends RustOpaque {
       RustLib.instance.api.audioChatNew(
           signingKey: signingKey,
           host: host,
+          networkConfig: networkConfig,
           acceptCall: acceptCall,
           callEnded: callEnded,
           getContact: getContact,
           connected: connected,
           callState: callState,
-          contactStatus: contactStatus,
+          sessionStatus: sessionStatus,
           startSessions: startSessions,
-          callLatency: callLatency,
           loadRingtone: loadRingtone,
           statistics: statistics,
           messageReceived: messageReceived,
@@ -147,6 +147,12 @@ class AudioChat extends RustOpaque {
       RustLib.instance.api.audioChatSetInputVolume(
         that: this,
         decibel: decibel,
+      );
+
+  Future<void> setModel({required List<int> model, dynamic hint}) =>
+      RustLib.instance.api.audioChatSetModel(
+        that: this,
+        model: model,
       );
 
   void setMuted({required bool muted, dynamic hint}) =>
@@ -201,23 +207,75 @@ class AudioChat extends RustOpaque {
       );
 }
 
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::rust_async::RwLock<NetworkConfig>>
+@sealed
+class NetworkConfig extends RustOpaque {
+  NetworkConfig.dcoDecode(List<dynamic> wire)
+      : super.dcoDecode(wire, _kStaticData);
+
+  NetworkConfig.sseDecode(int ptr, int externalSizeOnNative)
+      : super.sseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        RustLib.instance.api.rust_arc_increment_strong_count_NetworkConfig,
+    rustArcDecrementStrongCount:
+        RustLib.instance.api.rust_arc_decrement_strong_count_NetworkConfig,
+    rustArcDecrementStrongCountPtr:
+        RustLib.instance.api.rust_arc_decrement_strong_count_NetworkConfigPtr,
+  );
+
+  factory NetworkConfig(
+          {required List<String> stunServers,
+          required String matchMaker,
+          dynamic hint}) =>
+      RustLib.instance.api.networkConfigNew(
+          stunServers: stunServers, matchMaker: matchMaker, hint: hint);
+}
+
 /// Processed statistics for the frontend
 class Statistics {
-  final double rms;
+  /// a percentage of the max input volume in the window
+  final double inputLevel;
+
+  /// a percentage of the max output volume in the window
+  final double outputLevel;
+
+  /// the current call latency
+  final int latency;
+
+  /// the approximate upload bandwidth used by the current call
+  final int uploadBandwidth;
+
+  /// the approximate download bandwidth used by the current call
+  final int downloadBandwidth;
 
   const Statistics({
-    required this.rms,
+    required this.inputLevel,
+    required this.outputLevel,
+    required this.latency,
+    required this.uploadBandwidth,
+    required this.downloadBandwidth,
   });
 
   @override
-  int get hashCode => rms.hashCode;
+  int get hashCode =>
+      inputLevel.hashCode ^
+      outputLevel.hashCode ^
+      latency.hashCode ^
+      uploadBandwidth.hashCode ^
+      downloadBandwidth.hashCode;
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is Statistics &&
           runtimeType == other.runtimeType &&
-          rms == other.rms;
+          inputLevel == other.inputLevel &&
+          outputLevel == other.outputLevel &&
+          latency == other.latency &&
+          uploadBandwidth == other.uploadBandwidth &&
+          downloadBandwidth == other.downloadBandwidth;
 }
 
 class U8Array32 extends NonGrowableListView<int> {

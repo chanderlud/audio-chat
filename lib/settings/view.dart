@@ -15,15 +15,17 @@ import '../src/rust/api/error.dart';
 class SettingsPage extends StatefulWidget {
   final SettingsController controller;
   final AudioChat audioChat;
-  final StateController callStateController;
+  final StateController stateController;
+  final StatisticsController statisticsController;
   final SoundPlayer player;
 
   const SettingsPage(
       {super.key,
       required this.controller,
       required this.audioChat,
-      required this.callStateController,
-      required this.player});
+      required this.stateController,
+      required this.player,
+      required this.statisticsController});
 
   @override
   SettingsPageState createState() => SettingsPageState();
@@ -88,7 +90,7 @@ class SettingsPageState extends State<SettingsPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     ListenableBuilder(
-                        listenable: widget.callStateController,
+                        listenable: widget.stateController,
                         builder: (BuildContext context, Widget? child) {
                           String inputInitialSelection;
 
@@ -114,18 +116,20 @@ class SettingsPageState extends State<SettingsPage> {
                             outputInitialSelection = 'Default';
                           }
 
+                          double width = constraints.maxWidth < 650
+                              ? constraints.maxWidth
+                              : (constraints.maxWidth - 20) / 2;
+
                           return Center(
                             child: Wrap(
                               spacing: 20,
                               runSpacing: 20,
                               children: [
                                 DropdownMenu<String>(
-                                  width: constraints.maxWidth < 650
-                                      ? constraints.maxWidth
-                                      : 310,
+                                  width: width,
                                   label: const Text('Input device'),
-                                  enabled: !widget
-                                      .callStateController.blockAudioChanges,
+                                  enabled:
+                                      !widget.stateController.blockAudioChanges,
                                   dropdownMenuEntries: inputDevices
                                       .map<DropdownMenuEntry<String>>((device) {
                                     return DropdownMenuEntry(
@@ -142,12 +146,10 @@ class SettingsPageState extends State<SettingsPage> {
                                   initialSelection: inputInitialSelection,
                                 ),
                                 DropdownMenu<String>(
-                                  width: constraints.maxWidth < 650
-                                      ? constraints.maxWidth
-                                      : 310,
+                                  width: width,
                                   label: const Text('Output device'),
-                                  enabled: !widget
-                                      .callStateController.blockAudioChanges,
+                                  enabled:
+                                      !widget.stateController.blockAudioChanges,
                                   dropdownMenuEntries: outputDevices
                                       .map<DropdownMenuEntry<String>>((device) {
                                     return DropdownMenuEntry(
@@ -170,42 +172,46 @@ class SettingsPageState extends State<SettingsPage> {
                           );
                         }),
                     const SizedBox(height: 20),
-                    ListenableBuilder(
-                        listenable: widget.callStateController,
-                        builder: (BuildContext context, Widget? child) {
-                          return Row(children: [
-                            Button(
-                              text: widget.callStateController.inAudioTest
+                    Row(children: [
+                      ListenableBuilder(
+                          listenable: widget.stateController,
+                          builder: (BuildContext context, Widget? child) {
+                            return Button(
+                              text: widget.stateController.inAudioTest
                                   ? 'End Test'
                                   : 'Sound Test',
                               width: 80,
                               height: 25,
-                              disabled: widget.callStateController.isCallActive,
+                              disabled: widget.stateController.isCallActive,
                               onPressed: () async {
-                                if (widget.callStateController.inAudioTest) {
-                                  widget.callStateController.setInAudioTest();
+                                if (widget.stateController.inAudioTest) {
+                                  widget.stateController.setInAudioTest();
                                   widget.audioChat.endCall();
                                 } else {
-                                  widget.callStateController.setInAudioTest();
+                                  widget.stateController.setInAudioTest();
                                   try {
                                     await widget.audioChat.audioTest();
                                   } on DartError catch (e) {
                                     if (!context.mounted) return;
                                     showErrorDialog(context,
                                         'Error in Audio Test', e.message);
-                                    widget.callStateController.setInAudioTest();
+                                    widget.stateController.setInAudioTest();
                                   }
                                 }
                               },
-                            ),
-                            const SizedBox(width: 20),
-                            AudioLevel(
-                                level: widget.callStateController.rms,
+                            );
+                          }),
+                      const SizedBox(width: 20),
+                      ListenableBuilder(
+                          listenable: widget.statisticsController,
+                          builder: (BuildContext context, Widget? child) {
+                            return AudioLevel(
+                                level: widget.statisticsController.inputLevel,
                                 numRectangles:
-                                    (constraints.maxWidth - 145) ~/ 13.5)
-                          ]);
-                        }),
-                    const SizedBox(height: 10),
+                                    (constraints.maxWidth - 145) ~/ 13.5);
+                          }),
+                    ]),
+                    const SizedBox(height: 20),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       mainAxisSize: MainAxisSize.max,
@@ -217,19 +223,51 @@ class SettingsPageState extends State<SettingsPage> {
                             listenable: widget.controller,
                             builder: (BuildContext context, Widget? child) {
                               return ListenableBuilder(
-                                  listenable: widget.callStateController,
+                                  listenable: widget.stateController,
                                   builder:
                                       (BuildContext context, Widget? child) {
-                                    return CustomSwitch(
-                                        value: widget.controller.useDenoise,
-                                        disabled: widget.callStateController
-                                            .blockAudioChanges,
-                                        onChanged: (use) {
+                                    return DropdownMenu<String>(
+                                      enabled: !widget
+                                          .stateController.blockAudioChanges,
+                                      dropdownMenuEntries: const [
+                                        DropdownMenuEntry(
+                                            value: 'off', label: 'Off'),
+                                        DropdownMenuEntry(
+                                            value: 'vanilla', label: 'Vanilla'),
+                                        DropdownMenuEntry(
+                                            value: 'hogwash', label: 'Hogwash'),
+                                      ],
+                                      initialSelection: widget
+                                              .controller.useDenoise
+                                          ? widget.controller.denoiseModel ??
+                                              'vanilla'
+                                          : 'off',
+                                      onSelected: (String? value) {
+                                        if (value == 'off') {
                                           widget.controller
-                                              .updateUseDenoise(use);
+                                              .updateUseDenoise(false);
                                           widget.audioChat
-                                              .setDenoise(denoise: use);
-                                        });
+                                              .setDenoise(denoise: false);
+                                        } else if (value == 'vanilla') {
+                                          widget.controller
+                                              .updateUseDenoise(true);
+                                          widget.controller
+                                              .setDenoiseModel(null);
+                                          widget.audioChat
+                                              .setDenoise(denoise: true);
+                                          widget.audioChat.setModel(model: []);
+                                        } else {
+                                          widget.controller
+                                              .updateUseDenoise(true);
+                                          widget.controller
+                                              .setDenoiseModel(value);
+                                          widget.audioChat
+                                              .setDenoise(denoise: true);
+                                          updateDenoiseModel(
+                                              value!, widget.audioChat);
+                                        }
+                                      },
+                                    );
                                   });
                             }),
                       ],
@@ -332,8 +370,7 @@ class SettingsPageState extends State<SettingsPage> {
 
                                     Widget leading;
 
-                                    if (widget
-                                            .callStateController.isCallActive ||
+                                    if (widget.stateController.isCallActive ||
                                         widget.controller.activeProfile ==
                                             profile.id) {
                                       leading = Text(

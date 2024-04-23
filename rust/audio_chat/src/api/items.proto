@@ -27,7 +27,7 @@ message Goodbye {
 
 // The current timestamp at the moment the message was sent
 message LatencyTest {
-  required bytes timestamp = 1;
+  required int64 timestamp = 1;
 }
 
 // A chat message
@@ -42,6 +42,8 @@ message Attachment {
   required bytes data = 2;
 }
 
+message Ping {}
+
 // Messages used by controllers
 message Message {
   oneof message {
@@ -51,5 +53,6 @@ message Message {
     Goodbye goodbye = 5;
     LatencyTest latency_test = 6;
     Chat chat = 7;
+    Ping ping = 8;
   }
 }

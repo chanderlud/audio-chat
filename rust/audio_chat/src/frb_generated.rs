@@ -154,20 +154,21 @@ fn wire_AudioChat_new_impl(
             let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_signing_key = <Vec<u8>>::sse_decode(&mut deserializer);
 let api_host = <Arc < Host >>::sse_decode(&mut deserializer);
+let api_network_config = <RustOpaqueMoi<flutter_rust_bridge::for_generated::rust_async::RwLock<NetworkConfig>>>::sse_decode(&mut deserializer);
 let api_accept_call = decode_DartFn_Inputs_String_opt_list_prim_u_8_strict_Output_bool(<flutter_rust_bridge::DartOpaque>::sse_decode(&mut deserializer));
 let api_call_ended = decode_DartFn_Inputs_String_bool_Output_unit(<flutter_rust_bridge::DartOpaque>::sse_decode(&mut deserializer));
 let api_get_contact = decode_DartFn_Inputs_u_8_array_32_Output_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(<flutter_rust_bridge::DartOpaque>::sse_decode(&mut deserializer));
 let api_connected = decode_DartFn_Inputs__Output_unit(<flutter_rust_bridge::DartOpaque>::sse_decode(&mut deserializer));
 let api_call_state = decode_DartFn_Inputs_bool_Output_unit(<flutter_rust_bridge::DartOpaque>::sse_decode(&mut deserializer));
-let api_contact_status = decode_DartFn_Inputs_String_bool_Output_unit(<flutter_rust_bridge::DartOpaque>::sse_decode(&mut deserializer));
+let api_session_status = decode_DartFn_Inputs_String_String_Output_unit(<flutter_rust_bridge::DartOpaque>::sse_decode(&mut deserializer));
 let api_start_sessions = decode_DartFn_Inputs_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat_Output_unit(<flutter_rust_bridge::DartOpaque>::sse_decode(&mut deserializer));
-let api_call_latency = decode_DartFn_Inputs_i_32_Output_unit(<flutter_rust_bridge::DartOpaque>::sse_decode(&mut deserializer));
 let api_load_ringtone = decode_DartFn_Inputs__Output_opt_list_prim_u_8_strict(<flutter_rust_bridge::DartOpaque>::sse_decode(&mut deserializer));
 let api_statistics = decode_DartFn_Inputs_statistics_Output_unit(<flutter_rust_bridge::DartOpaque>::sse_decode(&mut deserializer));
 let api_message_received = decode_DartFn_Inputs_String_Output_unit(<flutter_rust_bridge::DartOpaque>::sse_decode(&mut deserializer));
 let api_manager_active = decode_DartFn_Inputs_bool_bool_Output_unit(<flutter_rust_bridge::DartOpaque>::sse_decode(&mut deserializer));deserializer.end(); move |context| async move {
                     transform_result_sse((move || async move {
-                         Result::<_,()>::Ok(crate::api::audio_chat::AudioChat::new(api_signing_key, api_host, api_accept_call, api_call_ended, api_get_contact, api_connected, api_call_state, api_contact_status, api_start_sessions, api_call_latency, api_load_ringtone, api_statistics, api_message_received, api_manager_active).await)
+                        let api_network_config = api_network_config.rust_auto_opaque_decode_ref();
+ Result::<_,()>::Ok(crate::api::audio_chat::AudioChat::new(api_signing_key, api_host, &api_network_config, api_accept_call, api_call_ended, api_get_contact, api_connected, api_call_state, api_session_status, api_start_sessions, api_load_ringtone, api_statistics, api_message_received, api_manager_active).await)
                     })().await)
                 } })
 }
@@ -441,6 +442,45 @@ fn wire_AudioChat_set_input_volume_impl(
                     api_decibel,
                 ))
             })())
+        },
+    )
+}
+fn wire_AudioChat_set_model_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "AudioChat_set_model",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::rust_async::RwLock<AudioChat>,
+            >>::sse_decode(&mut deserializer);
+            let api_model = <Vec<u8>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse(
+                    (move || async move {
+                        let api_that = api_that.rust_auto_opaque_decode_ref();
+                        crate::api::audio_chat::AudioChat::set_model(&api_that, api_model).await
+                    })()
+                    .await,
+                )
+            }
         },
     )
 }
@@ -764,6 +804,36 @@ fn wire_AudioChat_stop_session_impl(
                     .await,
                 )
             }
+        },
+    )
+}
+fn wire_NetworkConfig_new_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "NetworkConfig_new",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_stun_servers = <Vec<String>>::sse_decode(&mut deserializer);
+            let api_match_maker = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse((move || {
+                crate::api::audio_chat::NetworkConfig::new(api_stun_servers, api_match_maker)
+            })())
         },
     )
 }
@@ -1434,6 +1504,30 @@ fn decode_DartFn_Inputs_String_Output_unit(
         ))
     }
 }
+fn decode_DartFn_Inputs_String_String_Output_unit(
+    dart_opaque: flutter_rust_bridge::DartOpaque,
+) -> impl Fn(String, String) -> flutter_rust_bridge::DartFnFuture<()> {
+    use flutter_rust_bridge::IntoDart;
+
+    async fn body(dart_opaque: flutter_rust_bridge::DartOpaque, arg0: String, arg1: String) -> () {
+        let args = vec![
+            arg0.into_into_dart().into_dart(),
+            arg1.into_into_dart().into_dart(),
+        ];
+        let message = FLUTTER_RUST_BRIDGE_HANDLER
+            .dart_fn_invoke(dart_opaque, args)
+            .await;
+        <()>::sse_decode_single(message)
+    }
+
+    move |arg0: String, arg1: String| {
+        flutter_rust_bridge::for_generated::convert_into_dart_fn_future(body(
+            dart_opaque.clone(),
+            arg0,
+            arg1,
+        ))
+    }
+}
 fn decode_DartFn_Inputs_String_bool_Output_unit(
     dart_opaque: flutter_rust_bridge::DartOpaque,
 ) -> impl Fn(String, bool) -> flutter_rust_bridge::DartFnFuture<()> {
@@ -1564,26 +1658,6 @@ fn decode_DartFn_Inputs_bool_bool_Output_unit(
         ))
     }
 }
-fn decode_DartFn_Inputs_i_32_Output_unit(
-    dart_opaque: flutter_rust_bridge::DartOpaque,
-) -> impl Fn(i32) -> flutter_rust_bridge::DartFnFuture<()> {
-    use flutter_rust_bridge::IntoDart;
-
-    async fn body(dart_opaque: flutter_rust_bridge::DartOpaque, arg0: i32) -> () {
-        let args = vec![arg0.into_into_dart().into_dart()];
-        let message = FLUTTER_RUST_BRIDGE_HANDLER
-            .dart_fn_invoke(dart_opaque, args)
-            .await;
-        <()>::sse_decode_single(message)
-    }
-
-    move |arg0: i32| {
-        flutter_rust_bridge::for_generated::convert_into_dart_fn_future(body(
-            dart_opaque.clone(),
-            arg0,
-        ))
-    }
-}
 fn decode_DartFn_Inputs_statistics_Output_unit(
     dart_opaque: flutter_rust_bridge::DartOpaque,
 ) -> impl Fn(crate::api::audio_chat::Statistics) -> flutter_rust_bridge::DartFnFuture<()> {
@@ -1637,6 +1711,9 @@ flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
     flutter_rust_bridge::for_generated::rust_async::RwLock<Contact>
 );
 flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
+    flutter_rust_bridge::for_generated::rust_async::RwLock<NetworkConfig>
+);
+flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
     flutter_rust_bridge::for_generated::rust_async::RwLock<SoundHandle>
 );
 flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
@@ -1670,6 +1747,16 @@ impl SseDecode for Contact {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut inner = <RustOpaqueMoi<
             flutter_rust_bridge::for_generated::rust_async::RwLock<Contact>,
+        >>::sse_decode(deserializer);
+        return inner.rust_auto_opaque_decode_owned();
+    }
+}
+
+impl SseDecode for NetworkConfig {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <RustOpaqueMoi<
+            flutter_rust_bridge::for_generated::rust_async::RwLock<NetworkConfig>,
         >>::sse_decode(deserializer);
         return inner.rust_auto_opaque_decode_owned();
     }
@@ -1732,6 +1819,16 @@ impl SseDecode for RustOpaqueMoi<flutter_rust_bridge::for_generated::rust_async:
 }
 
 impl SseDecode
+    for RustOpaqueMoi<flutter_rust_bridge::for_generated::rust_async::RwLock<NetworkConfig>>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <usize>::sse_decode(deserializer);
+        return decode_rust_opaque_moi(inner);
+    }
+}
+
+impl SseDecode
     for RustOpaqueMoi<flutter_rust_bridge::for_generated::rust_async::RwLock<SoundHandle>>
 {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -1780,13 +1877,6 @@ impl SseDecode for f32 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         deserializer.cursor.read_f32::<NativeEndian>().unwrap()
-    }
-}
-
-impl SseDecode for i32 {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        deserializer.cursor.read_i32::<NativeEndian>().unwrap()
     }
 }
 
@@ -1859,8 +1949,18 @@ impl SseDecode for (Vec<String>, Vec<String>) {
 impl SseDecode for crate::api::audio_chat::Statistics {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut var_rms = <f32>::sse_decode(deserializer);
-        return crate::api::audio_chat::Statistics { rms: var_rms };
+        let mut var_inputLevel = <f32>::sse_decode(deserializer);
+        let mut var_outputLevel = <f32>::sse_decode(deserializer);
+        let mut var_latency = <usize>::sse_decode(deserializer);
+        let mut var_uploadBandwidth = <usize>::sse_decode(deserializer);
+        let mut var_downloadBandwidth = <usize>::sse_decode(deserializer);
+        return crate::api::audio_chat::Statistics {
+            input_level: var_inputLevel,
+            output_level: var_outputLevel,
+            latency: var_latency,
+            upload_bandwidth: var_uploadBandwidth,
+            download_bandwidth: var_downloadBandwidth,
+        };
     }
 }
 
@@ -1899,6 +1999,13 @@ impl SseDecode for usize {
     }
 }
 
+impl SseDecode for i32 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_i32::<NativeEndian>().unwrap()
+    }
+}
+
 fn pde_ffi_dispatcher_primary_impl(
     func_id: i32,
     port: flutter_rust_bridge::for_generated::MessagePort,
@@ -1914,15 +2021,16 @@ fn pde_ffi_dispatcher_primary_impl(
         3 => wire_AudioChat_say_hello_impl(port, ptr, rust_vec_len, data_len),
         9 => wire_AudioChat_send_chat_impl(port, ptr, rust_vec_len, data_len),
         17 => wire_AudioChat_set_input_device_impl(port, ptr, rust_vec_len, data_len),
+        20 => wire_AudioChat_set_model_impl(port, ptr, rust_vec_len, data_len),
         18 => wire_AudioChat_set_output_device_impl(port, ptr, rust_vec_len, data_len),
         6 => wire_AudioChat_set_signing_key_impl(port, ptr, rust_vec_len, data_len),
         2 => wire_AudioChat_start_session_impl(port, ptr, rust_vec_len, data_len),
         7 => wire_AudioChat_stop_session_impl(port, ptr, rust_vec_len, data_len),
-        32 => wire_SendToDartLogger_set_stream_sink_impl(port, ptr, rust_vec_len, data_len),
-        30 => wire_create_log_stream_impl(port, ptr, rust_vec_len, data_len),
-        29 => wire_init_logger_impl(port, ptr, rust_vec_len, data_len),
-        35 => wire_SoundPlayer_play_impl(port, ptr, rust_vec_len, data_len),
-        37 => wire_SoundPlayer_update_output_device_impl(port, ptr, rust_vec_len, data_len),
+        34 => wire_SendToDartLogger_set_stream_sink_impl(port, ptr, rust_vec_len, data_len),
+        32 => wire_create_log_stream_impl(port, ptr, rust_vec_len, data_len),
+        31 => wire_init_logger_impl(port, ptr, rust_vec_len, data_len),
+        37 => wire_SoundPlayer_play_impl(port, ptr, rust_vec_len, data_len),
+        39 => wire_SoundPlayer_update_output_device_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1944,20 +2052,21 @@ fn pde_ffi_dispatcher_sync_impl(
         12 => wire_AudioChat_set_output_volume_impl(ptr, rust_vec_len, data_len),
         16 => wire_AudioChat_set_play_custom_ringtones_impl(ptr, rust_vec_len, data_len),
         10 => wire_AudioChat_set_rms_threshold_impl(ptr, rust_vec_len, data_len),
-        21 => wire_Contact_from_parts_impl(ptr, rust_vec_len, data_len),
-        24 => wire_Contact_id_impl(ptr, rust_vec_len, data_len),
-        27 => wire_Contact_key_eq_impl(ptr, rust_vec_len, data_len),
-        20 => wire_Contact_new_impl(ptr, rust_vec_len, data_len),
-        23 => wire_Contact_nickname_impl(ptr, rust_vec_len, data_len),
-        26 => wire_Contact_pub_clone_impl(ptr, rust_vec_len, data_len),
-        25 => wire_Contact_set_nickname_impl(ptr, rust_vec_len, data_len),
-        22 => wire_Contact_verifying_key_impl(ptr, rust_vec_len, data_len),
-        28 => wire_generate_keys_impl(ptr, rust_vec_len, data_len),
-        31 => wire_rust_set_up_impl(ptr, rust_vec_len, data_len),
-        38 => wire_SoundHandle_cancel_impl(ptr, rust_vec_len, data_len),
-        34 => wire_SoundPlayer_host_impl(ptr, rust_vec_len, data_len),
-        33 => wire_SoundPlayer_new_impl(ptr, rust_vec_len, data_len),
-        36 => wire_SoundPlayer_update_output_volume_impl(ptr, rust_vec_len, data_len),
+        21 => wire_NetworkConfig_new_impl(ptr, rust_vec_len, data_len),
+        23 => wire_Contact_from_parts_impl(ptr, rust_vec_len, data_len),
+        26 => wire_Contact_id_impl(ptr, rust_vec_len, data_len),
+        29 => wire_Contact_key_eq_impl(ptr, rust_vec_len, data_len),
+        22 => wire_Contact_new_impl(ptr, rust_vec_len, data_len),
+        25 => wire_Contact_nickname_impl(ptr, rust_vec_len, data_len),
+        28 => wire_Contact_pub_clone_impl(ptr, rust_vec_len, data_len),
+        27 => wire_Contact_set_nickname_impl(ptr, rust_vec_len, data_len),
+        24 => wire_Contact_verifying_key_impl(ptr, rust_vec_len, data_len),
+        30 => wire_generate_keys_impl(ptr, rust_vec_len, data_len),
+        33 => wire_rust_set_up_impl(ptr, rust_vec_len, data_len),
+        40 => wire_SoundHandle_cancel_impl(ptr, rust_vec_len, data_len),
+        36 => wire_SoundPlayer_host_impl(ptr, rust_vec_len, data_len),
+        35 => wire_SoundPlayer_new_impl(ptr, rust_vec_len, data_len),
+        38 => wire_SoundPlayer_update_output_volume_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -2010,6 +2119,21 @@ impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<Contact>> for Contact {
 }
 
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for FrbWrapper<NetworkConfig> {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self.0)
+            .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<NetworkConfig> {}
+
+impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<NetworkConfig>> for NetworkConfig {
+    fn into_into_dart(self) -> FrbWrapper<NetworkConfig> {
+        self.into()
+    }
+}
+
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for FrbWrapper<SoundHandle> {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self.0)
@@ -2056,7 +2180,14 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::error::DartError>
 // Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::audio_chat::Statistics {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
-        [self.rms.into_into_dart().into_dart()].into_dart()
+        [
+            self.input_level.into_into_dart().into_dart(),
+            self.output_level.into_into_dart().into_dart(),
+            self.latency.into_into_dart().into_dart(),
+            self.upload_bandwidth.into_into_dart().into_dart(),
+            self.download_bandwidth.into_into_dart().into_dart(),
+        ]
+        .into_dart()
     }
 }
 impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
@@ -2089,6 +2220,13 @@ impl SseEncode for Contact {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <RustOpaqueMoi<flutter_rust_bridge::for_generated::rust_async::RwLock<Contact>>>::sse_encode(flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self), serializer);
+    }
+}
+
+impl SseEncode for NetworkConfig {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <RustOpaqueMoi<flutter_rust_bridge::for_generated::rust_async::RwLock<NetworkConfig>>>::sse_encode(flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self), serializer);
     }
 }
 
@@ -2145,6 +2283,17 @@ impl SseEncode for RustOpaqueMoi<flutter_rust_bridge::for_generated::rust_async:
 }
 
 impl SseEncode
+    for RustOpaqueMoi<flutter_rust_bridge::for_generated::rust_async::RwLock<NetworkConfig>>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        let (ptr, size) = self.sse_encode_raw();
+        <usize>::sse_encode(ptr, serializer);
+        <i32>::sse_encode(size, serializer);
+    }
+}
+
+impl SseEncode
     for RustOpaqueMoi<flutter_rust_bridge::for_generated::rust_async::RwLock<SoundHandle>>
 {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -2191,13 +2340,6 @@ impl SseEncode for f32 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         serializer.cursor.write_f32::<NativeEndian>(self).unwrap();
-    }
-}
-
-impl SseEncode for i32 {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        serializer.cursor.write_i32::<NativeEndian>(self).unwrap();
     }
 }
 
@@ -2262,7 +2404,11 @@ impl SseEncode for (Vec<String>, Vec<String>) {
 impl SseEncode for crate::api::audio_chat::Statistics {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <f32>::sse_encode(self.rms, serializer);
+        <f32>::sse_encode(self.input_level, serializer);
+        <f32>::sse_encode(self.output_level, serializer);
+        <usize>::sse_encode(self.latency, serializer);
+        <usize>::sse_encode(self.upload_bandwidth, serializer);
+        <usize>::sse_encode(self.download_bandwidth, serializer);
     }
 }
 
@@ -2311,6 +2457,13 @@ impl SseEncode for usize {
             .cursor
             .write_u64::<NativeEndian>(self as _)
             .unwrap();
+    }
+}
+
+impl SseEncode for i32 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_i32::<NativeEndian>(self).unwrap();
     }
 }
 

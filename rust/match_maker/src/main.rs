@@ -58,7 +58,6 @@ async fn main() {
     }
 }
 
-// TODO for some reason sessions are not closing
 /// Handles a single connection
 async fn handler(mut stream: TcpStream, time: Time, database: Database) -> Result<()> {
     let shared_secret = key_exchange(&mut stream).await?;
@@ -114,173 +113,172 @@ async fn handler(mut stream: TcpStream, time: Time, database: Database) -> Resul
     let rate_limiter = RateLimiter::new(period);
 
     loop {
-        let future = async {
-            let message = select! {
-                result = rate_limiter.throttle(|| async { message_receiver.recv().await }) => {
-                    let message = result?;
-                    message
+        let future =
+            async {
+                let message = rate_limiter.throttle(|| async { select! {
+                result = message_receiver.recv() => {
+                    Ok::<Message, Error>(result?)
                 },
-                result = rate_limiter.throttle(|| async { read_message::<Message, _, _>(&mut transport, &mut sr_cipher).await }) => {
-                    let message = result?;
-                    message
+                result = read_message::<Message, _, _>(&mut transport, &mut sr_cipher) => {
+                    Ok::<Message, Error>(result?)
                 },
                 // timeout for the other branches
                 _ = sleep(Duration::from_secs(30)) => {
-                    return Err(ErrorKind::Timeout.into());
+                    Err(ErrorKind::Timeout.into())
                 }
-            };
+            }}).await?;
 
-            let from_clone = message.from.clone();
-            let from: [u8; 32] = from_clone
-                .clone()
-                .try_into()
-                .map_err(|_| ErrorKind::InvalidPublicKey(from_clone))?;
+                let from_clone = message.from.clone();
+                let from: [u8; 32] = from_clone
+                    .clone()
+                    .try_into()
+                    .map_err(|_| ErrorKind::InvalidPublicKey(from_clone))?;
 
-            let to_clone = message.to.clone();
-            let to: [u8; 32] = to_clone
-                .clone()
-                .try_into()
-                .map_err(|_| ErrorKind::InvalidPublicKey(to_clone))?;
+                let to_clone = message.to.clone();
+                let to: [u8; 32] = to_clone
+                    .clone()
+                    .try_into()
+                    .map_err(|_| ErrorKind::InvalidPublicKey(to_clone))?;
 
-            if message.to == message.from {
-                return Ok(());
-            } else if message.from == public_key {
-                match &message.message {
-                    // RequestSession always responds with RequestOutcome
-                    Some(message::Message::RequestSession(_)) => {
-                        info!("read RequestSession aimed at {:?}", &to[0..5]);
+                if message.to == message.from {
+                    return Ok(());
+                } else if message.from == public_key {
+                    match &message.message {
+                        // RequestSession always responds with RequestOutcome
+                        Some(message::Message::RequestSession(_)) => {
+                            info!("read RequestSession aimed at {:?}", &to[0..5]);
 
-                        if let Some(state) = database.read().await.get(&to) {
-                            if state.sender.send(message).await.is_err() {
-                                let outcome = RequestOutcome::failure("Session closed");
-                                let message = Message::new(outcome.into(), &to, &public_key);
+                            if let Some(state) = database.read().await.get(&to) {
+                                if state.sender.send(message).await.is_err() {
+                                    let outcome = RequestOutcome::failure("Session closed");
+                                    let message = Message::new(outcome.into(), &public_key, &to);
+                                    write_message(&mut transport, message, &mut ss_cipher).await?;
+                                }
+                            } else {
+                                let outcome = RequestOutcome::failure("No session found");
+                                let message = Message::new(outcome.into(), &public_key, &to);
                                 write_message(&mut transport, message, &mut ss_cipher).await?;
                             }
-                        } else {
-                            let outcome = RequestOutcome::failure("No session found");
-                            let message = Message::new(outcome.into(), &to, &public_key);
-                            write_message(&mut transport, message, &mut ss_cipher).await?;
                         }
-                    }
-                    // Candidate only responds if an error occurs
-                    Some(message::Message::Candidate(_)) => {
-                        info!("read Candidate aimed at {:?}", &to[0..5]);
+                        // Candidate only responds if an error occurs
+                        Some(message::Message::Candidate(_)) => {
+                            info!("read Candidate aimed at {:?}", &to[0..5]);
 
-                        if let Some(state) = database.read().await.get(&to) {
-                            if state.sender.send(message).await.is_err() {
-                                let error = ServerError::new("Session closed");
-                                let message = Message::new(error.into(), &to, &public_key);
+                            if let Some(state) = database.read().await.get(&to) {
+                                if state.sender.send(message).await.is_err() {
+                                    let error = ServerError::new("Session closed");
+                                    let message = Message::new(error.into(), &public_key, &to);
+                                    write_message(&mut transport, message, &mut ss_cipher).await?;
+                                }
+                            } else {
+                                let error = ServerError::new("No session found");
+                                let message = Message::new(error.into(), &public_key, &to);
                                 write_message(&mut transport, message, &mut ss_cipher).await?;
                             }
-                        } else {
-                            let error = ServerError::new("No session found");
-                            let message = Message::new(error.into(), &to, &public_key);
+                        }
+                        // this is a response to RequestSession
+                        Some(message::Message::RequestOutcome(_)) => {
+                            info!("read RequestOutcome aimed at {:?}", &to[0..5]);
+
+                            let option = database
+                                .read()
+                                .await
+                                .get(&to)
+                                .map(|state| state.sender.clone());
+
+                            if let Some(sender) = option {
+                                let mut database = database.write().await;
+                                let state = database
+                                    .get_mut(&public_key)
+                                    .ok_or(ErrorKind::MissingLocalState)?;
+
+                                if state.connected.contains(&to) {
+                                    warn!(
+                                        "{:?} already connected to {:?}",
+                                        &message.from[0..5],
+                                        &to[0..5]
+                                    );
+                                    return Ok(());
+                                }
+
+                                if sender.send(message).await.is_ok() {
+                                    state.connected.insert(to);
+                                } else {
+                                    warn!("Failed to deliver RequestOutcome to {:?}", &to[0..5]);
+                                }
+                            } else {
+                                warn!("No session found for {:?}", &to[0..5]);
+                            }
+                        }
+                        // this message is sent when the session closes locally
+                        Some(message::Message::EndSession(_)) => {
+                            info!("read EndSession aimed at {:?}", &to[0..5]);
+
+                            // no message is returned if the state does not exist or is closed
+                            if let Some(state) = database.read().await.get(&to) {
+                                _ = state.sender.send(message).await;
+                            }
+                        }
+                        _ => warn!("read unexpected message: {:?}", message),
+                    }
+                } else {
+                    match &message.message {
+                        // this message is proxied from another session
+                        Some(message::Message::RequestSession(_)) => {
+                            info!("received RequestSession from {:?}", &from[0..5]);
                             write_message(&mut transport, message, &mut ss_cipher).await?;
                         }
-                    }
-                    // this is a response to RequestSession
-                    Some(message::Message::RequestOutcome(_)) => {
-                        info!("read RequestOutcome aimed at {:?}", &to[0..5]);
+                        // this is always a response to RequestSession
+                        Some(message::Message::RequestOutcome(outcome)) => {
+                            info!("received RequestOutcome from {:?}", &from[0..5]);
 
-                        let option = database
-                            .read()
-                            .await
-                            .get(&to)
-                            .map(|state| state.sender.clone());
+                            if outcome.success {
+                                let mut datebase = database.write().await;
+                                let state = datebase
+                                    .get_mut(&public_key)
+                                    .ok_or(ErrorKind::MissingLocalState)?;
 
-                        if let Some(sender) = option {
+                                if state.connected.contains(&from) {
+                                    warn!(
+                                        "{:?} already connected to {:?}",
+                                        &message.to[0..5],
+                                        &from[0..5]
+                                    );
+                                    return Ok(());
+                                }
+
+                                state.connected.insert(from);
+                            }
+
+                            write_message(&mut transport, message, &mut ss_cipher).await?;
+                        }
+                        Some(message::Message::EndSession(_)) => {
+                            info!("received EndSession from {:?}", &from[0..5]);
+
                             let mut database = database.write().await;
                             let state = database
                                 .get_mut(&public_key)
                                 .ok_or(ErrorKind::MissingLocalState)?;
-
-                            if state.connected.contains(&to) {
-                                warn!(
-                                    "{:?} already connected to {:?}",
-                                    &message.from[0..5],
-                                    &to[0..5]
-                                );
-                                return Ok(());
-                            }
-
-                            if sender.send(message).await.is_ok() {
-                                state.connected.insert(to);
-                            } else {
-                                warn!("Failed to deliver RequestOutcome to {:?}", &to[0..5]);
-                            }
-                        } else {
-                            warn!("No session found for {:?}", &to[0..5]);
+                            state.connected.remove(&from);
+                            write_message(&mut transport, message, &mut ss_cipher).await?;
                         }
-                    }
-                    // this message is sent when the session closes locally
-                    Some(message::Message::EndSession(_)) => {
-                        info!("read EndSession aimed at {:?}", &to[0..5]);
-
-                        // no message is returned if the state does not exist or is closed
-                        if let Some(state) = database.read().await.get(&to) {
-                            _ = state.sender.send(message).await;
+                        Some(message::Message::Ping(_)) => {
+                            info!("{:?} pinged", &public_key[0..5]);
+                            write_message(&mut transport, message, &mut ss_cipher).await?
                         }
-                    }
-                    _ => warn!("read unexpected message: {:?}", message),
-                }
-            } else {
-                match &message.message {
-                    // this message is proxied from another session
-                    Some(message::Message::RequestSession(_)) => {
-                        info!("received RequestSession from {:?}", &from[0..5]);
-                        write_message(&mut transport, message, &mut ss_cipher).await?;
-                    }
-                    // this is always a response to RequestSession
-                    Some(message::Message::RequestOutcome(outcome)) => {
-                        info!("received RequestOutcome from {:?}", &from[0..5]);
-
-                        if outcome.success {
-                            let mut datebase = database.write().await;
-                            let state = datebase
-                                .get_mut(&public_key)
-                                .ok_or(ErrorKind::MissingLocalState)?;
-
-                            if state.connected.contains(&from) {
-                                warn!(
-                                    "{:?} already connected to {:?}",
-                                    &message.to[0..5],
-                                    &from[0..5]
-                                );
-                                return Ok(());
-                            }
-
-                            state.connected.insert(from);
+                        _ => {
+                            info!(
+                                "forwarding message from {:?} to {:?}",
+                                &from[0..5],
+                                &to[0..5]
+                            );
+                            write_message(&mut transport, message, &mut ss_cipher).await?
                         }
-
-                        write_message(&mut transport, message, &mut ss_cipher).await?;
-                    }
-                    Some(message::Message::EndSession(_)) => {
-                        info!("received EndSession from {:?}", &from[0..5]);
-
-                        let mut database = database.write().await;
-                        let state = database
-                            .get_mut(&public_key)
-                            .ok_or(ErrorKind::MissingLocalState)?;
-                        state.connected.remove(&from);
-                        write_message(&mut transport, message, &mut ss_cipher).await?;
-                    }
-                    Some(message::Message::Ping(_)) => {
-                        info!("{:?} pinged", &public_key[0..5]);
-                        write_message(&mut transport, message, &mut ss_cipher).await?
-                    }
-                    _ => {
-                        info!(
-                            "forwarding message from {:?} to {:?}",
-                            &from[0..5],
-                            &to[0..5]
-                        );
-                        write_message(&mut transport, message, &mut ss_cipher).await?
                     }
                 }
-            }
 
-            Ok::<(), Error>(())
-        };
+                Ok::<(), Error>(())
+            };
 
         if let Err(error) = future.await {
             error!("Error in {:?} handler: {:?}", &public_key[0..5], error);

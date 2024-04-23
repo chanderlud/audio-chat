@@ -77,14 +77,14 @@ abstract class RustLibApi extends BaseApi {
   Future<AudioChat> audioChatNew(
       {required List<int> signingKey,
       required ArcHost host,
+      required NetworkConfig networkConfig,
       required FutureOr<bool> Function(String, Uint8List?) acceptCall,
       required FutureOr<void> Function(String, bool) callEnded,
       required FutureOr<Contact?> Function(U8Array32) getContact,
       required FutureOr<void> Function() connected,
       required FutureOr<void> Function(bool) callState,
-      required FutureOr<void> Function(String, bool) contactStatus,
+      required FutureOr<void> Function(String, String) sessionStatus,
       required FutureOr<void> Function(AudioChat) startSessions,
-      required FutureOr<void> Function(int) callLatency,
       required FutureOr<Uint8List?> Function() loadRingtone,
       required FutureOr<void> Function(Statistics) statistics,
       required FutureOr<void> Function(String) messageReceived,
@@ -114,6 +114,9 @@ abstract class RustLibApi extends BaseApi {
   void audioChatSetInputVolume(
       {required AudioChat that, required double decibel, dynamic hint});
 
+  Future<void> audioChatSetModel(
+      {required AudioChat that, required List<int> model, dynamic hint});
+
   void audioChatSetMuted(
       {required AudioChat that, required bool muted, dynamic hint});
 
@@ -137,6 +140,11 @@ abstract class RustLibApi extends BaseApi {
 
   Future<void> audioChatStopSession(
       {required AudioChat that, required Contact contact, dynamic hint});
+
+  NetworkConfig networkConfigNew(
+      {required List<String> stunServers,
+      required String matchMaker,
+      dynamic hint});
 
   Contact contactFromParts(
       {required String id,
@@ -205,6 +213,15 @@ abstract class RustLibApi extends BaseApi {
   RustArcDecrementStrongCountFnType get rust_arc_decrement_strong_count_Contact;
 
   CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ContactPtr;
+
+  RustArcIncrementStrongCountFnType
+      get rust_arc_increment_strong_count_NetworkConfig;
+
+  RustArcDecrementStrongCountFnType
+      get rust_arc_decrement_strong_count_NetworkConfig;
+
+  CrossPlatformFinalizerArg
+      get rust_arc_decrement_strong_count_NetworkConfigPtr;
 
   RustArcIncrementStrongCountFnType
       get rust_arc_increment_strong_count_SoundHandle;
@@ -312,14 +329,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Future<AudioChat> audioChatNew(
       {required List<int> signingKey,
       required ArcHost host,
+      required NetworkConfig networkConfig,
       required FutureOr<bool> Function(String, Uint8List?) acceptCall,
       required FutureOr<void> Function(String, bool) callEnded,
       required FutureOr<Contact?> Function(U8Array32) getContact,
       required FutureOr<void> Function() connected,
       required FutureOr<void> Function(bool) callState,
-      required FutureOr<void> Function(String, bool) contactStatus,
+      required FutureOr<void> Function(String, String) sessionStatus,
       required FutureOr<void> Function(AudioChat) startSessions,
-      required FutureOr<void> Function(int) callLatency,
       required FutureOr<Uint8List?> Function() loadRingtone,
       required FutureOr<void> Function(Statistics) statistics,
       required FutureOr<void> Function(String) messageReceived,
@@ -331,6 +348,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_list_prim_u_8_loose(signingKey, serializer);
         sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockArcHost(
             host, serializer);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNetworkConfig(
+            networkConfig, serializer);
         sse_encode_DartFn_Inputs_String_opt_list_prim_u_8_strict_Output_bool(
             acceptCall, serializer);
         sse_encode_DartFn_Inputs_String_bool_Output_unit(callEnded, serializer);
@@ -338,11 +357,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             getContact, serializer);
         sse_encode_DartFn_Inputs__Output_unit(connected, serializer);
         sse_encode_DartFn_Inputs_bool_Output_unit(callState, serializer);
-        sse_encode_DartFn_Inputs_String_bool_Output_unit(
-            contactStatus, serializer);
+        sse_encode_DartFn_Inputs_String_String_Output_unit(
+            sessionStatus, serializer);
         sse_encode_DartFn_Inputs_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat_Output_unit(
             startSessions, serializer);
-        sse_encode_DartFn_Inputs_i_32_Output_unit(callLatency, serializer);
         sse_encode_DartFn_Inputs__Output_opt_list_prim_u_8_strict(
             loadRingtone, serializer);
         sse_encode_DartFn_Inputs_statistics_Output_unit(statistics, serializer);
@@ -362,14 +380,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       argValues: [
         signingKey,
         host,
+        networkConfig,
         acceptCall,
         callEnded,
         getContact,
         connected,
         callState,
-        contactStatus,
+        sessionStatus,
         startSessions,
-        callLatency,
         loadRingtone,
         statistics,
         messageReceived,
@@ -385,14 +403,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         argNames: [
           "signingKey",
           "host",
+          "networkConfig",
           "acceptCall",
           "callEnded",
           "getContact",
           "connected",
           "callState",
-          "contactStatus",
+          "sessionStatus",
           "startSessions",
-          "callLatency",
           "loadRingtone",
           "statistics",
           "messageReceived",
@@ -595,6 +613,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kAudioChatSetInputVolumeConstMeta => const TaskConstMeta(
         debugName: "AudioChat_set_input_volume",
         argNames: ["that", "decibel"],
+      );
+
+  @override
+  Future<void> audioChatSetModel(
+      {required AudioChat that, required List<int> model, dynamic hint}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockAudioChat(
+            that, serializer);
+        sse_encode_list_prim_u_8_loose(model, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 20, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_dart_error,
+      ),
+      constMeta: kAudioChatSetModelConstMeta,
+      argValues: [that, model],
+      apiImpl: this,
+      hint: hint,
+    ));
+  }
+
+  TaskConstMeta get kAudioChatSetModelConstMeta => const TaskConstMeta(
+        debugName: "AudioChat_set_model",
+        argNames: ["that", "model"],
       );
 
   @override
@@ -821,6 +867,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  NetworkConfig networkConfigNew(
+      {required List<String> stunServers,
+      required String matchMaker,
+      dynamic hint}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_list_String(stunServers, serializer);
+        sse_encode_String(matchMaker, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNetworkConfig,
+        decodeErrorData: sse_decode_dart_error,
+      ),
+      constMeta: kNetworkConfigNewConstMeta,
+      argValues: [stunServers, matchMaker],
+      apiImpl: this,
+      hint: hint,
+    ));
+  }
+
+  TaskConstMeta get kNetworkConfigNewConstMeta => const TaskConstMeta(
+        debugName: "NetworkConfig_new",
+        argNames: ["stunServers", "matchMaker"],
+      );
+
+  @override
   Contact contactFromParts(
       {required String id,
       required String nickname,
@@ -832,7 +907,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(id, serializer);
         sse_encode_String(nickname, serializer);
         sse_encode_list_prim_u_8_loose(verifyingKey, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
       },
       codec: SseCodec(
         decodeSuccessData:
@@ -858,7 +933,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
             that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 24)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 26)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_String,
@@ -885,7 +960,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
             that, serializer);
         sse_encode_list_prim_u_8_loose(key, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 27)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 29)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_bool,
@@ -911,7 +986,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_String(nickname, serializer);
         sse_encode_list_prim_u_8_loose(keyBytes, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
       },
       codec: SseCodec(
         decodeSuccessData:
@@ -937,7 +1012,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
             that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 25)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_String,
@@ -962,7 +1037,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
             that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 26)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 28)!;
       },
       codec: SseCodec(
         decodeSuccessData:
@@ -990,7 +1065,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
             that, serializer);
         sse_encode_String(nickname, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 25)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 27)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1015,7 +1090,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
             that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 24)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_u_8_array_32,
@@ -1038,7 +1113,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 28)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 30)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_u_8_array_64,
@@ -1062,7 +1137,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 32, port: port_);
+            funcId: 34, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_String,
@@ -1087,7 +1162,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 30, port: port_);
+            funcId: 32, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_String,
@@ -1111,7 +1186,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 29, port: port_);
+            funcId: 31, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1134,7 +1209,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 31)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1159,7 +1234,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundHandle(
             that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 38)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 40)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1184,7 +1259,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundPlayer(
             that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 34)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 36)!;
       },
       codec: SseCodec(
         decodeSuccessData:
@@ -1209,7 +1284,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_f_32(outputVolume, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 35)!;
       },
       codec: SseCodec(
         decodeSuccessData:
@@ -1238,7 +1313,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that, serializer);
         sse_encode_list_prim_u_8_loose(bytes, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 35, port: port_);
+            funcId: 37, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData:
@@ -1267,7 +1342,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that, serializer);
         sse_encode_opt_String(name, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 37, port: port_);
+            funcId: 39, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1295,7 +1370,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundPlayer(
             that, serializer);
         sse_encode_f_32(volume, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 36)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 38)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1342,6 +1417,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       final arg0 = dco_decode_String(rawArg0);
 
       final rawOutput = await raw(arg0);
+
+      final serializer = SseSerializer(generalizedFrbRustBinding);
+      sse_encode_unit(rawOutput, serializer);
+      final output = serializer.intoRaw();
+
+      generalizedFrbRustBinding.dartFnDeliverOutput(
+          callId: callId,
+          ptr: output.ptr,
+          rustVecLen: output.rustVecLen,
+          dataLen: output.dataLen);
+    };
+  }
+
+  Future<void> Function(int, dynamic, dynamic)
+      encode_DartFn_Inputs_String_String_Output_unit(
+          FutureOr<void> Function(String, String) raw) {
+    return (callId, rawArg0, rawArg1) async {
+      final arg0 = dco_decode_String(rawArg0);
+      final arg1 = dco_decode_String(rawArg1);
+
+      final rawOutput = await raw(arg0, arg1);
 
       final serializer = SseSerializer(generalizedFrbRustBinding);
       sse_encode_unit(rawOutput, serializer);
@@ -1478,25 +1574,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     };
   }
 
-  Future<void> Function(int, dynamic) encode_DartFn_Inputs_i_32_Output_unit(
-      FutureOr<void> Function(int) raw) {
-    return (callId, rawArg0) async {
-      final arg0 = dco_decode_i_32(rawArg0);
-
-      final rawOutput = await raw(arg0);
-
-      final serializer = SseSerializer(generalizedFrbRustBinding);
-      sse_encode_unit(rawOutput, serializer);
-      final output = serializer.intoRaw();
-
-      generalizedFrbRustBinding.dartFnDeliverOutput(
-          callId: callId,
-          ptr: output.ptr,
-          rustVecLen: output.rustVecLen,
-          dataLen: output.dataLen);
-    };
-  }
-
   Future<void> Function(int, dynamic)
       encode_DartFn_Inputs_statistics_Output_unit(
           FutureOr<void> Function(Statistics) raw) {
@@ -1563,6 +1640,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact;
 
   RustArcIncrementStrongCountFnType
+      get rust_arc_increment_strong_count_NetworkConfig => wire
+          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNetworkConfig;
+
+  RustArcDecrementStrongCountFnType
+      get rust_arc_decrement_strong_count_NetworkConfig => wire
+          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNetworkConfig;
+
+  RustArcIncrementStrongCountFnType
       get rust_arc_increment_strong_count_SoundHandle => wire
           .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundHandle;
 
@@ -1600,6 +1685,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return Contact.dcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  NetworkConfig
+      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNetworkConfig(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return NetworkConfig.dcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -1643,6 +1736,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  NetworkConfig
+      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNetworkConfig(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return NetworkConfig.dcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
   SoundHandle
       dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundHandle(
           dynamic raw) {
@@ -1669,6 +1770,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   FutureOr<void> Function(String) dco_decode_DartFn_Inputs_String_Output_unit(
       dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    throw UnimplementedError('');
+  }
+
+  @protected
+  FutureOr<void> Function(String, String)
+      dco_decode_DartFn_Inputs_String_String_Output_unit(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     throw UnimplementedError('');
   }
@@ -1716,13 +1824,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  FutureOr<void> Function(int) dco_decode_DartFn_Inputs_i_32_Output_unit(
-      dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    throw UnimplementedError('');
-  }
-
-  @protected
   FutureOr<void> Function(Statistics)
       dco_decode_DartFn_Inputs_statistics_Output_unit(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -1765,6 +1866,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return Contact.dcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  NetworkConfig
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNetworkConfig(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return NetworkConfig.dcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -1819,12 +1928,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   double dco_decode_f_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as double;
-  }
-
-  @protected
-  int dco_decode_i_32(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw as int;
   }
 
   @protected
@@ -1886,10 +1989,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Statistics dco_decode_statistics(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 1)
-      throw Exception('unexpected arr length: expect 1 but see ${arr.length}');
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return Statistics(
-      rms: dco_decode_f_32(arr[0]),
+      inputLevel: dco_decode_f_32(arr[0]),
+      outputLevel: dco_decode_f_32(arr[1]),
+      latency: dco_decode_usize(arr[2]),
+      uploadBandwidth: dco_decode_usize(arr[3]),
+      downloadBandwidth: dco_decode_usize(arr[4]),
     );
   }
 
@@ -1951,6 +2058,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  NetworkConfig
+      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNetworkConfig(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return NetworkConfig.sseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
   SoundHandle
       sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundHandle(
           SseDeserializer deserializer) {
@@ -1992,6 +2108,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return Contact.sseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
+  NetworkConfig
+      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNetworkConfig(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return NetworkConfig.sseDecode(
         sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
   }
 
@@ -2048,6 +2173,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  NetworkConfig
+      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNetworkConfig(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return NetworkConfig.sseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
   SoundHandle
       sse_decode_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundHandle(
           SseDeserializer deserializer) {
@@ -2098,12 +2232,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   double sse_decode_f_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getFloat32();
-  }
-
-  @protected
-  int sse_decode_i_32(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getInt32();
   }
 
   @protected
@@ -2180,8 +2308,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   Statistics sse_decode_statistics(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_rms = sse_decode_f_32(deserializer);
-    return Statistics(rms: var_rms);
+    var var_inputLevel = sse_decode_f_32(deserializer);
+    var var_outputLevel = sse_decode_f_32(deserializer);
+    var var_latency = sse_decode_usize(deserializer);
+    var var_uploadBandwidth = sse_decode_usize(deserializer);
+    var var_downloadBandwidth = sse_decode_usize(deserializer);
+    return Statistics(
+        inputLevel: var_inputLevel,
+        outputLevel: var_outputLevel,
+        latency: var_latency,
+        uploadBandwidth: var_uploadBandwidth,
+        downloadBandwidth: var_downloadBandwidth);
   }
 
   @protected
@@ -2216,6 +2353,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  int sse_decode_i_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getInt32();
+  }
+
+  @protected
   void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockArcHost(
           ArcHost self, SseSerializer serializer) {
@@ -2235,6 +2378,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockContact(
           Contact self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(self.sseEncode(move: true), serializer);
+  }
+
+  @protected
+  void
+      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNetworkConfig(
+          NetworkConfig self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(self.sseEncode(move: true), serializer);
   }
@@ -2281,6 +2432,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNetworkConfig(
+          NetworkConfig self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(self.sseEncode(move: false), serializer);
+  }
+
+  @protected
+  void
       sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundHandle(
           SoundHandle self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -2312,6 +2471,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_DartOpaque(
         encode_DartFn_Inputs_String_Output_unit(self), serializer);
+  }
+
+  @protected
+  void sse_encode_DartFn_Inputs_String_String_Output_unit(
+      FutureOr<void> Function(String, String) self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_DartOpaque(
+        encode_DartFn_Inputs_String_String_Output_unit(self), serializer);
   }
 
   @protected
@@ -2362,14 +2529,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_DartOpaque(
         encode_DartFn_Inputs_bool_bool_Output_unit(self), serializer);
-  }
-
-  @protected
-  void sse_encode_DartFn_Inputs_i_32_Output_unit(
-      FutureOr<void> Function(int) self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_DartOpaque(
-        encode_DartFn_Inputs_i_32_Output_unit(self), serializer);
   }
 
   @protected
@@ -2427,6 +2586,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNetworkConfig(
+          NetworkConfig self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(self.sseEncode(move: null), serializer);
+  }
+
+  @protected
+  void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockSoundHandle(
           SoundHandle self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -2472,12 +2639,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_f_32(double self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putFloat32(self);
-  }
-
-  @protected
-  void sse_encode_i_32(int self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putInt32(self);
   }
 
   @protected
@@ -2551,7 +2712,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   void sse_encode_statistics(Statistics self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_f_32(self.rms, serializer);
+    sse_encode_f_32(self.inputLevel, serializer);
+    sse_encode_f_32(self.outputLevel, serializer);
+    sse_encode_usize(self.latency, serializer);
+    sse_encode_usize(self.uploadBandwidth, serializer);
+    sse_encode_usize(self.downloadBandwidth, serializer);
   }
 
   @protected
@@ -2581,5 +2746,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_usize(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint64(self);
+  }
+
+  @protected
+  void sse_encode_i_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putInt32(self);
   }
 }

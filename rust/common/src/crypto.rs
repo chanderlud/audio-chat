@@ -82,13 +82,13 @@ async fn read_public<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<PublicKe
 pub async fn identity_factory(time: &Time, signing_key: &SigningKey) -> Result<Identity> {
     // create a random nonce
     let mut nonce = [0; 128];
-    OsRng.fill(&mut nonce[16..]);
+    OsRng.fill(&mut nonce[8..]);
 
     // adds the current timestamp to the nonce
     {
         let time = time.lock().await;
         let timestamp = time.current_timestamp();
-        nonce[0..16].copy_from_slice(&timestamp.to_be_bytes());
+        nonce[0..8].copy_from_slice(&timestamp.to_be_bytes());
     }
 
     let signature = signing_key.sign(&nonce);
@@ -102,7 +102,7 @@ pub async fn identity_factory(time: &Time, signing_key: &SigningKey) -> Result<I
 }
 
 pub async fn verify_identity(time: &Time, identity: &Identity) -> Result<[u8; 32]> {
-    let timestamp = u128::from_be_bytes(identity.nonce[0..16].try_into()?);
+    let timestamp = i64::from_be_bytes(identity.nonce[0..8].try_into()?);
 
     let delta = {
         let time = time.lock().await;
@@ -116,7 +116,7 @@ pub async fn verify_identity(time: &Time, identity: &Identity) -> Result<[u8; 32
     };
 
     // a max delta of 60 seconds should prevent replay attacks
-    if delta > 60_000_000 {
+    if delta > 60_000 {
         return Err(ErrorKind::InvalidIdentity.into());
     }
 

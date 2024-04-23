@@ -46,6 +46,8 @@ pub(crate) enum ErrorKind {
     MissingCredentials,
     ManagerRestarted,
     InvalidSigningKey,
+    SessionTimeout,
+    AgentNotFound,
 }
 
 impl From<std::io::Error> for Error {
@@ -242,6 +244,8 @@ impl Display for Error {
                 ErrorKind::MissingCredentials => "Missing credentials".to_string(),
                 ErrorKind::ManagerRestarted => "Session manager restarted".to_string(),
                 ErrorKind::InvalidSigningKey => "Invalid signing key".to_string(),
+                ErrorKind::SessionTimeout => "Session timed out".to_string(),
+                ErrorKind::AgentNotFound => "Agent not found".to_string(),
             }
         )
     }

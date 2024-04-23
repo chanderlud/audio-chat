@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:audio_chat/src/rust/api/error.dart';
+import 'package:audio_chat/src/rust/api/audio_chat.dart';
 import 'package:debug_console/debug_console.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -48,6 +49,12 @@ class SettingsController with ChangeNotifier {
 
   /// the custom ringtone file
   late String? customRingtoneFile;
+
+  /// the network configuration
+  late NetworkConfig networkConfig;
+
+  /// the name of a denoise model
+  late String? denoiseModel;
 
   get contacts => profiles[activeProfile]!.contacts;
 
@@ -105,6 +112,8 @@ class SettingsController with ChangeNotifier {
     inputDevice = options.getString('inputDevice');
     playCustomRingtones = options.getBool('playCustomRingtones') ?? true;
     customRingtoneFile = options.getString('customRingtoneFile');
+    networkConfig = await loadNetworkConfig();
+    denoiseModel = options.getString('denoiseModel');
 
     notifyListeners();
   }
@@ -273,6 +282,18 @@ class SettingsController with ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setDenoiseModel(String? model) async {
+    denoiseModel = model;
+
+    if (model != null) {
+      await options.setString('denoiseModel', model);
+    } else {
+      await options.remove('denoiseModel');
+    }
+
+    notifyListeners();
+  }
+
   Future<Map<String, Contact>> loadContacts(String id) async {
     Map<String, Contact> contacts = {};
     String? contactsStr = await storage.read(key: '$id-contacts');
@@ -294,6 +315,24 @@ class SettingsController with ChangeNotifier {
     }
 
     return contacts;
+  }
+
+  Future<NetworkConfig> loadNetworkConfig() async {
+    String? networkConfigStr = options.getString('networkConfig');
+
+    try {
+      if (networkConfigStr != null) {
+        Map<String, dynamic> obj = jsonDecode(networkConfigStr);
+        return NetworkConfig(
+            stunServers: obj['stun_servers'], matchMaker: obj['match_maker']);
+      }
+    } on DartError catch (e) {
+      DebugConsole.warning('invalid network config format: $e');
+    }
+
+    return NetworkConfig(
+        stunServers: ['stun:stun.l.google.com:19302'],
+        matchMaker: 'match-maker.chanchan.dev:8957');
   }
 }
 
