@@ -1,11 +1,13 @@
 // This is a modified version of the code found at
 // https://github.com/fzyzcjy/flutter_rust_bridge/issues/486
 
-use std::sync::Once;
+use std::fs::File;
+use std::sync::{Mutex, Once};
 
 use fast_log::appender::{FastLogRecord, LogAppender};
 use fast_log::Config;
 use flutter_rust_bridge::frb;
+use gag::Redirect;
 use lazy_static::lazy_static;
 use log::{info, warn, LevelFilter};
 use parking_lot::RwLock;
@@ -17,18 +19,24 @@ static INIT_LOGGER_ONCE: Once = Once::new();
 lazy_static! {
     static ref SEND_TO_DART_LOGGER_STREAM_SINK: RwLock<Option<StreamSink<String>>> =
         RwLock::new(None);
+    static ref GAG: Mutex<Option<Redirect<File>>> = Mutex::new(None);
 }
 
 pub fn init_logger() {
     // https://stackoverflow.com/questions/30177845/how-to-initialize-the-logger-for-integration-tests
     INIT_LOGGER_ONCE.call_once(|| {
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+        {
+            // Redirect stderr to a file for the entire execution of the program
+            let gag = Redirect::stderr(File::create("stderr.log").unwrap()).unwrap();
+            GAG.lock().unwrap().replace(gag);
+        }
+
         let level = if cfg!(debug_assertions) {
-            LevelFilter::Info // Debug is spammed by sctp
+            LevelFilter::Debug
         } else {
             LevelFilter::Warn
         };
-
-        // let level = LevelFilter::Info;
 
         assert!(
             level <= log::STATIC_MAX_LEVEL,
@@ -37,14 +45,19 @@ pub fn init_logger() {
             level
         );
 
-        fast_log::init(
-            Config::new()
-                .custom(SendToDartLogger {})
-                // .file("audio_chat.log")
-                .chan_len(Some(100))
-                .level(level),
-        )
-        .unwrap();
+        let mut config = Config::new().chan_len(Some(100)).level(level);
+
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+        {
+            config = config.file("audio_chat.log");
+        }
+
+        #[cfg(target_os = "android")]
+        {
+            config = config.custom(SendToDartLogger);
+        }
+
+        fast_log::init(config).unwrap();
 
         info!("init_logger (inside 'once') finished");
 

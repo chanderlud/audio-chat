@@ -1,7 +1,6 @@
 [workspace]
 members = [
-    "common",
-    "match_maker",
+    "relay_server",
     "audio_chat"
 ]
 resolver = "2"

@@ -15,7 +15,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:mutex/mutex.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 SoundHandle? outgoingSoundHandle;
@@ -57,51 +56,57 @@ Future<void> main() async {
 
   final messageBus = MessageBus();
 
-  final inPrompt = Mutex();
-
   final audioChat = await AudioChat.newInstance(
-      signingKey: settingsController.signingKey,
+      identity: settingsController.keypair,
       host: host,
       networkConfig: settingsController.networkConfig,
       // called when there is an incoming call
-      acceptCall: (String id, ringtone) async {
-        bool accepted = false;
+      acceptCall: (String id, Uint8List? ringtone, DartNotify cancel) async {
+        Contact? contact = settingsController.getContact(id);
 
-        // only allow one prompt at a time
-        await inPrompt.protect(() async {
-          Contact? contact = settingsController.getContact(id);
+        if (stateController.isCallActive) {
+          return false;
+        } else if (contact == null) {
+          DebugConsole.warning('contact is null');
+          return false;
+        }
 
-          if (stateController.isCallActive) {
-            return false;
-          } else if (contact == null) {
-            DebugConsole.warning('contact is null');
-            return false;
+        List<int> bytes;
+
+        if (ringtone == null) {
+          bytes = await readWavBytes('incoming');
+        } else {
+          bytes = ringtone;
+        }
+
+        SoundHandle handle = await soundPlayer.play(bytes: bytes);
+
+        if (navigatorKey.currentState == null ||
+            !navigatorKey.currentState!.mounted) return false;
+
+        Future acceptedFuture =
+            acceptCallPrompt(navigatorKey.currentState!.context, contact);
+        Future cancelFuture = cancel.notified();
+
+        final result = await Future.any([acceptedFuture, cancelFuture]);
+
+        handle.cancel();
+
+        if (result == null) {
+          DebugConsole.debug('cancelled');
+
+          if (navigatorKey.currentState != null &&
+              navigatorKey.currentState!.mounted) {
+            Navigator.pop(navigatorKey.currentState!.context);
           }
 
-          List<int> bytes;
+          return false; // cancelled
+        } else if (result) {
+          stateController.setStatus('Connecting');
+          stateController.setActiveContact(contact);
+        }
 
-          if (ringtone == null) {
-            bytes = await readWavBytes('incoming');
-          } else {
-            bytes = ringtone;
-          }
-
-          SoundHandle handle = await soundPlayer.play(bytes: bytes);
-
-          if (navigatorKey.currentState == null ||
-              !navigatorKey.currentState!.mounted) return false;
-
-          accepted = await acceptCallPrompt(
-              navigatorKey.currentState!.context, contact);
-          handle.cancel();
-
-          if (accepted) {
-            stateController.setStatus('Connecting');
-            stateController.setActiveContact(contact);
-          }
-        });
-
-        return accepted;
+        return result;
       },
       // called when a call ends
       callEnded: (String message, bool remote) async {
@@ -128,10 +133,14 @@ Future<void> main() async {
         }
       },
       // called when a contact is needed in the backend
-      getContact: (verifyingKey) {
-        Contact? contact = settingsController.contacts.values
-            .firstWhere((Contact contact) => contact.keyEq(key: verifyingKey));
-        return contact?.pubClone();
+      getContact: (Uint8List peerId) {
+        try {
+          Contact? contact = settingsController.contacts.values
+              .firstWhere((Contact contact) => contact.idEq(id: peerId));
+          return contact?.pubClone();
+        } catch (_) {
+          return null;
+        }
       },
       // called when the call initially connects
       connected: () async {
@@ -143,7 +152,7 @@ Future<void> main() async {
         stateController.setStatus('Active');
       },
       // called when the call disconnects or reconnects
-      callState: (disconnected) async {
+      callState: (bool disconnected) async {
         if (disconnected && stateController.isCallActive) {
           List<int> bytes = await readWavBytes('disconnected');
           await soundPlayer.play(bytes: bytes);
@@ -179,8 +188,16 @@ Future<void> main() async {
       statistics: statisticsController.setStatistics,
       // called when a new chat message is received by the backend
       messageReceived: messageBus.sendMessage,
+      // called when the session manager state changes
       managerActive: (bool active, bool restartable) {
         stateController.setSessionManager(active, restartable);
+      },
+      // called when the backend is starting a call on its own
+      callStarted: (Contact contact) async {
+        stateController.setStatus('Connecting');
+        List<int> bytes = await readWavBytes('outgoing');
+        outgoingSoundHandle = await soundPlayer.play(bytes: bytes);
+        stateController.setActiveContact(contact);
       });
 
   // apply options to the audio chat instance
@@ -316,8 +333,8 @@ class HomePage extends StatelessWidget {
 
                 // sort contacts by session status then nickname
                 contacts.sort((a, b) {
-                  String aStatus = stateController.sessionStatus(a.id());
-                  String bStatus = stateController.sessionStatus(b.id());
+                  String aStatus = stateController.sessionStatus(a);
+                  String bStatus = stateController.sessionStatus(b);
 
                   if (aStatus == bStatus) {
                     return a.nickname().compareTo(b.nickname());
@@ -576,7 +593,7 @@ class ContactWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     bool online = controller.isOnlineContact(contact);
     bool active = controller.isActiveContact(contact);
-    String status = controller.sessions[contact.id()] ?? 'Unknown';
+    String status = controller.sessions[contact.peerId()] ?? 'Unknown';
 
     List<Widget> widgets = [
       const CircleAvatar(
@@ -1055,10 +1072,10 @@ class ChatWidgetState extends State<ChatWidget> {
   void sendMessage(String message) {
     if (!active) return;
 
-    String id = widget.stateController.activeContact!.id();
+    Contact contact = widget.stateController.activeContact!;
 
     try {
-      widget.audioChat.sendChat(message: message, id: id);
+      widget.audioChat.sendChat(message: message, contact: contact);
 
       setState(() {
         messages.add(message);
@@ -1380,7 +1397,7 @@ class StateController extends ChangeNotifier {
   bool _callEndedRecently = false;
   final Stopwatch _callTimer = Stopwatch();
 
-  /// id, status
+  /// peerId, status
   final Map<String, String> sessions = {};
 
   /// active, restartable
@@ -1426,17 +1443,17 @@ class StateController extends ChangeNotifier {
   }
 
   bool isOnlineContact(Contact contact) {
-    String status = sessions[contact.id()] ?? 'Unknown';
+    String status = sessions[contact.peerId()] ?? 'Unknown';
     return status == 'Connected';
   }
 
-  void updateSession(String id, String status) {
-    sessions[id] = status;
+  void updateSession(String peerId, String status) {
+    sessions[peerId] = status;
     notifyListeners();
   }
 
-  String sessionStatus(String id) {
-    return sessions[id] ?? 'Unknown';
+  String sessionStatus(Contact contact) {
+    return sessions[contact.peerId()] ?? 'Unknown';
   }
 
   void deafen() {

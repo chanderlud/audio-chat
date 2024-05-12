@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:core';
 
 import 'package:audio_chat/settings/controller.dart';
@@ -365,8 +364,6 @@ class SettingsPageState extends State<SettingsPage> {
                                     Profile profile = widget
                                         .controller.profiles.values
                                         .elementAt(index);
-                                    String verifyingKey =
-                                        base64Encode(profile.verifyingKey);
 
                                     Widget leading;
 
@@ -391,8 +388,8 @@ class SettingsPageState extends State<SettingsPage> {
                                           onPressed: () {
                                             widget.controller
                                                 .setActiveProfile(profile.id);
-                                            widget.audioChat.setSigningKey(
-                                                key: profile.signingKey);
+                                            widget.audioChat.setIdentity(
+                                                key: profile.keypair);
                                             widget.audioChat.restartManager();
                                           });
                                     }
@@ -401,24 +398,23 @@ class SettingsPageState extends State<SettingsPage> {
                                       leading: leading,
                                       title: Text(profile.nickname),
                                       trailing: Button(
-                                          text: 'View Verifying Key',
+                                          text: 'View Peer ID',
                                           disabled: false,
                                           onPressed: () {
                                             showDialog(
                                               context: context,
                                               builder: (BuildContext context) {
                                                 return AlertDialog(
-                                                  title: const Text(
-                                                      'Verifying Key'),
+                                                  title: const Text('Peer ID'),
                                                   content: SelectableText(
-                                                      verifyingKey),
+                                                      profile.peerId),
                                                   actions: <Widget>[
                                                     TextButton(
                                                         onPressed: () {
                                                           Clipboard.setData(
                                                               ClipboardData(
-                                                                  text:
-                                                                      verifyingKey));
+                                                                  text: profile
+                                                                      .peerId));
                                                           Navigator.of(context)
                                                               .pop();
                                                         },

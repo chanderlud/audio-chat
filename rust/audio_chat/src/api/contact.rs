@@ -1,4 +1,6 @@
 use flutter_rust_bridge::frb;
+use libp2p::PeerId;
+use std::str::FromStr;
 use uuid::Uuid;
 
 use crate::api::error::{DartError, ErrorKind};
@@ -13,39 +15,31 @@ pub struct Contact {
     pub(crate) nickname: String,
 
     /// The public/verifying key for the contact
-    pub(crate) verifying_key: [u8; 32],
+    pub(crate) peer_id: PeerId,
 }
 
 impl Contact {
     #[frb(sync)]
-    pub fn new(nickname: String, key_bytes: Vec<u8>) -> Result<Contact, DartError> {
+    pub fn new(nickname: String, peer_id: String) -> Result<Contact, DartError> {
         Ok(Self {
             id: Uuid::new_v4().to_string(),
             nickname,
-            verifying_key: key_bytes
-                .try_into()
-                .map_err(|_| ErrorKind::InvalidContactFormat)?,
+            peer_id: PeerId::from_str(&peer_id).map_err(|_| ErrorKind::InvalidContactFormat)?,
         })
     }
 
     #[frb(sync)]
-    pub fn from_parts(
-        id: String,
-        nickname: String,
-        verifying_key: Vec<u8>,
-    ) -> Result<Contact, DartError> {
+    pub fn from_parts(id: String, nickname: String, peer_id: String) -> Result<Contact, DartError> {
         Ok(Self {
             id,
             nickname,
-            verifying_key: verifying_key
-                .try_into()
-                .map_err(|_| ErrorKind::InvalidContactFormat)?,
+            peer_id: PeerId::from_str(&peer_id).map_err(|_| ErrorKind::InvalidContactFormat)?,
         })
     }
 
     #[frb(sync)]
-    pub fn verifying_key(&self) -> [u8; 32] {
-        self.verifying_key
+    pub fn peer_id(&self) -> String {
+        self.peer_id.to_string()
     }
 
     #[frb(sync)]
@@ -69,7 +63,7 @@ impl Contact {
     }
 
     #[frb(sync)]
-    pub fn key_eq(&self, key: Vec<u8>) -> bool {
-        key.eq(&self.verifying_key)
+    pub fn id_eq(&self, id: Vec<u8>) -> bool {
+        self.peer_id.to_bytes() == id
     }
 }

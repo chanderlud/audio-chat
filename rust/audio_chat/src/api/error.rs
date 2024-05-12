@@ -2,12 +2,15 @@ use std::array::TryFromSliceError;
 use std::fmt::{Display, Formatter};
 use std::net::AddrParseError;
 
+use crate::BehaviourEvent;
 use cpal::{BuildStreamError, DefaultStreamConfigError, DevicesError, PlayStreamError};
+use libp2p::identity::{DecodingError, ParseError};
+use libp2p::swarm::{DialError, SwarmEvent};
+use libp2p::TransportError;
+use libp2p_stream::{AlreadyRegistered, OpenStreamError};
 use rubato::{ResampleError, ResamplerConstructionError};
 use tokio::task::JoinError;
 use tokio::time::error::Elapsed;
-
-use common::InvalidLength;
 
 /// generic error type for audio chat
 #[derive(Debug)]
@@ -27,14 +30,15 @@ pub(crate) enum ErrorKind {
     Resample(ResampleError),
     KanalSend(kanal::SendError),
     KanalReceive(kanal::ReceiveError),
-    HkdfLength(InvalidLength),
     Join(JoinError),
     AddrParse(AddrParseError),
-    Ed25519(ed25519_dalek::ed25519::Error),
-    Common(common::error::ErrorKind),
     Timeout(Elapsed),
-    Ice(webrtc_ice::Error),
-    Sctp(webrtc_sctp::Error),
+    IdentityDecode(DecodingError),
+    OpenStream(OpenStreamError),
+    Dial(DialError),
+    IdentityParse(ParseError),
+    Transport(TransportError<std::io::Error>),
+    AlreadyRegistered(AlreadyRegistered),
     NoOutputDevice,
     NoInputDevice,
     InvalidContactFormat,
@@ -42,12 +46,14 @@ pub(crate) enum ErrorKind {
     UnknownSampleFormat,
     InvalidWav,
     TryFromSlice(TryFromSliceError),
-    AcceptStream,
-    MissingCredentials,
     ManagerRestarted,
-    InvalidSigningKey,
-    SessionTimeout,
-    AgentNotFound,
+    TransportSend,
+    TransportRecv,
+    UnexpectedSwarmEvent,
+    SwarmBuild,
+    SwarmEnded,
+    SessionStoped,
+    CallEnded,
 }
 
 impl From<std::io::Error> for Error {
@@ -130,14 +136,6 @@ impl From<JoinError> for Error {
     }
 }
 
-impl From<InvalidLength> for Error {
-    fn from(err: InvalidLength) -> Self {
-        Self {
-            kind: ErrorKind::HkdfLength(err),
-        }
-    }
-}
-
 impl From<DevicesError> for Error {
     fn from(err: DevicesError) -> Self {
         Self {
@@ -150,14 +148,6 @@ impl From<AddrParseError> for Error {
     fn from(err: AddrParseError) -> Self {
         Self {
             kind: ErrorKind::AddrParse(err),
-        }
-    }
-}
-
-impl From<ed25519_dalek::ed25519::Error> for Error {
-    fn from(err: ed25519_dalek::ed25519::Error) -> Self {
-        Self {
-            kind: ErrorKind::Ed25519(err),
         }
     }
 }
@@ -178,26 +168,58 @@ impl From<TryFromSliceError> for Error {
     }
 }
 
-impl From<common::error::Error> for Error {
-    fn from(err: common::error::Error) -> Self {
+impl From<DecodingError> for Error {
+    fn from(err: DecodingError) -> Self {
         Self {
-            kind: ErrorKind::Common(err.kind),
+            kind: ErrorKind::IdentityDecode(err),
         }
     }
 }
 
-impl From<webrtc_sctp::Error> for Error {
-    fn from(err: webrtc_sctp::Error) -> Self {
+impl From<OpenStreamError> for Error {
+    fn from(err: OpenStreamError) -> Self {
         Self {
-            kind: ErrorKind::Sctp(err),
+            kind: ErrorKind::OpenStream(err),
         }
     }
 }
 
-impl From<webrtc_ice::Error> for Error {
-    fn from(err: webrtc_ice::Error) -> Self {
+impl From<DialError> for Error {
+    fn from(err: DialError) -> Self {
         Self {
-            kind: ErrorKind::Ice(err),
+            kind: ErrorKind::Dial(err),
+        }
+    }
+}
+
+impl From<ParseError> for Error {
+    fn from(err: ParseError) -> Self {
+        Self {
+            kind: ErrorKind::IdentityParse(err),
+        }
+    }
+}
+
+impl From<SwarmEvent<BehaviourEvent>> for Error {
+    fn from(_: SwarmEvent<BehaviourEvent>) -> Self {
+        Self {
+            kind: ErrorKind::UnexpectedSwarmEvent,
+        }
+    }
+}
+
+impl From<TransportError<std::io::Error>> for Error {
+    fn from(err: TransportError<std::io::Error>) -> Self {
+        Self {
+            kind: ErrorKind::Transport(err),
+        }
+    }
+}
+
+impl From<AlreadyRegistered> for Error {
+    fn from(err: AlreadyRegistered) -> Self {
+        Self {
+            kind: ErrorKind::AlreadyRegistered(err),
         }
     }
 }
@@ -225,27 +247,30 @@ impl Display for Error {
                 ErrorKind::Resample(ref err) => format!("Resample error: {}", err),
                 ErrorKind::KanalSend(ref err) => format!("Kanal send error: {}", err),
                 ErrorKind::KanalReceive(ref err) => format!("Kanal receive error: {}", err),
-                ErrorKind::HkdfLength(ref err) => format!("HKDF length error: {}", err),
                 ErrorKind::Join(ref err) => format!("Join error: {}", err),
-                ErrorKind::Ed25519(ref err) => format!("Ed25519 error: {}", err),
                 ErrorKind::Timeout(_) => "The connection timed out".to_string(),
                 ErrorKind::TryFromSlice(ref err) => format!("Try from slice error: {}", err),
                 ErrorKind::AddrParse(ref err) => err.to_string(),
-                ErrorKind::Common(ref err) => format!("Common error: {:?}", err),
-                ErrorKind::Ice(ref err) => format!("ICE error: {}", err),
-                ErrorKind::Sctp(ref err) => format!("SCTP error: {}", err),
+                ErrorKind::IdentityDecode(ref err) => format!("Identity decode error: {}", err),
+                ErrorKind::OpenStream(ref err) => format!("Open stream error: {}", err),
+                ErrorKind::Dial(ref err) => format!("Dial error: {}", err),
+                ErrorKind::IdentityParse(ref err) => format!("Identity parse error: {}", err),
+                ErrorKind::Transport(ref err) => format!("Transport error: {}", err),
+                ErrorKind::AlreadyRegistered(ref err) => format!("Already registered: {}", err),
                 ErrorKind::NoOutputDevice => "No output device found".to_string(),
                 ErrorKind::NoInputDevice => "No input device found".to_string(),
                 ErrorKind::InvalidContactFormat => "Invalid contact format".to_string(),
                 ErrorKind::InCall => "Cannot change this option while a call is active".to_string(),
                 ErrorKind::UnknownSampleFormat => "Unknown sample format".to_string(),
                 ErrorKind::InvalidWav => "Invalid WAV file".to_string(),
-                ErrorKind::AcceptStream => "Failed to accept stream".to_string(),
-                ErrorKind::MissingCredentials => "Missing credentials".to_string(),
                 ErrorKind::ManagerRestarted => "Session manager restarted".to_string(),
-                ErrorKind::InvalidSigningKey => "Invalid signing key".to_string(),
-                ErrorKind::SessionTimeout => "Session timed out".to_string(),
-                ErrorKind::AgentNotFound => "Agent not found".to_string(),
+                ErrorKind::TransportSend => "Transport failed on send".to_string(),
+                ErrorKind::TransportRecv => "Transport failed on receive".to_string(),
+                ErrorKind::UnexpectedSwarmEvent => "Unexpected swarm event".to_string(),
+                ErrorKind::SwarmBuild => "Swarm build error".to_string(),
+                ErrorKind::SwarmEnded => "Swarm ended".to_string(),
+                ErrorKind::SessionStoped => "Session stopped".to_string(),
+                ErrorKind::CallEnded => "Call ended".to_string(),
             }
         )
     }

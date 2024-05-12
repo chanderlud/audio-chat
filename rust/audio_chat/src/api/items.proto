@@ -14,6 +14,9 @@ message Hello {
   required bytes ringtone = 1;
 }
 
+// Signals that the other client has accepted the call
+message HelloAck {}
+
 // Signals that the client does not want to start a call
 message Reject {}
 
@@ -23,11 +26,6 @@ message Busy {}
 // Alerts the client that the call has been ended by the other party
 message Goodbye {
   required string reason = 1;
-}
-
-// The current timestamp at the moment the message was sent
-message LatencyTest {
-  required int64 timestamp = 1;
 }
 
 // A chat message
@@ -42,17 +40,14 @@ message Attachment {
   required bytes data = 2;
 }
 
-message Ping {}
-
 // Messages used by controllers
 message Message {
   oneof message {
     Hello hello = 1;
-    Reject reject = 2;
+    HelloAck hello_ack = 2;
+    Reject reject = 3;
     Busy busy = 4;
     Goodbye goodbye = 5;
-    LatencyTest latency_test = 6;
-    Chat chat = 7;
-    Ping ping = 8;
+    Chat chat = 6;
   }
 }

@@ -43,6 +43,12 @@ impl Message {
         }
     }
 
+    pub(crate) fn hello_ack() -> Self {
+        Self {
+            message: Some(message::Message::HelloAck(HelloAck {})),
+        }
+    }
+
     pub(crate) fn reject() -> Self {
         Self {
             message: Some(message::Message::Reject(Reject {})),
@@ -69,24 +75,12 @@ impl Message {
         }
     }
 
-    pub(crate) fn latency_test(timestamp: i64) -> Self {
-        Self {
-            message: Some(message::Message::LatencyTest(LatencyTest { timestamp })),
-        }
-    }
-
     pub(crate) fn chat(message: String) -> Self {
         Self {
             message: Some(message::Message::Chat(Chat {
                 message,
                 attachment: vec![],
             })),
-        }
-    }
-
-    pub(crate) fn ping() -> Self {
-        Self {
-            message: Some(message::Message::Ping(Ping {})),
         }
     }
 }

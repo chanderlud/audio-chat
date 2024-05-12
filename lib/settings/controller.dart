@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:audio_chat/src/rust/api/error.dart';
 import 'package:audio_chat/src/rust/api/audio_chat.dart';
@@ -58,7 +59,7 @@ class SettingsController with ChangeNotifier {
 
   get contacts => profiles[activeProfile]!.contacts;
 
-  get signingKey => profiles[activeProfile]!.signingKey;
+  get keypair => profiles[activeProfile]!.keypair;
 
   Future<void> init() async {
     // initialize an empty map for profiles
@@ -68,10 +69,12 @@ class SettingsController with ChangeNotifier {
 
     // load each profile from the secure storage
     for (String id in profileIds) {
-      String? keyStr = await storage.read(key: '$id-key');
+      String? keyStr = await storage.read(key: '$id-keypair');
+      String? peerId = await storage.read(key: '$id-peerId');
 
       // if the key is missing, skip this profile
-      if (keyStr == null) {
+      if (keyStr == null || peerId == null) {
+        await removeProfile(id);
         continue;
       }
 
@@ -85,8 +88,8 @@ class SettingsController with ChangeNotifier {
       profiles[id] = Profile(
         id: id,
         nickname: nickname,
-        signingKey: keyBytes.getRange(0, 32).toList(),
-        verifyingKey: keyBytes.getRange(32, 64).toList(),
+        peerId: peerId,
+        keypair: keyBytes,
         contacts: contacts,
       );
     }
@@ -112,8 +115,18 @@ class SettingsController with ChangeNotifier {
     inputDevice = options.getString('inputDevice');
     playCustomRingtones = options.getBool('playCustomRingtones') ?? true;
     customRingtoneFile = options.getString('customRingtoneFile');
-    networkConfig = await loadNetworkConfig();
     denoiseModel = options.getString('denoiseModel');
+
+    NetworkConfig? config = await loadNetworkConfig();
+
+    if (config != null) {
+      networkConfig = config;
+    } else {
+      networkConfig = NetworkConfig(
+          relayAddress: '5.78.76.47:40142',
+          relayId: '12D3KooWMpeKAbMK4BTPsQY3rG7XwtdstseHGcq7kffY8LToYYKK');
+      await saveNetworkConfig();
+    }
 
     notifyListeners();
   }
@@ -121,10 +134,9 @@ class SettingsController with ChangeNotifier {
   /// This function can raise [DartError] if the verifying key is invalid
   Future<Contact> addContact(
     String nickname,
-    String verifyingKey,
+    String peerId,
   ) async {
-    List<int> verifyingKeyBytes = base64Decode(verifyingKey);
-    Contact contact = Contact(nickname: nickname, keyBytes: verifyingKeyBytes);
+    Contact contact = Contact(nickname: nickname, peerId: peerId);
     contacts[contact.id()] = contact;
 
     await saveContacts();
@@ -157,7 +169,7 @@ class SettingsController with ChangeNotifier {
     for (MapEntry<String, Contact> entry in contacts.entries) {
       Map<String, dynamic> contact = {};
       contact['nickname'] = entry.value.nickname();
-      contact['verifyingKey'] = entry.value.verifyingKey();
+      contact['peerId'] = entry.value.peerId();
       contactsMap[entry.key] = contact;
     }
 
@@ -240,18 +252,22 @@ class SettingsController with ChangeNotifier {
   }
 
   Future<String> createProfile(String nickname) async {
-    U8Array64 keypair = generateKeys();
+    String peerId;
+    Uint8List keypair;
+
+    (peerId, keypair) = generateKeys();
     String id = const Uuid().v4();
 
-    await storage.write(key: '$id-key', value: base64Encode(keypair));
+    await storage.write(key: '$id-keypair', value: base64Encode(keypair));
+    await storage.write(key: '$id-peerId', value: peerId);
     await storage.write(key: '$id-contacts', value: jsonEncode({}));
     await storage.write(key: '$id-nickname', value: nickname);
 
     profiles[id] = Profile(
       id: id,
       nickname: nickname,
-      signingKey: keypair.getRange(0, 32).toList(),
-      verifyingKey: keypair.getRange(32, 64).toList(),
+      peerId: peerId,
+      keypair: keypair,
       contacts: {},
     );
 
@@ -265,9 +281,10 @@ class SettingsController with ChangeNotifier {
     profiles.remove(id);
     await options.setStringList('profiles', profiles.keys.toList());
 
-    await storage.delete(key: '$id-key');
+    await storage.delete(key: '$id-keypair');
+    await storage.delete(key: '$id-peerId');
     await storage.delete(key: '$id-contacts');
-    await storage.delete(key: '$id-name');
+    await storage.delete(key: '$id-nickname');
 
     if (activeProfile == id) {
       await setActiveProfile(profiles.keys.first);
@@ -302,11 +319,11 @@ class SettingsController with ChangeNotifier {
       Map<String, dynamic> contactsMap = jsonDecode(contactsStr);
       contactsMap.forEach((id, value) {
         String nickname = value['nickname'];
-        List<int> verifyingKey = value['verifyingKey'].cast<int>();
+        String peerId = value['peerId'];
 
         try {
-          contacts[id] = Contact.fromParts(
-              id: id, nickname: nickname, verifyingKey: verifyingKey);
+          contacts[id] =
+              Contact.fromParts(id: id, nickname: nickname, peerId: peerId);
         } on DartError catch (e) {
           DebugConsole.warning('invalid contact format: $e');
           return;
@@ -317,37 +334,48 @@ class SettingsController with ChangeNotifier {
     return contacts;
   }
 
-  Future<NetworkConfig> loadNetworkConfig() async {
+  Future<NetworkConfig?> loadNetworkConfig() async {
     String? networkConfigStr = options.getString('networkConfig');
 
     try {
       if (networkConfigStr != null) {
-        Map<String, dynamic> obj = jsonDecode(networkConfigStr);
+        Map<String, dynamic> networkConfig = jsonDecode(networkConfigStr);
         return NetworkConfig(
-            stunServers: obj['stun_servers'], matchMaker: obj['match_maker']);
+          relayAddress: networkConfig['relayAddress'],
+          relayId: networkConfig['relayId'],
+        );
       }
     } on DartError catch (e) {
       DebugConsole.warning('invalid network config format: $e');
+    } catch (e) {
+      DebugConsole.warning('error loading network config: $e');
     }
 
-    return NetworkConfig(
-        stunServers: ['stun:stun.l.google.com:19302'],
-        matchMaker: 'match-maker.chanchan.dev:8957');
+    return null;
+  }
+
+  Future<void> saveNetworkConfig() async {
+    Map<String, dynamic> map = {
+      'relayAddress': await networkConfig.getRelay(),
+      'relayId': await networkConfig.getRelayId(),
+    };
+
+    await options.setString('networkConfig', jsonEncode(map));
   }
 }
 
 class Profile {
   final String id;
   final String nickname;
-  final List<int> signingKey;
-  final List<int> verifyingKey;
+  final String peerId;
+  final List<int> keypair;
   final Map<String, Contact> contacts;
 
   Profile({
     required this.id,
     required this.nickname,
-    required this.signingKey,
-    required this.verifyingKey,
+    required this.peerId,
+    required this.keypair,
     required this.contacts,
   });
 }
