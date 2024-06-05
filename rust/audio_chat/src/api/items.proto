@@ -40,6 +40,15 @@ message Attachment {
   required bytes data = 2;
 }
 
+// Alerts the other client that the connection has been interrupted
+message ConnectionInterrupted {}
+
+// Alerts the other client that the connection has been restored
+message ConnectionRestored {}
+
+// A message used to keep the connection active
+message KeepAlive {}
+
 // Messages used by controllers
 message Message {
   oneof message {
@@ -49,5 +58,8 @@ message Message {
     Busy busy = 4;
     Goodbye goodbye = 5;
     Chat chat = 6;
+    ConnectionInterrupted connection_interrupted = 7;
+    ConnectionRestored connection_restored = 8;
+    KeepAlive keep_alive = 9;
   }
 }

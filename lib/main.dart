@@ -7,14 +7,17 @@ import 'package:audio_chat/src/rust/api/contact.dart';
 import 'package:audio_chat/src/rust/api/error.dart';
 import 'package:audio_chat/src/rust/api/logger.dart';
 import 'package:audio_chat/src/rust/api/player.dart';
+import 'package:audio_chat/src/rust/api/overlay/overlay.dart';
 import 'package:audio_chat/src/rust/frb_generated.dart';
 import 'package:audio_chat/settings/controller.dart';
 import 'package:debug_console/debug_console.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Overlay;
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'audio_level.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 SoundHandle? outgoingSoundHandle;
@@ -48,6 +51,17 @@ Future<void> main() async {
   final StateController stateController = StateController();
   final StatisticsController statisticsController = StatisticsController();
 
+  final Overlay overlay = await Overlay.newInstance(
+    enabled: settingsController.overlayConfig.enabled,
+    x: settingsController.overlayConfig.x.round(),
+    y: settingsController.overlayConfig.y.round(),
+    width: settingsController.overlayConfig.width.round(),
+    height: settingsController.overlayConfig.height.round(),
+    fontHeight: settingsController.overlayConfig.fontHeight,
+    backgroundColor: argb(settingsController.overlayConfig.backgroundColor),
+    fontColor: argb(settingsController.overlayConfig.fontColor),
+  );
+
   final soundPlayer = SoundPlayer(outputVolume: settingsController.soundVolume);
   soundPlayer.updateOutputDevice(name: settingsController.outputDevice);
   soundPlayer.updateOutputVolume(volume: settingsController.outputVolume);
@@ -60,6 +74,7 @@ Future<void> main() async {
       identity: settingsController.keypair,
       host: host,
       networkConfig: settingsController.networkConfig,
+      overlay: overlay,
       // called when there is an incoming call
       acceptCall: (String id, Uint8List? ringtone, DartNotify cancel) async {
         Contact? contact = settingsController.getContact(id);
@@ -137,7 +152,7 @@ Future<void> main() async {
         try {
           Contact? contact = settingsController.contacts.values
               .firstWhere((Contact contact) => contact.idEq(id: peerId));
-          return contact?.pubClone();
+          return contact.pubClone();
         } catch (_) {
           return null;
         }
@@ -150,21 +165,27 @@ Future<void> main() async {
         await soundPlayer.play(bytes: bytes);
 
         stateController.setStatus('Active');
+        stateController.callDisconnected = false;
       },
+      // TODO use a handle to cancel the sound as needed
       // called when the call disconnects or reconnects
       callState: (bool disconnected) async {
-        if (disconnected && stateController.isCallActive) {
+        if (disconnected &&
+            stateController.isCallActive &&
+            !stateController.callDisconnected) {
           List<int> bytes = await readWavBytes('disconnected');
           await soundPlayer.play(bytes: bytes);
 
           stateController.setStatus('Reconnecting');
-        } else if (!disconnected && stateController.isCallActive) {
+          stateController.callDisconnected = true;
+        } else if (!disconnected &&
+            stateController.isCallActive &&
+            stateController.callDisconnected) {
           List<int> bytes = await readWavBytes('reconnected');
           await soundPlayer.play(bytes: bytes);
 
           stateController.setStatus('Active');
-        } else {
-          DebugConsole.warning('callState entered but there is no active call');
+          stateController.callDisconnected = false;
         }
       },
       // called when a session changes status
@@ -215,12 +236,14 @@ Future<void> main() async {
   }
 
   runApp(AudioChatApp(
-      audioChat: audioChat,
-      settingsController: settingsController,
-      callStateController: stateController,
-      player: soundPlayer,
-      messageBus: messageBus,
-      statisticsController: statisticsController));
+    audioChat: audioChat,
+    settingsController: settingsController,
+    callStateController: stateController,
+    player: soundPlayer,
+    messageBus: messageBus,
+    statisticsController: statisticsController,
+    overlay: overlay,
+  ));
 }
 
 /// The main app
@@ -231,6 +254,7 @@ class AudioChatApp extends StatelessWidget {
   final StatisticsController statisticsController;
   final SoundPlayer player;
   final MessageBus messageBus;
+  final Overlay overlay;
 
   const AudioChatApp(
       {super.key,
@@ -239,7 +263,8 @@ class AudioChatApp extends StatelessWidget {
       required this.callStateController,
       required this.player,
       required this.messageBus,
-      required this.statisticsController});
+      required this.statisticsController,
+      required this.overlay});
 
   @override
   Widget build(BuildContext context) {
@@ -264,27 +289,27 @@ class AudioChatApp extends StatelessWidget {
           tertiaryContainer: Color(0xFF27292A),
         ),
         switchTheme: SwitchThemeData(
-          trackOutlineWidth: MaterialStateProperty.all(0),
-          trackOutlineColor: MaterialStateProperty.all(Colors.transparent),
-          overlayColor: MaterialStateProperty.all(Colors.transparent),
-          thumbColor:
-              MaterialStateProperty.all(Theme.of(context).indicatorColor),
+          trackOutlineWidth: WidgetStateProperty.all(0),
+          trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
+          overlayColor: WidgetStateProperty.all(Colors.transparent),
+          thumbColor: WidgetStateProperty.all(Theme.of(context).indicatorColor),
         ),
         dropdownMenuTheme: DropdownMenuThemeData(
           menuStyle: MenuStyle(
-            backgroundColor: MaterialStateProperty.all(const Color(0xFF191919)),
-            surfaceTintColor:
-                MaterialStateProperty.all(const Color(0xFF191919)),
+            backgroundColor: WidgetStateProperty.all(const Color(0xFF191919)),
+            surfaceTintColor: WidgetStateProperty.all(const Color(0xFF191919)),
           ),
         ),
       ),
       home: HomePage(
-          audioChat: audioChat,
-          settingsController: settingsController,
-          stateController: callStateController,
-          player: player,
-          messageBus: messageBus,
-          statisticsController: statisticsController),
+        audioChat: audioChat,
+        settingsController: settingsController,
+        stateController: callStateController,
+        player: player,
+        messageBus: messageBus,
+        statisticsController: statisticsController,
+        overlay: overlay,
+      ),
     );
   }
 }
@@ -297,6 +322,7 @@ class HomePage extends StatelessWidget {
   final StatisticsController statisticsController;
   final SoundPlayer player;
   final MessageBus messageBus;
+  final Overlay overlay;
 
   const HomePage(
       {super.key,
@@ -305,7 +331,8 @@ class HomePage extends StatelessWidget {
       required this.stateController,
       required this.player,
       required this.messageBus,
-      required this.statisticsController});
+      required this.statisticsController,
+      required this.overlay});
 
   @override
   Widget build(BuildContext context) {
@@ -363,12 +390,14 @@ class HomePage extends StatelessWidget {
     PeriodicNotifier notifier = PeriodicNotifier();
 
     CallControls callControls = CallControls(
-        audioChat: audioChat,
-        settingsController: settingsController,
-        stateController: stateController,
-        statisticsController: statisticsController,
-        player: player,
-        notifier: notifier);
+      audioChat: audioChat,
+      settingsController: settingsController,
+      stateController: stateController,
+      statisticsController: statisticsController,
+      player: player,
+      notifier: notifier,
+      overlay: overlay,
+    );
 
     return DebugConsolePopup(
         child: Scaffold(
@@ -439,7 +468,7 @@ class ContactForm extends StatefulWidget {
 /// The state for ContactForm
 class ContactFormState extends State<ContactForm> {
   final TextEditingController _nicknameInput = TextEditingController();
-  final TextEditingController _verifyingKeyInput = TextEditingController();
+  final TextEditingController _peerIdInput = TextEditingController();
 
   @override
   Widget build(BuildContext context) {
@@ -457,9 +486,9 @@ class ContactFormState extends State<ContactForm> {
           TextInput(controller: _nicknameInput, labelText: 'Nickname'),
           const SizedBox(height: 15),
           TextInput(
-              controller: _verifyingKeyInput,
-              labelText: 'Verifying Key',
-              hintText: 'base64 encoded verifying key',
+              controller: _peerIdInput,
+              labelText: 'Peer ID',
+              hintText: 'string encoded peer ID',
               obscureText: true),
           const SizedBox(height: 26),
           Center(
@@ -467,23 +496,33 @@ class ContactFormState extends State<ContactForm> {
               text: 'Add Contact',
               disabled: false,
               onPressed: () async {
-                if (_nicknameInput.text.isEmpty ||
-                    _verifyingKeyInput.text.isEmpty) {
+                String nickname = _nicknameInput.text;
+                String peerId = _peerIdInput.text;
+
+                if (nickname.isEmpty || peerId.isEmpty) {
                   showErrorDialog(context, 'Failed to add contact',
-                      'Nickname and verifying key cannot be empty');
+                      'Nickname and peer id cannot be empty');
+                  return;
+                } else if (widget.settingsController.contacts.keys
+                    .contains(peerId)) {
+                  showErrorDialog(context, 'Failed to add contact',
+                      'Contact for peer ID already exists');
+                  return;
+                } else if (widget.settingsController.peerId == peerId) {
+                  showErrorDialog(context, 'Failed to add contact',
+                      'Cannot add self as a contact');
                   return;
                 }
 
                 try {
-                  Contact contact = await widget.settingsController
-                      .addContact(_nicknameInput.text, _verifyingKeyInput.text);
+                  Contact contact =
+                      widget.settingsController.addContact(nickname, peerId);
 
                   widget.audioChat.startSession(contact: contact);
 
                   _nicknameInput.clear();
-                  _verifyingKeyInput.clear();
+                  _peerIdInput.clear();
                 } on DartError catch (e) {
-                  if (!context.mounted) return;
                   showErrorDialog(context, 'Failed to add contact', e.message);
                 }
               },
@@ -514,8 +553,7 @@ class ContactsList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.only(
-          bottom: 15.0, left: 12.0, right: 12.0, top: 8.0),
+      padding: const EdgeInsets.only(bottom: 15, left: 12, right: 12, top: 8),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.secondaryContainer,
         borderRadius: BorderRadius.circular(10.0),
@@ -524,34 +562,16 @@ class ContactsList extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8.0),
-              child: Row(
-                children: [
-                  const Text("Contacts", style: TextStyle(fontSize: 20)),
-                  const SizedBox(width: 10),
-                  IconButton(
-                      onPressed: () {
-                        Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => EditContacts(
-                                  settingsController: settingsController,
-                                  stateController: stateController,
-                                  audioChat: audioChat,
-                                  contacts: contacts),
-                            ));
-                      },
-                      icon: const Icon(Icons.edit))
-                ],
-              )),
+          const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+              child: Text("Contacts", style: TextStyle(fontSize: 20))),
           const SizedBox(height: 10.0),
           Flexible(
             fit: FlexFit.loose,
             child: Container(
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.tertiaryContainer,
-                borderRadius: BorderRadius.circular(10.0),
+                borderRadius: BorderRadius.circular(10),
               ),
               child: ListView.builder(
                 itemCount: contacts.length,
@@ -560,10 +580,12 @@ class ContactsList extends StatelessWidget {
                       listenable: stateController,
                       builder: (BuildContext context, Widget? child) {
                         return ContactWidget(
-                            contact: contacts[index],
-                            audioChat: audioChat,
-                            controller: stateController,
-                            player: player);
+                          contact: contacts[index],
+                          audioChat: audioChat,
+                          stateController: stateController,
+                          player: player,
+                          settingsController: settingsController,
+                        );
                       });
                 },
               ),
@@ -576,39 +598,172 @@ class ContactsList extends StatelessWidget {
 }
 
 /// A widget which displays a single contact
-class ContactWidget extends StatelessWidget {
+class ContactWidget extends StatefulWidget {
   final Contact contact;
   final AudioChat audioChat;
-  final StateController controller;
+  final StateController stateController;
+  final SettingsController settingsController;
   final SoundPlayer player;
 
   const ContactWidget(
       {super.key,
       required this.contact,
       required this.audioChat,
-      required this.controller,
-      required this.player});
+      required this.stateController,
+      required this.player,
+      required this.settingsController});
+
+  @override
+  State<StatefulWidget> createState() => ContactWidgetState();
+}
+
+class ContactWidgetState extends State<ContactWidget> {
+  bool isHovered = false;
+  late TextEditingController _nicknameInput;
+
+  @override
+  void initState() {
+    super.initState();
+    _nicknameInput = TextEditingController(text: widget.contact.nickname());
+  }
+
+  @override
+  void dispose() {
+    _nicknameInput.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    bool online = controller.isOnlineContact(contact);
-    bool active = controller.isActiveContact(contact);
-    String status = controller.sessions[contact.peerId()] ?? 'Unknown';
+    bool online = widget.stateController.isOnlineContact(widget.contact);
+    bool active = widget.stateController.isActiveContact(widget.contact);
+    String status =
+        widget.stateController.sessions[widget.contact.peerId()] ?? 'Unknown';
 
+    // TODO refactor this with the new syntax i learned
     List<Widget> widgets = [
       const CircleAvatar(
         maxRadius: 17,
         child: Icon(Icons.person),
       ),
       const SizedBox(width: 10),
-      Text(contact.nickname(), style: const TextStyle(fontSize: 16)),
-      const Spacer(),
+      Text(widget.contact.nickname(), style: const TextStyle(fontSize: 16)),
     ];
+
+    if (isHovered) {
+      widgets.add(const SizedBox(width: 10));
+      widgets.add(IconButton(
+          onPressed: () {
+            showDialog(
+                barrierDismissible: false,
+                context: context,
+                builder: (BuildContext context) {
+                  return SimpleDialog(
+                    title: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('Edit Contact'),
+                        IconButton(
+                          onPressed: () async {
+                            if (!widget.stateController
+                                .isActiveContact(widget.contact)) {
+                              bool confirm = await showDialog<bool>(
+                                      context: context,
+                                      builder: (BuildContext context) {
+                                        return SimpleDialog(
+                                          title: const Text('Warning'),
+                                          contentPadding: const EdgeInsets.only(
+                                              bottom: 25, left: 25, right: 25),
+                                          titlePadding: const EdgeInsets.only(
+                                              top: 25,
+                                              left: 25,
+                                              right: 25,
+                                              bottom: 20),
+                                          children: [
+                                            const Text(
+                                                'Are you sure you want to delete this contact?'),
+                                            const SizedBox(height: 20),
+                                            Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.end,
+                                              children: [
+                                                Button(
+                                                  text: 'Cancel',
+                                                  onPressed: () {
+                                                    Navigator.pop(
+                                                        context, false);
+                                                  },
+                                                  disabled: false,
+                                                ),
+                                                const SizedBox(width: 10),
+                                                Button(
+                                                  text: 'Delete',
+                                                  onPressed: () {
+                                                    Navigator.pop(
+                                                        context, true);
+                                                  },
+                                                  disabled: false,
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                        );
+                                      }) ??
+                                  false;
+
+                              if (confirm) {
+                                widget.settingsController
+                                    .removeContact(widget.contact);
+                                widget.audioChat
+                                    .stopSession(contact: widget.contact);
+                                widget.settingsController.saveContacts();
+                              }
+
+                              if (context.mounted) Navigator.pop(context);
+                            } else {
+                              showErrorDialog(context, 'Warning',
+                                  'Cannot delete a contact while in an active call');
+                            }
+                          },
+                          icon: const Icon(Icons.delete),
+                        ),
+                      ],
+                    ),
+                    contentPadding:
+                        const EdgeInsets.only(bottom: 25, left: 25, right: 25),
+                    titlePadding: const EdgeInsets.only(
+                        top: 25, left: 25, right: 25, bottom: 20),
+                    children: [
+                      TextInput(
+                          enabled: !widget.stateController
+                              .isActiveContact(widget.contact),
+                          controller: _nicknameInput,
+                          labelText: 'Nickname',
+                          onChanged: (value) {
+                            widget.contact.setNickname(nickname: value);
+                          }),
+                      const SizedBox(height: 20),
+                      Button(
+                        text: 'Save',
+                        onPressed: () {
+                          widget.settingsController.saveContacts();
+                          Navigator.pop(context);
+                        },
+                        disabled: false,
+                      ),
+                    ],
+                  );
+                });
+          },
+          icon: const Icon(Icons.edit)));
+    }
+
+    widgets.add(const Spacer());
 
     if (status == 'Inactive') {
       widgets.add(IconButton(
           onPressed: () {
-            audioChat.startSession(contact: contact);
+            widget.audioChat.startSession(contact: widget.contact);
           },
           icon: const Icon(Icons.refresh)));
       widgets.add(const SizedBox(width: 4));
@@ -630,41 +785,41 @@ class ContactWidget extends StatelessWidget {
         onPressed: () async {
           outgoingSoundHandle?.cancel();
 
-          audioChat.endCall();
-          controller.setActiveContact(null);
-          controller.setStatus('Inactive');
-          controller.disableCallsTemporarily();
+          widget.audioChat.endCall();
+          widget.stateController.setActiveContact(null);
+          widget.stateController.setStatus('Inactive');
+          widget.stateController.disableCallsTemporarily();
 
           List<int> bytes = await readWavBytes('call_ended');
-          await player.play(bytes: bytes);
+          await widget.player.play(bytes: bytes);
         },
       ));
     } else {
       widgets.add(IconButton(
         icon: const Icon(Icons.call),
         onPressed: () async {
-          if (controller.isCallActive) {
+          if (widget.stateController.isCallActive) {
             showErrorDialog(
                 context, 'Call failed', 'There is a call already active');
             return;
-          } else if (controller.inAudioTest) {
+          } else if (widget.stateController.inAudioTest) {
             showErrorDialog(context, 'Call failed',
                 'Cannot make a call while in an audio test');
             return;
-          } else if (controller.callEndedRecently) {
+          } else if (widget.stateController.callEndedRecently) {
             // if the call button is pressed right after a call ended, we assume the user did not want to make a call
             return;
           }
 
-          controller.setStatus('Connecting');
+          widget.stateController.setStatus('Connecting');
           List<int> bytes = await readWavBytes('outgoing');
-          outgoingSoundHandle = await player.play(bytes: bytes);
+          outgoingSoundHandle = await widget.player.play(bytes: bytes);
 
           try {
-            await audioChat.sayHello(contact: contact);
-            controller.setActiveContact(contact);
+            await widget.audioChat.sayHello(contact: widget.contact);
+            widget.stateController.setActiveContact(widget.contact);
           } on DartError catch (e) {
-            controller.setStatus('Inactive');
+            widget.stateController.setStatus('Inactive');
             outgoingSoundHandle?.cancel();
             if (!context.mounted) return;
             showErrorDialog(context, 'Call failed', e.message);
@@ -673,16 +828,25 @@ class ContactWidget extends StatelessWidget {
       ));
     }
 
-    return Container(
-      margin: const EdgeInsets.all(5.0),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.secondaryContainer,
-        borderRadius: BorderRadius.circular(10.0),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6.5),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: widgets,
+    return InkWell(
+      onHover: (hover) {
+        setState(() {
+          isHovered = hover;
+        });
+      },
+      // on tap is required for on hover to work for some reason
+      onTap: () {},
+      child: Container(
+        margin: const EdgeInsets.all(5.0),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.secondaryContainer,
+          borderRadius: BorderRadius.circular(10.0),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6.5),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: widgets,
+        ),
       ),
     );
   }
@@ -696,6 +860,7 @@ class CallControls extends StatelessWidget {
   final StatisticsController statisticsController;
   final SoundPlayer player;
   final PeriodicNotifier notifier;
+  final Overlay overlay;
 
   const CallControls(
       {super.key,
@@ -704,7 +869,8 @@ class CallControls extends StatelessWidget {
       required this.stateController,
       required this.player,
       required this.statisticsController,
-      required this.notifier});
+      required this.notifier,
+      required this.overlay});
 
   @override
   Widget build(BuildContext context) {
@@ -885,11 +1051,13 @@ class CallControls extends StatelessWidget {
                               context,
                               MaterialPageRoute(
                                 builder: (context) => SettingsPage(
-                                    controller: settingsController,
-                                    audioChat: audioChat,
-                                    stateController: stateController,
-                                    statisticsController: statisticsController,
-                                    player: player),
+                                  controller: settingsController,
+                                  audioChat: audioChat,
+                                  stateController: stateController,
+                                  statisticsController: statisticsController,
+                                  player: player,
+                                  overlay: overlay,
+                                ),
                               ));
                         },
                         icon: const Icon(Icons.settings)),
@@ -900,129 +1068,6 @@ class CallControls extends StatelessWidget {
               ))
         ],
       ),
-    );
-  }
-}
-
-/// A widget which contains a EditContactWidget for each contact
-class EditContacts extends StatelessWidget {
-  final SettingsController settingsController;
-  final StateController stateController;
-  final AudioChat audioChat;
-  final List<Contact> contacts;
-
-  const EditContacts(
-      {super.key,
-      required this.settingsController,
-      required this.stateController,
-      required this.audioChat,
-      required this.contacts});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Edit Contacts'),
-        backgroundColor: Theme.of(context).colorScheme.background,
-      ),
-      body: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                  fit: FlexFit.loose,
-                  child: ListenableBuilder(
-                      listenable: settingsController,
-                      builder: (BuildContext context, Widget? child) {
-                        return ListView.builder(
-                            itemCount: contacts.length,
-                            itemBuilder: (BuildContext context, int index) {
-                              Contact contact = contacts[index];
-
-                              return EditContactWidget(
-                                  contact: contact,
-                                  audioChat: audioChat,
-                                  settingsController: settingsController,
-                                  stateController: stateController);
-                            });
-                      })),
-              ContactForm(
-                  audioChat: audioChat, settingsController: settingsController)
-            ],
-          )),
-    );
-  }
-}
-
-/// A widget which allows the user to edit a contact
-class EditContactWidget extends StatefulWidget {
-  final Contact contact;
-  final SettingsController settingsController;
-  final StateController stateController;
-  final AudioChat audioChat;
-
-  const EditContactWidget(
-      {super.key,
-      required this.contact,
-      required this.settingsController,
-      required this.audioChat,
-      required this.stateController});
-
-  @override
-  State<StatefulWidget> createState() => EditContactWidgetState();
-}
-
-/// The state for EditContactWidget
-class EditContactWidgetState extends State<EditContactWidget> {
-  late final TextEditingController _nicknameInput;
-
-  @override
-  void initState() {
-    super.initState();
-    _nicknameInput = TextEditingController(text: widget.contact.nickname());
-  }
-
-  @override
-  void dispose() {
-    _nicknameInput.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.all(5.0),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.secondaryContainer,
-        borderRadius: BorderRadius.circular(10.0),
-      ),
-      child: ListTile(
-          title: Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: TextInput(
-                enabled:
-                    !widget.stateController.isActiveContact(widget.contact),
-                controller: _nicknameInput,
-                labelText: 'Nickname',
-                onChanged: (value) {
-                  widget.settingsController
-                      .updateContactNickname(widget.contact, value);
-                  DebugConsole.debug(
-                      'nickname updated ${widget.contact.nickname()}');
-                }),
-          ),
-          trailing: IconButton(
-              onPressed: () {
-                if (!widget.stateController.isActiveContact(widget.contact)) {
-                  widget.settingsController.removeContact(widget.contact);
-                  widget.audioChat.stopSession(contact: widget.contact);
-                } else {
-                  showErrorDialog(context, 'Warning',
-                      'Cannot delete a contact while in an active call');
-                }
-              },
-              icon: const Icon(Icons.delete))),
     );
   }
 }
@@ -1193,6 +1238,24 @@ class CallDetailsWidget extends StatelessWidget {
                 return Text('Call ${stateController.status.toLowerCase()}',
                     style: const TextStyle(fontSize: 20));
               }),
+          const SizedBox(height: 8),
+          ListenableBuilder(
+              listenable: statisticsController,
+              builder: (BuildContext context, Widget? child) {
+                Color color = getColor(statisticsController.loss);
+                return Row(
+                  children: [
+                    const Text(
+                      'Loss: ',
+                      style: TextStyle(fontSize: 17),
+                    ),
+                    Text(
+                      '${(statisticsController.loss * 100).toStringAsFixed(1)}%',
+                      style: TextStyle(color: color, fontSize: 17),
+                    ),
+                  ],
+                );
+              }),
           const Spacer(),
           const Text('Input level'),
           const SizedBox(height: 7),
@@ -1218,16 +1281,7 @@ class CallDetailsWidget extends StatelessWidget {
               ListenableBuilder(
                   listenable: statisticsController,
                   builder: (BuildContext context, Widget? child) {
-                    Color color;
-
-                    if (statisticsController.latency < 50) {
-                      color = Colors.green;
-                    } else if (statisticsController.latency < 150) {
-                      color = Colors.yellow;
-                    } else {
-                      color = Colors.red;
-                    }
-
+                    Color color = getColor(statisticsController.latency / 200);
                     return Icon(Icons.monitor_heart_rounded, color: color);
                   }),
               const SizedBox(width: 7),
@@ -1271,6 +1325,7 @@ class Button extends StatelessWidget {
   final double? width;
   final double? height;
   final bool disabled;
+  final Color? disabledColor;
 
   const Button(
       {super.key,
@@ -1278,7 +1333,8 @@ class Button extends StatelessWidget {
       required this.onPressed,
       this.width,
       this.height,
-      required this.disabled});
+      required this.disabled,
+      this.disabledColor});
 
   @override
   Widget build(BuildContext context) {
@@ -1302,17 +1358,16 @@ class Button extends StatelessWidget {
       },
       style: ButtonStyle(
         backgroundColor: disabled
-            ? MaterialStateProperty.all(Colors.grey)
-            : MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
-        foregroundColor: MaterialStateProperty.all(Colors.white),
+            ? WidgetStateProperty.all(disabledColor ?? Colors.grey)
+            : WidgetStateProperty.all(Theme.of(context).colorScheme.primary),
+        foregroundColor: WidgetStateProperty.all(Colors.white),
         overlayColor: disabled
-            ? MaterialStateProperty.all(Colors.grey)
-            : MaterialStateProperty.all(
-                Theme.of(context).colorScheme.secondary),
-        surfaceTintColor: MaterialStateProperty.all(Colors.transparent),
+            ? WidgetStateProperty.all(disabledColor ?? Colors.grey)
+            : WidgetStateProperty.all(Theme.of(context).colorScheme.secondary),
+        surfaceTintColor: WidgetStateProperty.all(Colors.transparent),
         mouseCursor: disabled
-            ? MaterialStateProperty.all(SystemMouseCursors.basic)
-            : MaterialStateProperty.all(SystemMouseCursors.click),
+            ? WidgetStateProperty.all(SystemMouseCursors.basic)
+            : WidgetStateProperty.all(SystemMouseCursors.click),
       ),
       child: child,
     );
@@ -1395,6 +1450,7 @@ class StateController extends ChangeNotifier {
   bool _muted = false;
   bool inAudioTest = false;
   bool _callEndedRecently = false;
+  bool callDisconnected = false;
   final Stopwatch _callTimer = Stopwatch();
 
   /// peerId, status
@@ -1486,14 +1542,16 @@ class StateController extends ChangeNotifier {
 class StatisticsController extends ChangeNotifier {
   Statistics? _statistics;
 
-  int get latency => _statistics == null ? 0 : _statistics!.latency;
+  int get latency => _statistics == null ? 0 : _statistics!.latency.toInt();
   double get inputLevel => _statistics == null ? 0 : _statistics!.inputLevel;
   double get outputLevel => _statistics == null ? 0 : _statistics!.outputLevel;
-  String get upload =>
-      _statistics == null ? '?' : formatBandwidth(_statistics!.uploadBandwidth);
+  String get upload => _statistics == null
+      ? '?'
+      : formatBandwidth(_statistics!.uploadBandwidth.toInt());
   String get download => _statistics == null
       ? '?'
-      : formatBandwidth(_statistics!.downloadBandwidth);
+      : formatBandwidth(_statistics!.downloadBandwidth.toInt());
+  double get loss => _statistics == null ? 0 : _statistics!.loss;
 
   void setStatistics(Statistics statistics) {
     _statistics = statistics;

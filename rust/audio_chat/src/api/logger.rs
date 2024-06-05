@@ -9,7 +9,7 @@ use fast_log::Config;
 use flutter_rust_bridge::frb;
 use gag::Redirect;
 use lazy_static::lazy_static;
-use log::{info, warn, LevelFilter};
+use log::{info, LevelFilter, warn};
 use parking_lot::RwLock;
 
 use crate::frb_generated::StreamSink;
@@ -54,7 +54,7 @@ pub fn init_logger() {
 
         #[cfg(target_os = "android")]
         {
-            config = config.custom(SendToDartLogger);
+            config = config.custom(SendToDartLogger {});
         }
 
         fast_log::init(config).unwrap();

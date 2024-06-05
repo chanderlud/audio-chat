@@ -54,12 +54,17 @@ class SettingsController with ChangeNotifier {
   /// the network configuration
   late NetworkConfig networkConfig;
 
+  /// the overlay configuration
+  late OverlayConfig overlayConfig;
+
   /// the name of a denoise model
   late String? denoiseModel;
 
-  get contacts => profiles[activeProfile]!.contacts;
+  Map<String, Contact> get contacts => profiles[activeProfile]!.contacts;
 
-  get keypair => profiles[activeProfile]!.keypair;
+  List<int> get keypair => profiles[activeProfile]!.keypair;
+
+  String get peerId => profiles[activeProfile]!.peerId;
 
   Future<void> init() async {
     // initialize an empty map for profiles
@@ -117,31 +122,21 @@ class SettingsController with ChangeNotifier {
     customRingtoneFile = options.getString('customRingtoneFile');
     denoiseModel = options.getString('denoiseModel');
 
-    NetworkConfig? config = await loadNetworkConfig();
-
-    if (config != null) {
-      networkConfig = config;
-    } else {
-      networkConfig = NetworkConfig(
-          relayAddress: '5.78.76.47:40142',
-          relayId: '12D3KooWMpeKAbMK4BTPsQY3rG7XwtdstseHGcq7kffY8LToYYKK');
-      await saveNetworkConfig();
-    }
+    networkConfig = loadNetworkConfig();
+    overlayConfig = loadOverlayConfig();
 
     notifyListeners();
   }
 
   /// This function can raise [DartError] if the verifying key is invalid
-  Future<Contact> addContact(
+  Contact addContact(
     String nickname,
     String peerId,
-  ) async {
+  ) {
     Contact contact = Contact(nickname: nickname, peerId: peerId);
     contacts[contact.id()] = contact;
 
-    await saveContacts();
-    notifyListeners();
-
+    saveContacts();
     return contact;
   }
 
@@ -149,20 +144,16 @@ class SettingsController with ChangeNotifier {
     return contacts[id];
   }
 
-  Future<void> updateContactNickname(Contact contact, String nickname) async {
-    contact.setNickname(nickname: nickname);
-    await saveContacts();
-    notifyListeners();
-  }
-
-  Future<void> removeContact(Contact contact) async {
+  void removeContact(Contact contact) {
     contacts.remove(contact.id());
-    await saveContacts();
-    notifyListeners();
+    saveContacts();
   }
 
   /// Saves the contacts for activeProfile
   Future<void> saveContacts() async {
+    // notify listeners right away because the contacts are already updated
+    notifyListeners();
+
     // serialized contacts
     Map<String, Map<String, dynamic>> contactsMap = {};
 
@@ -334,34 +325,89 @@ class SettingsController with ChangeNotifier {
     return contacts;
   }
 
-  Future<NetworkConfig?> loadNetworkConfig() async {
-    String? networkConfigStr = options.getString('networkConfig');
-
+  NetworkConfig loadNetworkConfig() {
     try {
-      if (networkConfigStr != null) {
-        Map<String, dynamic> networkConfig = jsonDecode(networkConfigStr);
-        return NetworkConfig(
-          relayAddress: networkConfig['relayAddress'],
-          relayId: networkConfig['relayId'],
-        );
-      }
+      return NetworkConfig(
+        relayAddress: options.getString('relayAddress') ?? '5.78.76.47:40142',
+        relayId: options.getString('relayId') ??
+            '12D3KooWMpeKAbMK4BTPsQY3rG7XwtdstseHGcq7kffY8LToYYKK',
+      );
     } on DartError catch (e) {
-      DebugConsole.warning('invalid network config format: $e');
-    } catch (e) {
-      DebugConsole.warning('error loading network config: $e');
+      DebugConsole.warning('invalid network config values: $e');
+      return NetworkConfig(relayAddress: '5.78.76.47:40142', relayId: '12D3KooWMpeKAbMK4BTPsQY3rG7XwtdstseHGcq7kffY8LToYYKK');
     }
-
-    return null;
   }
 
   Future<void> saveNetworkConfig() async {
-    Map<String, dynamic> map = {
-      'relayAddress': await networkConfig.getRelay(),
-      'relayId': await networkConfig.getRelayId(),
-    };
-
-    await options.setString('networkConfig', jsonEncode(map));
+    await options.setString('relayAddress', await networkConfig.getRelay());
+    await options.setString('relayId', await networkConfig.getRelayId());
   }
+
+  OverlayConfig loadOverlayConfig() {
+    try {
+      return OverlayConfig(
+        enabled: options.getBool('overlayEnabled') ?? false,
+        x: options.getDouble('overlayX') ?? 0,
+        y: options.getDouble('overlayY') ?? 0,
+        width: options.getDouble('overlayWidth') ?? 600,
+        height: options.getDouble('overlayHeight') ?? 38,
+        fontFamily: options.getString('overlayFontFamily') ?? 'Inconsolata',
+        fontColor: Color(options.getInt('overlayFontColor') ?? 0xFFFFFFFF),
+        fontHeight: options.getInt('overlayFontHeight') ?? 36,
+        backgroundColor: Color(options.getInt('overlayBackgroundColor') ?? 0x80000000),
+      );
+    } on DartError catch (e) {
+      DebugConsole.warning('invalid overlay config format: $e');
+
+      return OverlayConfig(
+        enabled: true,
+        x: 600,
+        y: 2,
+        width: 600,
+        height: 38,
+        fontFamily: 'Inconsolata',
+        fontColor: const Color(0xFFFFFFFF),
+        fontHeight: 36,
+        backgroundColor: const Color(0x80000000),
+      );
+    }
+  }
+
+  Future<void> saveOverlayConfig() async {
+    await options.setBool('overlayEnabled', overlayConfig.enabled);
+    await options.setDouble('overlayX', overlayConfig.x);
+    await options.setDouble('overlayY', overlayConfig.y);
+    await options.setDouble('overlayWidth', overlayConfig.width);
+    await options.setDouble('overlayHeight', overlayConfig.height);
+    await options.setString('overlayFontFamily', overlayConfig.fontFamily);
+    await options.setInt('overlayFontColor', overlayConfig.fontColor.value);
+    await options.setInt('overlayFontHeight', overlayConfig.fontHeight);
+    await options.setInt('overlayBackgroundColor', overlayConfig.backgroundColor.value);
+  }
+}
+
+class OverlayConfig {
+  bool enabled;
+  double x;
+  double y;
+  double width;
+  double height;
+  String fontFamily;
+  Color fontColor;
+  int fontHeight;
+  Color backgroundColor;
+
+  OverlayConfig({
+    required this.enabled,
+    required this.x,
+    required this.y,
+    required this.width,
+    required this.height,
+    required this.fontFamily,
+    required this.fontColor,
+    required this.fontHeight,
+    required this.backgroundColor,
+  });
 }
 
 class Profile {
@@ -378,4 +424,11 @@ class Profile {
     required this.keypair,
     required this.contacts,
   });
+}
+
+int argb(Color color) {
+  return (color.alpha << 24) |
+  (color.red << 16) |
+  (color.green << 8) |
+  color.blue;
 }

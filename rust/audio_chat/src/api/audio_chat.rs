@@ -1,34 +1,32 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::mem;
-use std::net::Ipv4Addr;
 pub use std::net::{IpAddr, SocketAddr};
+use std::net::Ipv4Addr;
 use std::str::FromStr;
-use std::sync::atomic::Ordering::Relaxed;
-use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::sync::atomic::Ordering::Relaxed;
 use std::time::Duration;
 
 use async_throttle::RateLimiter;
 use atomic_float::AtomicF32;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-pub use cpal::Host;
 use cpal::{Device, Stream as CpalStream};
-use flutter_rust_bridge::for_generated::futures::stream::{SplitSink, SplitStream};
+pub use cpal::Host;
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use flutter_rust_bridge::{DartFnFuture, frb, spawn, spawn_blocking_with};
 use flutter_rust_bridge::for_generated::futures::{Sink, SinkExt};
-use flutter_rust_bridge::{frb, spawn, spawn_blocking_with, DartFnFuture};
+use flutter_rust_bridge::for_generated::futures::stream::{SplitSink, SplitStream};
 use kanal::{
-    bounded, bounded_async, unbounded_async, AsyncReceiver, AsyncSender, Receiver, Sender,
+    AsyncReceiver, AsyncSender, bounded, bounded_async, Receiver, Sender, unbounded_async,
 };
+use libp2p::{dcutr, identify, Multiaddr, noise, PeerId, ping, Stream, StreamProtocol, tcp, yamux};
 use libp2p::futures::StreamExt;
 use libp2p::identity::Keypair;
 use libp2p::multiaddr::Protocol;
 use libp2p::swarm::SwarmEvent;
-use libp2p::{
-    autonat, dcutr, identify, noise, ping, tcp, yamux, Multiaddr, PeerId, Stream, StreamProtocol,
-};
 use libp2p_stream::Control;
 use log::{debug, error, info, warn};
-use nnnoiseless::{DenoiseState, RnnModel, FRAME_SIZE};
+use nnnoiseless::{DenoiseState, FRAME_SIZE, RnnModel};
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelRefMutIterator;
 use rubato::{
@@ -37,16 +35,18 @@ use rubato::{
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::select;
 use tokio::sync::{Mutex, Notify, RwLock};
-use tokio::time::{interval, timeout};
+use tokio::time::{Instant, interval, sleep_until, timeout};
 use tokio_util::bytes::Bytes;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tokio_util::compat::{Compat, FuturesAsyncReadCompatExt};
 
+use crate::{Behaviour, BehaviourEvent};
 use crate::api::contact::Contact;
 use crate::api::error::{DartError, Error, ErrorKind};
-use crate::api::items::{message, AudioHeader, Message};
+use crate::api::items::{AudioHeader, message, Message};
+use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
+use crate::api::overlay::overlay::Overlay;
 use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
-use crate::{Behaviour, BehaviourEvent};
 
 type Result<T> = std::result::Result<T, Error>;
 pub(crate) type DeviceName = Arc<Mutex<Option<String>>>;
@@ -65,6 +65,8 @@ const RESAMPLER_PARAMETERS: SincInterpolationParameters = SincInterpolationParam
 };
 /// A timeout used when initializing the call
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
+/// A timeout used to detect temporary network issues
+const TIMEOUT_DURATION: Duration = Duration::from_millis(100);
 /// the number of frames to hold in a channel
 const CHANNEL_SIZE: usize = 2_400;
 /// the protocol identifier for audio chat
@@ -127,9 +129,12 @@ pub struct AudioChat {
     /// Network configuration for p2p connections
     network_config: NetworkConfig,
 
+    /// A reference to the object that controls the call overlay
+    overlay: Overlay,
+
     /// Prompts the user to accept a call
     accept_call:
-        Arc<Mutex<dyn Fn(String, Option<Vec<u8>>, DartNotify) -> DartFnFuture<bool> + Send>>,
+    Arc<Mutex<dyn Fn(String, Option<Vec<u8>>, DartNotify) -> DartFnFuture<bool> + Send>>,
 
     /// Alerts the UI that a call has ended
     call_ended: Arc<Mutex<dyn Fn(String, bool) -> DartFnFuture<()> + Send>>,
@@ -172,6 +177,7 @@ impl AudioChat {
         identity: Vec<u8>,
         host: Arc<Host>,
         network_config: &NetworkConfig,
+        overlay: &Overlay,
         accept_call: impl Fn(String, Option<Vec<u8>>, DartNotify) -> DartFnFuture<bool> + Send + 'static,
         call_ended: impl Fn(String, bool) -> DartFnFuture<()> + Send + 'static,
         get_contact: impl Fn(Vec<u8>) -> DartFnFuture<Option<Contact>> + Send + 'static,
@@ -208,6 +214,7 @@ impl AudioChat {
             start_session,
             restart_manager: Default::default(),
             network_config: network_config.clone(),
+            overlay: overlay.clone(),
             accept_call: Arc::new(Mutex::new(accept_call)),
             call_ended: Arc::new(Mutex::new(call_ended)),
             get_contact: Arc::new(Mutex::new(get_contact)),
@@ -307,7 +314,7 @@ impl AudioChat {
         self.in_call.store(true, Relaxed);
 
         let result = self
-            .call(None, None, None, None)
+            .call(None, None, None, None, false)
             .await
             .map_err(Error::from)
             .map_err(Into::into);
@@ -434,21 +441,22 @@ impl AudioChat {
                     )),
                     dcutr: dcutr::Behaviour::new(keypair.public().to_peer_id()),
                     stream: libp2p_stream::Behaviour::new(),
-                    auto_nat: autonat::Behaviour::new(
-                        keypair.public().to_peer_id(),
-                        autonat::Config {
-                            retry_interval: Duration::from_secs(10),
-                            refresh_interval: Duration::from_secs(30),
-                            boot_delay: Duration::from_secs(5),
-                            throttle_server_period: Duration::ZERO,
-                            only_global_ips: false,
-                            ..Default::default()
-                        },
-                    ),
+                    // auto_nat: autonat::Behaviour::new(
+                    //     keypair.public().to_peer_id(),
+                    //     autonat::Config {
+                    //         retry_interval: Duration::from_secs(10),
+                    //         refresh_interval: Duration::from_secs(30),
+                    //         boot_delay: Duration::from_secs(5),
+                    //         throttle_server_period: Duration::ZERO,
+                    //         only_global_ips: true,
+                    //         ..Default::default()
+                    //     },
+                    // ),
                 })
                 .map_err(|_| ErrorKind::SwarmBuild)?
+                // TODO does having no timeout cause some of the issues which were being caused by the autoNAT setup?
                 .with_swarm_config(|cfg| {
-                    cfg.with_idle_connection_timeout(Duration::from_secs(u64::MAX))
+                    cfg.with_idle_connection_timeout(Duration::from_secs(30))
                 })
                 .build();
 
@@ -506,20 +514,23 @@ impl AudioChat {
                 SwarmEvent::Behaviour(BehaviourEvent::Ping(_)) => (),
                 SwarmEvent::NewExternalAddrCandidate { .. } => (),
                 SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Sent {
-                    ..
-                })) => {
+                                                                   ..
+                                                               })) => {
                     info!("Told relay its public address");
                     told_relay_observed_addr = true;
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received {
-                    info: identify::Info { .. },
-                    ..
-                })) => {
+                                                                   info: identify::Info { .. },
+                                                                   ..
+                                                               })) => {
                     info!("Relay told us our observed address");
                     learned_observed_addr = true;
                 }
                 // no other event occurs during a successful initialization
-                _ => return Err(ErrorKind::UnexpectedSwarmEvent.into()),
+                event => {
+                    error!("Unexpected event during initialization {:?}", event);
+                    return Err(ErrorKind::UnexpectedSwarmEvent.into());
+                }
             }
 
             if learned_observed_addr && told_relay_observed_addr {
@@ -528,10 +539,10 @@ impl AudioChat {
         }
 
         // TODO this doesnt really seem to do much either
-        swarm
-            .behaviour_mut()
-            .auto_nat
-            .add_server(relay_identity, Some(relay_address.clone()));
+        // swarm
+        //     .behaviour_mut()
+        //     .auto_nat
+        //     .add_server(relay_identity, Some(relay_address.clone()));
 
         swarm.listen_on(relay_address.clone())?;
 
@@ -554,20 +565,17 @@ impl AudioChat {
 
                             if let Some(state) = state_option {
                                 if state.wants_audio.load(Relaxed) {
-                                    info!(
-                                        "audio stream accepted for existing session with {}",
-                                        peer
-                                    );
+                                    info!("audio stream accepted for {}", peer);
 
                                     if let Err(error) = state.stream_sender.send(stream).await {
                                         error!("error sending audio stream to {}: {}", peer, error);
                                     }
                                 } else {
-                                    info!("received a stream while {} did not want audio. starting new session with stream", peer);
+                                    warn!("received a stream while {} did not want audio. **NOT** starting new session with stream", peer);
 
-                                    self_clone
-                                        ._start_session(contact, None, stream.compat())
-                                        .await;
+                                    // self_clone
+                                    //     ._start_session(contact, None, stream.compat())
+                                    //     .await;
                                 }
                             } else {
                                 info!("stream accepted for new session with {}", peer);
@@ -584,7 +592,7 @@ impl AudioChat {
                     info!("Incoming streams ended, trying to restart");
                 }
 
-                warn!("Stopped accepting incoming Audio Chat streams; restarting controller");
+                warn!("Stopped accepting incoming streams; restarting controller");
                 self_clone.restart_manager.notify_one();
             }
         });
@@ -596,6 +604,11 @@ impl AudioChat {
                         match event {
                             SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
                                 info!("Connection established with {} endpoint={:?}", peer_id, endpoint);
+
+                                if self.session_states.read().await.contains_key(&peer_id) {
+                                    warn!("received connection established for peer already in session");
+                                    continue;
+                                }
 
                                 let contact_option = (self.get_contact.lock().await)(peer_id.to_bytes()).await;
 
@@ -617,18 +630,24 @@ impl AudioChat {
                                         // an incoming stream should be received
                                         (self.session_status.lock().await)(contact.peer_id(), "Connecting".to_string()).await;
                                     }
-                                } else {
-                                    // TODO it would be good to terminate connections in this case
+                                } else if peer_id != *self.network_config.relay_id.read().await {
                                     warn!("Received a connection from an unknown peer: {:?}", peer_id);
+
+                                    if swarm.disconnect_peer_id(peer_id).is_err() {
+                                        error!("Error disconnecting from unknown peer");
+                                    }
                                 }
                             }
-                            SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
-                                if let Some(peer_id) = peer_id {
-                                    error!("Outgoing connection error with {}: {}", peer_id, error);
+                            SwarmEvent::OutgoingConnectionError { peer_id, error, connection_id } => {
+                                info!("Outgoing connection error for connection {}", connection_id);
 
+                                if let Some(peer_id) = peer_id {
                                     if !self.session_states.read().await.contains_key(&peer_id) {
+                                        error!("Session initialization failed for {} because {}", peer_id, error);
                                         // if an outgoing error occurs before the session is established, the peer will not connect and the status should be updated
                                         (self.session_status.lock().await)(peer_id.to_string(), "Inactive".to_string()).await;
+                                    } else {
+                                        warn!("Outgoing connection failed for active session with {} because {}", peer_id, error);
                                     }
                                 }
                             },
@@ -639,6 +658,12 @@ impl AudioChat {
                                 // update the latency for the peer's session
                                 if let Some(state) = self.session_states.read().await.get(&event.peer) {
                                     state.latency.store(event.result.map(|duration| duration.as_millis() as usize).unwrap_or(0), Relaxed);
+                                }
+                            },
+                            SwarmEvent::Behaviour(BehaviourEvent::Dcutr(event)) => {
+                                match event.result {
+                                    Ok(connection_id) => info!("DCUTR connection established with {} id={}", event.remote_peer_id, connection_id),
+                                    Err(error) => error!("DCUTR connection error for {}: {}", event.remote_peer_id, error),
                                 }
                             },
                             event => {
@@ -752,7 +777,7 @@ impl AudioChat {
                 contact_clone.peer_id(),
                 "Inactive".to_string(),
             )
-            .await;
+                .await;
 
             info!("Session for {} cleaned up", contact_clone.nickname);
         });
@@ -772,6 +797,7 @@ impl AudioChat {
         (self.session_status.lock().await)(contact.peer_id(), "Connected".to_string()).await;
 
         let mut transport = LengthDelimitedCodec::builder().new_framed(stream);
+        let mut keep_alive = interval(Duration::from_secs(10));
 
         let result = loop {
             // an async block is used to capture errors and handle them internally
@@ -787,7 +813,10 @@ impl AudioChat {
                                 if !message.ringtone.is_empty() && self.play_custom_ringtones.load(Relaxed) {
                                     ringtone = Some(message.ringtone);
                                 }
-                            }
+                            },
+                            Message { message: Some(message::Message::KeepAlive(_)) } => {
+                                return Ok::<(), Error>(());
+                            },
                             message => {
                                 warn!("received unexpected {:?} from {}", message, contact.nickname);
                                 return Ok::<(), Error>(());
@@ -887,11 +916,17 @@ impl AudioChat {
                         info!("session state stop notified for {}", contact.nickname);
                         Err(ErrorKind::SessionStoped.into())
                     },
+                    _ = keep_alive.tick() => {
+                        let keep_alive = Message::keep_alive();
+                        write_message(&mut transport, keep_alive).await?;
+                        Ok(())
+                    },
                 }
             };
 
             if let Err(error) = future.await {
                 if state.in_call.load(Relaxed) {
+                    info!("session error while call active, alerting ui");
                     (self.call_ended.lock().await)(error.to_string(), false).await;
                 }
 
@@ -924,6 +959,8 @@ impl AudioChat {
     ) -> Result<()> {
         debug!("handshake running");
 
+        let dialer = control.is_some();
+
         // change the session state to accept incoming audio streams
         state.wants_audio.store(true, Relaxed);
 
@@ -955,18 +992,25 @@ impl AudioChat {
         // change the session state
         state.wants_audio.store(false, Relaxed);
 
+        self.overlay.show();
+
         let result = self
             .call(
                 Some(stream),
                 Some(transport),
                 Some(message_channel.1.clone()),
                 Some(state),
+                dialer,
             )
             .await;
 
+        info!("call ended in receiver");
+
         // the call has ended
-        debug!("setting in call to false");
         self.in_call.store(false, Relaxed);
+
+        self.overlay.hide();
+        info!("overlay hidden");
 
         match result {
             Ok(()) => Ok(()),
@@ -995,6 +1039,7 @@ impl AudioChat {
         mut transport: Option<&mut Transport<TransportStream>>,
         message_receiver: Option<AsyncReceiver<Message>>,
         state: Option<&Arc<SessionState>>,
+        dialer: bool,
     ) -> Result<()> {
         // if any of the values required for a normal call is missing, the call is an audio test
         let audio_test = transport.is_none()
@@ -1024,6 +1069,8 @@ impl AudioChat {
         let upload_bandwidth: Arc<AtomicUsize> = Default::default();
         let download_bandwidth: Arc<AtomicUsize> = Default::default();
 
+        let (receiving_sender, receiving_receiver) = unbounded_async::<bool>();
+
         // get the output device and its default configuration
         let output_device = get_output_device(&self.output_device, &self.host).await?;
         let output_config = output_device.default_output_config()?;
@@ -1047,9 +1094,17 @@ impl AudioChat {
         } else {
             let transport = transport.as_mut().unwrap();
 
-            info!("sending audio header");
-            write_message(transport, audio_header).await?;
-            read_message(transport).await?
+            // the dialer reads the message first because its stream opens instantly
+            if dialer {
+                let message = read_message(transport).await?;
+                info!("sending audio header");
+                write_message(transport, audio_header).await?;
+                message
+            } else {
+                info!("sending audio header");
+                write_message(transport, audio_header).await?;
+                read_message(transport).await?
+            }
         };
 
         // get a reference to input volume for the processor
@@ -1157,7 +1212,12 @@ impl AudioChat {
 
         // shared values used in the call controller
         let end_call = Arc::clone(&self.end_call);
-        let state = state.unwrap();
+
+        let latency = if let Some(state) = state {
+            Arc::clone(&state.latency)
+        } else {
+            Default::default()
+        };
 
         let input_processor_future = spawn_blocking_with(
             move || input_processor_handle.join(),
@@ -1172,7 +1232,7 @@ impl AudioChat {
         let statistics_handle = spawn(statistics_collector(
             input_rms_receiver,
             output_rms_receiver,
-            Arc::clone(&state.latency),
+            latency,
             Arc::clone(&upload_bandwidth),
             Arc::clone(&download_bandwidth),
             Arc::clone(&self.statistics),
@@ -1215,14 +1275,16 @@ impl AudioChat {
                 read,
                 Arc::clone(&stop_io),
                 download_bandwidth,
+                receiving_sender,
             ));
 
             let transport = transport.as_mut().unwrap();
             let message_receiver = message_receiver.unwrap();
 
             let message_received = Arc::clone(&self.message_received);
-            // let call_state = Arc::clone(&self.call_state);
+            let call_state = Arc::clone(&self.call_state);
 
+            // TODO move this logic to the call controller
             select! {
                 result = input_handle => result?,
                 _ = output_handle => Ok(()),
@@ -1231,7 +1293,7 @@ impl AudioChat {
                 // this unwrap is safe because the processor thread will not panic
                 result = input_processor_future => result?.unwrap(),
                 result = statistics_handle => result?,
-                message = call_controller(transport, message_receiver, end_call, message_received) => {
+                message = call_controller(transport, message_receiver, end_call, receiving_receiver, message_received, call_state) => {
                     debug!("controller exited: {:?}", message);
 
                     match message {
@@ -1413,6 +1475,9 @@ pub struct Statistics {
 
     /// the approximate download bandwidth used by the current call
     pub download_bandwidth: usize,
+
+    /// a value between 0 and 1 representing the percent of audio lost in a sliding window
+    pub loss: f64,
 }
 
 #[frb(opaque)]
@@ -1472,9 +1537,32 @@ async fn call_controller(
     transport: &mut Transport<TransportStream>,
     receiver: AsyncReceiver<Message>,
     end_call: Arc<Notify>,
+    receiving: AsyncReceiver<bool>,
     message_received: Arc<Mutex<dyn Fn(String) -> DartFnFuture<()> + Send>>,
-    // disconnected_callback: Arc<Mutex<dyn Fn(bool) -> DartFnFuture<()> + Send>>,
+    call_state: Arc<Mutex<dyn Fn(bool) -> DartFnFuture<()> + Send>>,
 ) -> Result<String> {
+    // whether the session is currently receiving audio
+    let mut is_receiving = false;
+    // whether the remote peer is currently receiving audio
+    let mut remote_is_receiving = true;
+
+    // the instant the UI will be notified that the session is not receiving audio
+    let mut notify_ui = Instant::now() + Duration::from_secs(2);
+
+    // the instant the session stopped receiving audio
+    let mut disconnected_at = Instant::now();
+    
+    // the instant the disconnect started and the duration of the disconnect
+    let mut disconnect_durations: VecDeque<(Instant, Duration)> = VecDeque::new();
+    // ticks to update the connection quality and remove old entries from `disconnect_durations`
+    let mut update_durations = interval(Duration::from_secs(1));
+
+    // constant durations used in the connection quality algorithm
+    let window_duration = Duration::from_secs(10);
+    let disconnect_duration = Duration::from_secs(2);
+
+    let (state_sender, state_receiver) = unbounded_async::<bool>();
+
     loop {
         select! {
             // receives and handles messages from the callee
@@ -1490,6 +1578,24 @@ async fn call_controller(
                     },
                     Some(message::Message::Chat(message)) => {
                         (message_received.lock().await)(message.message).await;
+                    }
+                    Some(message::Message::ConnectionInterrupted(_)) => {
+                        info!("received connection interrupted message r={} rr={}", is_receiving, remote_is_receiving);
+
+                        let receiving = is_receiving && remote_is_receiving;
+                        remote_is_receiving = false;
+                        state_sender.send(receiving).await?;
+                    }
+                    Some(message::Message::ConnectionRestored(_)) => {
+                        info!("received connection restored message r={} rr={}", is_receiving, remote_is_receiving);
+
+                        if remote_is_receiving {
+                            warn!("received connection restored message while already receiving");
+                            continue;
+                        }
+
+                        remote_is_receiving = true;
+                        state_sender.send(false).await?;
                     }
                     _ => error!("received unexpected message: {:?}", message),
                 }
@@ -1509,6 +1615,85 @@ async fn call_controller(
                 write_message(transport, message).await?;
                 break Err(ErrorKind::CallEnded.into());
             },
+            receiving = state_receiver.recv() => {
+                if receiving? {
+                    info!("state switched to not receiving r={} rr={}", is_receiving, remote_is_receiving);
+
+                    // the instant the disconnect began
+                    disconnected_at = Instant::now();
+                    // notify the ui in 2 seconds if the disconnect hasn't ended
+                    notify_ui = disconnected_at + disconnect_duration;
+                } else {
+                    if is_receiving && remote_is_receiving {
+                        let elapsed = disconnected_at.elapsed();
+                        info!("reconnected after {}ms interruption", elapsed.as_millis());
+
+                        // update the call state in the UI
+                        (call_state.lock().await)(false).await;
+                        // record the disconnect
+                        disconnect_durations.push_back((disconnected_at, elapsed));
+                        // prevents any notification to the ui as audio is being received
+                        notify_ui = Instant::now() + Duration::from_secs(86400 * 365 * 30);
+                        // set the overlay to connected
+                        CONNECTED.store(true, Relaxed);
+                    } else if is_receiving ^ remote_is_receiving {
+                        info!("partial reconnect r={} rr={}", is_receiving, remote_is_receiving);
+                    } else {
+                        info!("full disconnect r={} rr={}", is_receiving, remote_is_receiving)
+                    }
+                }
+            },
+            // receives when the receiving state changes
+            Ok(receiving) = receiving.recv() => {
+                info!("received receiving state: {} | r={} rr={}", receiving, is_receiving, remote_is_receiving);
+
+                if receiving != is_receiving {
+                    state_sender.send(is_receiving && remote_is_receiving).await?;
+
+                    is_receiving = receiving;
+
+                    let message = if is_receiving {
+                        Message::connection_restored()
+                    } else {
+                        Message::connection_interrupted()
+                    };
+
+                    if let Err(error) = write_message(transport, message).await {
+                        error!("Error sending connection notification message: {}", error);
+                    }
+                } else {
+                    warn!("received duplicate receiving state: {}", receiving);
+                }
+            },
+            // if the session doesn't reconnect within the time limit, notify the UI
+            _ = sleep_until(notify_ui) => {
+                (call_state.lock().await)(true).await;
+                // the UI does not need to be notified until the session reconnects
+                notify_ui = Instant::now() + Duration::from_secs(86400 * 365 * 30);
+                // set the overlay to disconnected
+                CONNECTED.store(false, Relaxed);
+            },
+            _ = update_durations.tick() => {
+                let now = Instant::now();
+
+                // check for disconnects outside the 10-second window
+                while let Some((start, _)) = disconnect_durations.front() {
+                    if now - *start > window_duration {
+                        disconnect_durations.pop_front();
+                    } else {
+                        break;
+                    }
+                }
+
+                let mut total_disconnect = disconnect_durations.iter().fold(Duration::default(), |acc, (_, duration)| acc + *duration).as_millis();
+
+                // if not receiving, add the current disconnect duration
+                if !is_receiving || !remote_is_receiving {
+                    total_disconnect += disconnected_at.elapsed().as_millis();
+                }
+
+                LOSS.store(total_disconnect as f64 / 10_000_f64, Relaxed);
+            }
         }
     }
 }
@@ -1556,22 +1741,48 @@ async fn socket_output(
     mut socket: SplitStream<Framed<Compat<Stream>, LengthDelimitedCodec>>,
     notify: Arc<Notify>,
     bandwidth: Arc<AtomicUsize>,
+    receiving: AsyncSender<bool>,
 ) {
-    let future = async {
-        while let Some(Ok(message)) = socket.next().await {
-            let len = message.len();
-            bandwidth.fetch_add(len, Relaxed);
+    let mut is_receiving = false;
 
-            match len {
-                TRANSFER_BUFFER_SIZE => {
-                    _ = sender.try_send(ProcessorMessage::frame(message.freeze()));
+    let future = async {
+        loop {
+            match timeout(TIMEOUT_DURATION, socket.next()).await {
+                Ok(Some(Ok(message))) => {
+                    if !is_receiving {
+                        _ = receiving.send(true).await;
+                        is_receiving = true;
+                    }
+
+                    let len = message.len();
+                    bandwidth.fetch_add(len, Relaxed);
+
+                    match len {
+                        TRANSFER_BUFFER_SIZE => {
+                            _ = sender.try_send(ProcessorMessage::frame(message.freeze()));
+                        }
+                        1 => match message[0] {
+                            0 => _ = sender.try_send(ProcessorMessage::silence()), // silence
+                            _ => error!("received unknown control signal {}", message[0]),
+                        },
+                        // this should be impossible
+                        len => error!("received {} < {} data", len, TRANSFER_BUFFER_SIZE),
+                    }
                 }
-                1 => match message[0] {
-                    0 => _ = sender.try_send(ProcessorMessage::silence()), // silence
-                    _ => error!("received unknown control signal {}", message[0]),
-                },
-                // this should be impossible
-                len => error!("received {} < {} data", len, TRANSFER_BUFFER_SIZE),
+                Ok(Some(Err(error))) => {
+                    error!("Socket output error: {}", error);
+                    break;
+                }
+                Ok(None) => {
+                    debug!("Socket output ended");
+                    break;
+                }
+                Err(_) => {
+                    if is_receiving {
+                        _ = receiving.send(false).await;
+                        is_receiving = false;
+                    }
+                }
             }
         }
     };
@@ -1627,8 +1838,10 @@ async fn statistics_collector(
                     latency: latency.load(Relaxed),
                     upload_bandwidth: upload_bandwidth.load(Relaxed),
                     download_bandwidth: download_bandwidth.load(Relaxed),
+                    loss: LOSS.load(Relaxed),
                 };
 
+                LATENCY.store(statistics.latency, Relaxed);
                 (callback.lock().await)(statistics).await;
             }
             _ = notify.notified() => {
@@ -1642,10 +1855,13 @@ async fn statistics_collector(
     let statistics = Statistics::default();
     (callback.lock().await)(statistics).await;
 
+    LATENCY.store(0, Relaxed);
+    LOSS.store(0_f64, Relaxed);
+    CONNECTED.store(false, Relaxed);
+
     result
 }
 
-// TODO consider using a SincFixedOut resampler here
 /// Processes the audio input and sends it to the sending socket
 fn input_processor(
     receiver: Receiver<f32>,
@@ -1660,10 +1876,11 @@ fn input_processor(
     // the maximum and minimum values for i16 as f32
     let max_i16_f32 = i16::MAX as f32;
     let min_i16_f32 = i16::MIN as f32;
+    let i16_size = mem::size_of::<i16>();
 
     let ratio = if denoiser.is_some() {
         // rnnoise requires a 48kHz sample rate
-        48_000.0 / sample_rate
+        48_000_f64 / sample_rate
     } else {
         // do not resample if not using rnnoise
         1_f64
@@ -1684,7 +1901,7 @@ fn input_processor(
 
     // output for 16 bit samples. the compiler does not recognize that it is used
     #[allow(unused_assignments)]
-    let mut int_buffer = [0; FRAME_SIZE];
+        let mut int_buffer = [0; FRAME_SIZE];
 
     // the position in pre_buf
     let mut position = 0;
@@ -1770,7 +1987,7 @@ fn input_processor(
         let bytes = unsafe {
             std::slice::from_raw_parts(
                 int_buffer.as_ptr() as *const u8,
-                int_buffer.len() * mem::size_of::<i16>(),
+                int_buffer.len() * i16_size,
             )
         };
 
@@ -1790,6 +2007,7 @@ fn output_processor(
     rms_sender: Sender<f32>,
 ) -> Result<()> {
     let max_i16_f32 = i16::MAX as f32;
+    let i16_size = mem::size_of::<i16>();
 
     let mut resampler = resampler_factory(ratio, 1, FRAME_SIZE)?;
 
@@ -1814,10 +2032,7 @@ fn output_processor(
             ProcessorMessage::Data(bytes) => {
                 // convert the bytes to 16-bit integers
                 let ints = unsafe {
-                    std::slice::from_raw_parts(
-                        bytes.as_ptr() as *const i16,
-                        bytes.len() / mem::size_of::<i16>(),
-                    )
+                    std::slice::from_raw_parts(bytes.as_ptr() as *const i16, bytes.len() / i16_size)
                 };
 
                 // convert the frame to f32s
@@ -1948,9 +2163,9 @@ async fn level_from_window(receiver: &AsyncReceiver<f32>, max: &mut f32) -> f32 
 
 /// Writes a protobuf message to the stream
 async fn write_message<M: prost::Message, W>(transport: &mut Transport<W>, message: M) -> Result<()>
-where
-    W: AsyncWrite + Unpin,
-    Transport<W>: Sink<Bytes> + Unpin,
+    where
+        W: AsyncWrite + Unpin,
+        Transport<W>: Sink<Bytes> + Unpin,
 {
     let len = message.encoded_len(); // get the length of the message
     let mut buffer = Vec::with_capacity(len);

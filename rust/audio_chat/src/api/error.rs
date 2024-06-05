@@ -2,7 +2,6 @@ use std::array::TryFromSliceError;
 use std::fmt::{Display, Formatter};
 use std::net::AddrParseError;
 
-use crate::BehaviourEvent;
 use cpal::{BuildStreamError, DefaultStreamConfigError, DevicesError, PlayStreamError};
 use libp2p::identity::{DecodingError, ParseError};
 use libp2p::swarm::{DialError, SwarmEvent};
@@ -11,6 +10,8 @@ use libp2p_stream::{AlreadyRegistered, OpenStreamError};
 use rubato::{ResampleError, ResamplerConstructionError};
 use tokio::task::JoinError;
 use tokio::time::error::Elapsed;
+
+use crate::BehaviourEvent;
 
 /// generic error type for audio chat
 #[derive(Debug)]

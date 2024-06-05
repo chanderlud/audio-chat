@@ -1,7 +1,8 @@
 [workspace]
 members = [
     "relay_server",
-    "audio_chat"
+    "audio_chat",
+    "gdiplus-sys",
 ]
 resolver = "2"
 

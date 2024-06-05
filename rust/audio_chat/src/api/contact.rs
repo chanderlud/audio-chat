@@ -1,6 +1,7 @@
+use std::str::FromStr;
+
 use flutter_rust_bridge::frb;
 use libp2p::PeerId;
-use std::str::FromStr;
 use uuid::Uuid;
 
 use crate::api::error::{DartError, ErrorKind};

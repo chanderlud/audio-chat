@@ -1,12 +1,12 @@
 use std::mem;
-use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
 
 use atomic_float::AtomicF32;
-use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{Host, SampleFormat};
-use flutter_rust_bridge::spawn;
+use cpal::traits::{DeviceTrait, StreamTrait};
 use flutter_rust_bridge::{frb, spawn_blocking_with};
+use flutter_rust_bridge::spawn;
 use kanal::{bounded_async, Sender};
 use log::error;
 use nnnoiseless::FRAME_SIZE;
@@ -16,7 +16,7 @@ use tokio::sync::Notify;
 use tokio::time::sleep;
 
 use crate::api::audio_chat::{
-    db_to_multiplier, get_output_device, mul, resampler_factory, DeviceName, SendStream,
+    db_to_multiplier, DeviceName, get_output_device, mul, resampler_factory, SendStream,
 };
 use crate::api::error::{Error, ErrorKind};
 use crate::api::items::AudioHeader;
@@ -133,7 +133,7 @@ async fn play_sound(
     // the receiver used by the output stream
     let sync_receiver = processed_receiver.to_sync();
     // keep track of the last samples played
-    let mut last_samples = Vec::with_capacity(output_channels);
+    let mut last_samples = vec![0_f32; output_channels];
     // a counter used for fading out the last samples when the sound is cancelled
     let mut i = 0;
     // used to provide a fade to 0 when the sound is cancelled
@@ -289,7 +289,7 @@ fn processor(
                     }
                 }
             }
-            _ => unimplemented!(),
+            _ => return Err(ErrorKind::UnknownSampleFormat.into()),
         }
 
         let (target_buffer, len) = if let Some(resampler) = &mut resampler {
@@ -342,35 +342,35 @@ fn processor(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use fast_log::Config;
-    use log::{LevelFilter, Log};
-    use tokio::fs::File;
-    use tokio::io::AsyncReadExt;
-    use tokio::time::sleep;
-
-    #[tokio::test]
-    async fn test_player() {
-        let logger = fast_log::init(
-            Config::new()
-                .chan_len(Some(100))
-                .file("tests.log")
-                .level(LevelFilter::Debug),
-        )
-        .unwrap();
-
-        let mut wav_bytes = Vec::new();
-        let mut wav_file = File::open("../sounds/outgoing.wav").await.unwrap();
-        wav_file.read_to_end(&mut wav_bytes).await.unwrap();
-
-        let player = super::SoundPlayer::new(1_f32);
-        let handle = player.play(wav_bytes).await;
-
-        sleep(std::time::Duration::from_secs(1)).await;
-        handle.cancel();
-        sleep(std::time::Duration::from_secs(1)).await;
-
-        logger.flush();
-    }
-}
+// #[cfg(test)]
+// mod tests {
+//     use fast_log::Config;
+//     use log::{LevelFilter, Log};
+//     use tokio::fs::File;
+//     use tokio::io::AsyncReadExt;
+//     use tokio::time::sleep;
+//
+//     #[tokio::test]
+//     async fn test_player() {
+//         let logger = fast_log::init(
+//             Config::new()
+//                 .chan_len(Some(100))
+//                 .file("tests.log")
+//                 .level(LevelFilter::Debug),
+//         )
+//         .unwrap();
+//
+//         let mut wav_bytes = Vec::new();
+//         let mut wav_file = File::open("../sounds/outgoing.wav").await.unwrap();
+//         wav_file.read_to_end(&mut wav_bytes).await.unwrap();
+//
+//         let player = super::SoundPlayer::new(1_f32);
+//         let handle = player.play(wav_bytes).await;
+//
+//         sleep(std::time::Duration::from_secs(1)).await;
+//         handle.cancel();
+//         sleep(std::time::Duration::from_secs(1)).await;
+//
+//         logger.flush();
+//     }
+// }

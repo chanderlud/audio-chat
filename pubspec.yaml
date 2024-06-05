@@ -1,7 +1,7 @@
 name: audio_chat
 description: "The Audio Chat Flutter application."
 publish_to: 'none'
-version: 2.3.0
+version: 2.4.0
 
 environment:
   sdk: '>=3.2.6 <4.0.0'
@@ -13,7 +13,7 @@ dependencies:
   rust_builder:
     path: rust_builder
 
-  flutter_rust_bridge: 2.0.0-dev.32
+  flutter_rust_bridge: 2.0.0-dev.36
   flutter_secure_storage: ^9.0.0
 
   shared_preferences: ^2.2.2
@@ -23,6 +23,7 @@ dependencies:
   uuid: ^4.3.3
   collection: any
   permission_handler: ^11.3.1
+  flutter_colorpicker: ^1.1.0
 
 dev_dependencies:
   flutter_test:

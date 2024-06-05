@@ -1,5 +1,5 @@
 use libp2p::swarm::NetworkBehaviour;
-use libp2p::{autonat, dcutr, identify, ping, relay};
+use libp2p::{dcutr, identify, ping, relay};
 
 pub mod api;
 mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be accurate, and you can change it according to your needs. */
@@ -24,5 +24,5 @@ pub(crate) struct Behaviour {
     identify: identify::Behaviour,
     dcutr: dcutr::Behaviour,
     stream: libp2p_stream::Behaviour,
-    auto_nat: autonat::Behaviour,
+    // auto_nat: autonat::Behaviour,
 }

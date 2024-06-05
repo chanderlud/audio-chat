@@ -83,4 +83,24 @@ impl Message {
             })),
         }
     }
+
+    pub(crate) fn connection_interrupted() -> Self {
+        Self {
+            message: Some(message::Message::ConnectionInterrupted(
+                ConnectionInterrupted {},
+            )),
+        }
+    }
+
+    pub(crate) fn connection_restored() -> Self {
+        Self {
+            message: Some(message::Message::ConnectionRestored(ConnectionRestored {})),
+        }
+    }
+
+    pub(crate) fn keep_alive() -> Self {
+        Self {
+            message: Some(message::Message::KeepAlive(KeepAlive {})),
+        }
+    }
 }

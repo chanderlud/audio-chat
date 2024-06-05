@@ -1,4 +1,9 @@
+use std::error::Error;
+use std::net::Ipv4Addr;
+use std::time::Duration;
+
 use futures::stream::StreamExt;
+use libp2p::relay::Config;
 use libp2p::{
     autonat,
     core::multiaddr::Protocol,
@@ -7,11 +12,6 @@ use libp2p::{
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux,
 };
-use std::time::Duration;
-
-use libp2p::relay::Config;
-use std::error::Error;
-use std::net::Ipv4Addr;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -43,6 +43,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             auto_nat: autonat::Behaviour::new(
                 local_key.public().to_peer_id(),
                 autonat::Config {
+                    use_connected: false,
                     only_global_ips: false,
                     ..Default::default()
                 },

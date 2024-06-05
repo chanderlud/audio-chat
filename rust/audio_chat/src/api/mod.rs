@@ -4,4 +4,5 @@ pub mod crypto;
 pub mod error;
 mod items;
 pub mod logger;
+pub mod overlay;
 pub mod player;
