@@ -316,12 +316,15 @@ impl AudioChat {
     pub async fn audio_test(&self) -> std::result::Result<(), DartError> {
         self.in_call.store(true, Relaxed);
 
+        let stop_io = Arc::new(Notify::new());
+
         let result = self
-            .call(None, None, None, None, false)
+            .call(None, None, None, None, false, &stop_io)
             .await
             .map_err(Error::from)
             .map_err(Into::into);
 
+        stop_io.notify_waiters();
         self.in_call.store(false, Relaxed);
 
         result
@@ -582,6 +585,8 @@ impl AudioChat {
         });
 
         // handles the state needed for negotiating sessions
+        // it is cleared each time a peer successfully connects
+        // TODO handle cases where a connection fails and the state is left behind
         let mut peer_states: HashMap<PeerId, PeerState> = HashMap::new();
 
         loop {
@@ -589,8 +594,11 @@ impl AudioChat {
                 event = swarm.select_next_some() => {
                     match event {
                         SwarmEvent::ConnectionEstablished { peer_id, endpoint, connection_id, .. } => {
-                            // ignore the relay connection
                             if peer_id == *self.network_config.relay_id.read().await {
+                                // ignore the relay connection
+                                continue;
+                            } else if self.session_states.read().await.contains_key(&peer_id) {
+                                // ignore connections with peers who have a session
                                 continue;
                             }
 
@@ -626,7 +634,9 @@ impl AudioChat {
                         }
                         SwarmEvent::OutgoingConnectionError { peer_id, error, connection_id } => {
                             if let Some(peer_id) = peer_id {
-                                if let Some(peer_state) = peer_states.get_mut(&peer_id) {
+                                if self.session_states.read().await.contains_key(&peer_id) {
+                                    warn!("outgoing connection failed for {} because {}", peer_id, error);
+                                } else if let Some(peer_state) = peer_states.get_mut(&peer_id) {
                                     warn!("outgoing connection failed for {} because {}", peer_id, error);
                                     peer_state.connections.remove(&connection_id);
                                 } else {
@@ -706,6 +716,8 @@ impl AudioChat {
                                             if let Ok(stream) = control.open_stream(event.peer, PROTOCOL).await {
                                                 info!("opened stream with {} on connection {}, starting new session", event.peer, connection_id);
                                                 self._start_session(contact, Some(control), stream).await;
+                                                // the peer state is no longer needed
+                                                peer_states.remove(&event.peer);
                                                 break;
                                             }
                                         }
@@ -1061,6 +1073,8 @@ impl AudioChat {
 
         self.overlay.show();
 
+        let stop_io = Arc::new(Notify::new());
+
         let result = self
             .call(
                 Some(stream),
@@ -1068,8 +1082,12 @@ impl AudioChat {
                 Some(message_channel.1.clone()),
                 Some(state),
                 dialer,
+                &stop_io,
             )
             .await;
+
+        // ensure that the input and output streams are stopped
+        stop_io.notify_waiters();
 
         info!("call ended in receiver");
 
@@ -1107,6 +1125,7 @@ impl AudioChat {
         message_receiver: Option<AsyncReceiver<Message>>,
         state: Option<&Arc<SessionState>>,
         dialer: bool,
+        stop_io: &Arc<Notify>,
     ) -> Result<()> {
         // if any of the values required for a normal call is missing, the call is an audio test
         let audio_test = transport.is_none()
@@ -1275,8 +1294,6 @@ impl AudioChat {
         input_stream.stream.play()?;
         output_stream.stream.play()?;
 
-        let stop_io = Arc::new(Notify::new());
-
         // shared values used in the call controller
         let end_call = Arc::clone(&self.end_call);
 
@@ -1306,7 +1323,7 @@ impl AudioChat {
             Arc::clone(&stop_io),
         ));
 
-        let result = if audio_test {
+        if audio_test {
             let loopback_handle = spawn(loopback(
                 processed_input_receiver,
                 output_sender,
@@ -1314,13 +1331,13 @@ impl AudioChat {
             ));
 
             select! {
-                _ = loopback_handle => Ok(()),
+                _ = loopback_handle => (),
                 // this unwrap is safe because the processor thread will not panic
-                result = output_processor_future => result?.unwrap(),
+                result = output_processor_future => result?.unwrap()?,
                 // this unwrap is safe because the processor thread will not panic
-                result = input_processor_future => result?.unwrap(),
-                _ = self.end_call.notified() => Ok(()),
-                result = statistics_handle => result?,
+                result = input_processor_future => result?.unwrap()?,
+                _ = self.end_call.notified() => (),
+                result = statistics_handle => result??,
             }
         } else {
             let audio_transport = LengthDelimitedCodec::builder()
@@ -1351,34 +1368,36 @@ impl AudioChat {
             let message_received = Arc::clone(&self.message_received);
             let call_state = Arc::clone(&self.call_state);
 
-            select! {
-                result = input_handle => result?,
-                result = output_handle => result?,
-                // this unwrap is safe because the processor thread will not panic
-                result = output_processor_future => result?.unwrap(),
-                // this unwrap is safe because the processor thread will not panic
-                result = input_processor_future => result?.unwrap(),
-                result = statistics_handle => result?,
-                message = call_controller(transport, message_receiver, end_call, receiving_receiver, message_received, call_state) => {
-                    debug!("controller exited: {:?}", message);
+            let controller_future = call_controller(
+                transport,
+                message_receiver,
+                end_call,
+                receiving_receiver,
+                message_received,
+                call_state,
+            );
 
-                    match message {
-                        Ok(message) => (self.call_ended.lock().await)(message, true).await,
-                        Err(error) => match error.kind {
-                            ErrorKind::CallEnded => (), // when the call is ended externally, no UI notification is needed
-                            _ => (self.call_ended.lock().await)(error.to_string(), false).await,
-                        },
-                    }
+            let result = select! {
+                result = input_handle => result?.map(|_| String::new()),
+                result = output_handle => result?.map(|_| String::new()),
+                // this unwrap is safe because the processor thread will not panic
+                result = output_processor_future => result?.unwrap().map(|_| String::new()),
+                // this unwrap is safe because the processor thread will not panic
+                result = input_processor_future => result?.unwrap().map(|_| String::new()),
+                result = statistics_handle => result?.map(|_| String::new()),
+                result = controller_future => result,
+            };
 
-                    Ok(())
+            match result {
+                Ok(message) => (self.call_ended.lock().await)(message, true).await,
+                Err(error) => match error.kind {
+                    ErrorKind::CallEnded => (), // when the call is ended externally, no UI notification is needed
+                    _ => (self.call_ended.lock().await)(error.to_string(), false).await,
                 },
             }
-        };
+        }
 
-        // ensure that the input and output streams are stopped
-        stop_io.notify_waiters();
-
-        result
+        Ok(())
     }
 
     /// Returns either the default or the user specified device
