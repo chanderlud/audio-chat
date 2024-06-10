@@ -601,7 +601,7 @@ impl AudioChat {
                                 info!("Connection {} established with {} endpoint={:?}", connection_id, peer_id, endpoint);
 
                                 if let Some(peer_state) = peer_states.get_mut(&peer_id) {
-                                    peer_state.connections.insert(connection_id, None);
+                                    peer_state.connections.insert(connection_id, ConnectionState::new(endpoint.is_relayed()));
                                     continue; // the other logic only runs once
                                 } else {
                                     peer_states.insert(peer_id, PeerState::new(endpoint.is_dialer(), connection_id));
@@ -655,7 +655,7 @@ impl AudioChat {
                                 // update the latency for the peer's connections
                                 if let Some(peer_state) = peer_states.get_mut(&event.peer) {
                                     if let Some(connection_latency) = peer_state.connections.get_mut(&event.connection) {
-                                        *connection_latency = latency;
+                                        connection_latency.latency = latency;
                                     }
 
                                     info!("connections: {:?}", peer_state.connections);
@@ -664,11 +664,15 @@ impl AudioChat {
                                         continue;
                                     }
 
-                                    if peer_state.connections.iter().any(|(_, latency)| latency.is_none()) {
+                                    if peer_state.connections.iter().any(|(_, state)| state.latency.is_none()) {
+                                        debug!("not trying to establish a session with {} because not all connections have latency", event.peer);
+                                        continue;
+                                    } else if peer_state.connections.iter().all(|(_, state)| state.relay) {
+                                        debug!("not trying to establish a session with {} because all connections are relayed", event.peer);
                                         continue;
                                     }
 
-                                    let connection = peer_state.connections.iter().min_by(|a, b| a.1.cmp(b.1));
+                                    let connection = peer_state.connections.iter().min_by(|a, b| a.1.latency.cmp(&b.1.latency));
 
                                     if let Some((connection_id, _)) = connection {
                                         info!("Using connection {} for {}", connection_id, event.peer);
@@ -714,6 +718,12 @@ impl AudioChat {
                                 info!("Received first identify event from {}", peer_id);
 
                                 for address in info.listen_addrs {
+                                    if address.ends_with(&Protocol::P2p(peer_id).into()) {
+                                        continue;
+                                    } else {
+                                        debug!("Dialing {}", address);
+                                    }
+
                                     if let Err(error) = swarm.dial(address) {
                                         error!("Error dialing {}: {}", peer_id, error);
                                     }
@@ -1403,18 +1413,33 @@ struct PeerState {
     dialer: bool,
 
     /// a map of connections and their latencies
-    connections: HashMap<ConnectionId, Option<u128>>
+    connections: HashMap<ConnectionId, ConnectionState>
 }
 
 impl PeerState {
     fn new(dialer: bool, connection_id: ConnectionId) -> Self {
         let mut connections = HashMap::new();
-        connections.insert(connection_id, None);
+        connections.insert(connection_id, ConnectionState::default());
 
         Self {
             dialed: false,
             dialer,
             connections,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct ConnectionState {
+    latency: Option<u128>,
+    relay: bool,
+}
+
+impl ConnectionState {
+    fn new(relay: bool) -> Self {
+        Self {
+            latency: None,
+            relay,
         }
     }
 }
