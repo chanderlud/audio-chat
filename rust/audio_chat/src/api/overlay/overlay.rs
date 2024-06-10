@@ -2,17 +2,23 @@
 use std::mem;
 #[cfg(windows)]
 use std::ptr::{null, null_mut};
+#[cfg(windows)]
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::Relaxed;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32};
 use std::sync::Arc;
+#[cfg(windows)]
 use std::time::Duration;
 
 use flutter_rust_bridge::frb;
+#[cfg(windows)]
 use kanal::OneshotSender;
 #[cfg(windows)]
 use log::error;
+#[cfg(windows)]
 use tokio::select;
 use tokio::sync::Notify;
+#[cfg(windows)]
 use tokio::time::interval;
 #[cfg(windows)]
 use winapi::shared::minwindef::TRUE;
@@ -123,14 +129,16 @@ impl Overlay {
 
     /// non-windows platforms don't have an overlay
     #[cfg(not(windows))]
-    pub async fn new(_enabled: bool,
-                     _x: i32,
-                     _y: i32,
-                     _width: i32,
-                     _height: i32,
-                     _font_height: i32,
-                     _background_color: u32,
-                     _font_color: u32,) -> Overlay {
+    pub async fn new(
+        _enabled: bool,
+        _x: i32,
+        _y: i32,
+        _width: i32,
+        _height: i32,
+        _font_height: i32,
+        _background_color: u32,
+        _font_color: u32,
+    ) -> Overlay {
         Self {
             enabled: Arc::new(Default::default()),
             visible: Arc::new(Default::default()),
@@ -169,10 +177,7 @@ impl Overlay {
         });
     }
 
-    /// non-windows platforms don't have an overlay
-    #[cfg(not(windows))]
-    fn start_overlay(_rx: OneshotSender<usize>, _width: i32, _height: i32, _x: i32, _y: i32) {}
-
+    #[cfg(windows)]
     /// controls the overlay window
     async fn controller(&self) {
         // redraw the window every second if visible & enabled
@@ -334,10 +339,6 @@ impl Overlay {
             InvalidateRect(hwnd, null(), TRUE);
         }
     }
-
-    /// non-windows platforms don't have an overlay
-    #[cfg(not(windows))]
-    fn redraw(&self) {}
 
     /// enable the overlay
     pub async fn enable(&self) {

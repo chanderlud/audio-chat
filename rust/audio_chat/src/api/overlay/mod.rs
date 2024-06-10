@@ -1,3 +1,4 @@
+#[cfg(windows)]
 use std::fmt::Display;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize};
 use std::sync::Arc;
@@ -7,6 +8,7 @@ use lazy_static::lazy_static;
 #[cfg(windows)]
 use widestring::error::ContainsNul;
 
+#[cfg(windows)]
 mod color;
 pub mod overlay;
 #[cfg(windows)]
@@ -21,29 +23,28 @@ lazy_static! {
     static ref FONT_COLOR: Arc<AtomicU32> = Default::default();
 }
 
+#[cfg(windows)]
 type Result<T> = std::result::Result<T, Error>;
 
+#[cfg(windows)]
 #[derive(Debug)]
 struct Error {
     _kind: ErrorKind,
 }
 
+#[cfg(windows)]
 #[derive(Debug)]
 enum ErrorKind {
-    #[cfg(windows)]
     CreateWindow,
-    #[cfg(windows)]
     ContainsNul,
 }
 
+#[cfg(windows)]
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self._kind {
-            #[cfg(windows)]
             ErrorKind::CreateWindow => write!(f, "failed to create window"),
-            #[cfg(windows)]
             ErrorKind::ContainsNul => write!(f, "string contains nul byte"),
-            _ => write!(f, "unknown error"),
         }
     }
 }
@@ -57,12 +58,14 @@ impl From<ContainsNul<u16>> for Error {
     }
 }
 
+#[cfg(windows)]
 impl From<ErrorKind> for Error {
     fn from(kind: ErrorKind) -> Self {
         Error { _kind: kind }
     }
 }
 
+#[cfg(windows)]
 #[cfg(test)]
 mod tests {
     use fast_log::Config;

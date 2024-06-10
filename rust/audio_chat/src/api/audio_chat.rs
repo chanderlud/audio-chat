@@ -1743,24 +1743,22 @@ async fn call_controller(
                     disconnected_at = Instant::now();
                     // notify the ui in 2 seconds if the disconnect hasn't ended
                     notify_ui = disconnected_at + disconnect_duration;
-                } else {
-                    if is_receiving && remote_is_receiving {
-                        let elapsed = disconnected_at.elapsed();
-                        info!("reconnected after {}ms interruption", elapsed.as_millis());
+                } else if is_receiving && remote_is_receiving {
+                    let elapsed = disconnected_at.elapsed();
+                    info!("reconnected after {}ms interruption", elapsed.as_millis());
 
-                        // update the call state in the UI
-                        (call_state.lock().await)(false).await;
-                        // record the disconnect
-                        disconnect_durations.push_back((disconnected_at, elapsed));
-                        // prevents any notification to the ui as audio is being received
-                        notify_ui = Instant::now() + Duration::from_secs(86400 * 365 * 30);
-                        // set the overlay to connected
-                        CONNECTED.store(true, Relaxed);
-                    } else if is_receiving ^ remote_is_receiving {
-                        info!("partial reconnect r={} rr={}", is_receiving, remote_is_receiving);
-                    } else {
-                        info!("full disconnect r={} rr={}", is_receiving, remote_is_receiving)
-                    }
+                    // update the call state in the UI
+                    (call_state.lock().await)(false).await;
+                    // record the disconnect
+                    disconnect_durations.push_back((disconnected_at, elapsed));
+                    // prevents any notification to the ui as audio is being received
+                    notify_ui = Instant::now() + Duration::from_secs(86400 * 365 * 30);
+                    // set the overlay to connected
+                    CONNECTED.store(true, Relaxed);
+                } else if is_receiving ^ remote_is_receiving {
+                    info!("partial reconnect r={} rr={}", is_receiving, remote_is_receiving);
+                } else {
+                    info!("full disconnect r={} rr={}", is_receiving, remote_is_receiving)
                 }
             },
             // receives when the receiving state changes
