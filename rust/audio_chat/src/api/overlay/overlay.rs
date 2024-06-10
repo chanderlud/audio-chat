@@ -1,8 +1,8 @@
 use std::mem;
 use std::ptr::{null, null_mut};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize};
 use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize};
+use std::sync::Arc;
 use std::time::Duration;
 
 use flutter_rust_bridge::frb;
@@ -20,13 +20,13 @@ use winapi::shared::windef::HWND;
 use winapi::um::winuser::{DispatchMessageW, TranslateMessage};
 #[cfg(windows)]
 use winapi::um::winuser::{
-    GetMessageW, GetMonitorInfoA, InvalidateRect, MONITOR_DEFAULTTONEAREST, MonitorFromWindow, MONITORINFO,
-    MoveWindow, SendMessageA, ShowWindow, SW_HIDE, SW_SHOW, WM_CLOSE,
+    GetMessageW, GetMonitorInfoA, InvalidateRect, MonitorFromWindow, MoveWindow, SendMessageA,
+    ShowWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST, SW_HIDE, SW_SHOW, WM_CLOSE,
 };
 
-use crate::api::overlay::{BACKGROUND_COLOR, FONT_COLOR, FONT_HEIGHT};
 #[cfg(windows)]
 use crate::api::overlay::windows;
+use crate::api::overlay::{BACKGROUND_COLOR, FONT_COLOR, FONT_HEIGHT};
 
 #[frb(opaque)]
 #[derive(Clone)]

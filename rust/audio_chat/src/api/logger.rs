@@ -9,7 +9,7 @@ use fast_log::Config;
 use flutter_rust_bridge::frb;
 use gag::Redirect;
 use lazy_static::lazy_static;
-use log::{info, LevelFilter, warn};
+use log::{info, warn, LevelFilter};
 use parking_lot::RwLock;
 
 use crate::frb_generated::StreamSink;
@@ -32,11 +32,13 @@ pub fn init_logger() {
             GAG.lock().unwrap().replace(gag);
         }
 
-        let level = if cfg!(debug_assertions) {
-            LevelFilter::Debug
-        } else {
-            LevelFilter::Warn
-        };
+        // let level = if cfg!(debug_assertions) {
+        //     LevelFilter::Debug
+        // } else {
+        //     LevelFilter::Warn
+        // };
+
+        let level = LevelFilter::Debug;
 
         assert!(
             level <= log::STATIC_MAX_LEVEL,

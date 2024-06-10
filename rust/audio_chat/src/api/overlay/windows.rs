@@ -7,36 +7,32 @@ use widestring::U16CString;
 use winapi::shared::minwindef::{BYTE, HINSTANCE, LPARAM, LRESULT, UINT, WPARAM};
 use winapi::shared::windef::{HWND, POINT, RECT, SIZE};
 use winapi::um::libloaderapi::GetModuleHandleA;
-use winapi::um::wingdi::{AC_SRC_ALPHA, AC_SRC_OVER, BLENDFUNCTION, CreateCompatibleDC, DeleteDC};
+use winapi::um::wingdi::{CreateCompatibleDC, DeleteDC, AC_SRC_ALPHA, AC_SRC_OVER, BLENDFUNCTION};
 use winapi::um::wingdi::{DeleteObject, SelectObject};
 use winapi::um::winuser::{
-    BeginPaint, CreateWindowExW, CS_HREDRAW, CS_VREDRAW, DefWindowProcW, DestroyWindow, EndPaint,
-    GetClientRect, GetDC, HWND_TOPMOST, PostQuitMessage, RegisterClassW,
-    ReleaseDC, SetWindowPos, ShowWindow, SW_HIDE, SWP_NOMOVE, SWP_NOSIZE,
-    ULW_ALPHA, UpdateLayeredWindow, UpdateWindow, WNDCLASSW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
-    WS_POPUP, WS_VISIBLE,
+    BeginPaint, CreateWindowExW, DefWindowProcW, DestroyWindow, EndPaint, GetClientRect, GetDC,
+    PostQuitMessage, RegisterClassW, ReleaseDC, SetWindowPos, ShowWindow, UpdateLayeredWindow,
+    UpdateWindow, CS_HREDRAW, CS_VREDRAW, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE, ULW_ALPHA,
+    WNDCLASSW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
 };
 use winapi::um::winuser::{WM_CLOSE, WM_CREATE, WM_DESTROY, WM_PAINT};
 
 use gdiplus_sys2::{
     GdipCreateBitmapFromScan0, GdipCreateFont, GdipCreateFontFamilyFromName,
     GdipCreateHBITMAPFromBitmap, GdipCreateSolidFill, GdipDrawString, GdipFillRectangle,
-    GdipGetImageGraphicsContext, GdiplusStartup, GdiplusStartupInput,
-    GdipMeasureString, GdipSetTextRenderingHint, GdipStringFormatGetGenericDefault, GpFont, GpGraphics,
-    GpStringFormat, REAL, RectF,
+    GdipGetImageGraphicsContext, GdipMeasureString, GdipSetTextRenderingHint,
+    GdipStringFormatGetGenericDefault, GdiplusStartup, GdiplusStartupInput, GpFont, GpGraphics,
+    GpStringFormat, RectF, REAL,
 };
 
-use crate::api::overlay::{BACKGROUND_COLOR, CONNECTED, ErrorKind, FONT_COLOR, FONT_HEIGHT, LATENCY, LOSS, Result};
-use crate::api::overlay::color::{BAD_COLOR, percent_to_color};
+use crate::api::overlay::color::{percent_to_color, BAD_COLOR};
+use crate::api::overlay::{
+    ErrorKind, Result, BACKGROUND_COLOR, CONNECTED, FONT_COLOR, FONT_HEIGHT, LATENCY, LOSS,
+};
 
 pub(crate) const CLASS_NAME: &str = "audio_chat_overlay";
 
-pub(crate) unsafe fn build_window(
-    width: i32,
-    height: i32,
-    x: i32,
-    y: i32,
-) -> Result<HWND> {
+pub(crate) unsafe fn build_window(width: i32, height: i32, x: i32, y: i32) -> Result<HWND> {
     let input: GdiplusStartupInput = GdiplusStartupInput {
         GdiplusVersion: 1,
         DebugEventCallback: mem::zeroed(),

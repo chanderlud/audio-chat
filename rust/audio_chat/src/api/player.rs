@@ -1,12 +1,12 @@
 use std::mem;
-use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
+use std::sync::Arc;
 
 use atomic_float::AtomicF32;
-use cpal::{Host, SampleFormat};
 use cpal::traits::{DeviceTrait, StreamTrait};
-use flutter_rust_bridge::{frb, spawn_blocking_with};
+use cpal::{Host, SampleFormat};
 use flutter_rust_bridge::spawn;
+use flutter_rust_bridge::{frb, spawn_blocking_with};
 use kanal::{bounded_async, Sender};
 use log::error;
 use nnnoiseless::FRAME_SIZE;
@@ -16,7 +16,7 @@ use tokio::sync::Notify;
 use tokio::time::sleep;
 
 use crate::api::audio_chat::{
-    db_to_multiplier, DeviceName, get_output_device, mul, resampler_factory, SendStream,
+    db_to_multiplier, get_output_device, mul, resampler_factory, DeviceName, SendStream,
 };
 use crate::api::error::{Error, ErrorKind};
 use crate::api::items::AudioHeader;

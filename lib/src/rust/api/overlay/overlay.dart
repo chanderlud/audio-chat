@@ -23,9 +23,11 @@ class Overlay extends RustOpaque {
         RustLib.instance.api.rust_arc_decrement_strong_count_OverlayPtr,
   );
 
+  /// disable the overlay
   Future<void> disable({dynamic hint}) => RustLib.instance.api
       .crateApiOverlayOverlayOverlayDisable(that: this, hint: hint);
 
+  /// enable the overlay
   Future<void> enable({dynamic hint}) => RustLib.instance.api
       .crateApiOverlayOverlayOverlayEnable(that: this, hint: hint);
 
@@ -65,6 +67,7 @@ class Overlay extends RustOpaque {
           fontColor: fontColor,
           hint: hint);
 
+  /// access the screen resolution for overlay positioning in the front end
   (int, int) screenResolution({dynamic hint}) => RustLib.instance.api
       .crateApiOverlayOverlayOverlayScreenResolution(that: this, hint: hint);
 

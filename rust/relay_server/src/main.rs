@@ -43,13 +43,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             auto_nat: autonat::Behaviour::new(
                 local_key.public().to_peer_id(),
                 autonat::Config {
-                    use_connected: false,
-                    only_global_ips: false,
                     ..Default::default()
                 },
             ),
         })?
-        .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(u64::MAX)))
+        .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(30)))
         .build();
 
     // Listen on all interfaces

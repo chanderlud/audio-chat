@@ -60,7 +60,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.0.0-dev.36';
 
   @override
-  int get rustContentHash => -127771690;
+  int get rustContentHash => 879807194;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -154,7 +154,7 @@ abstract class RustLibApi extends BaseApi {
   Future<void> crateApiAudioChatDartNotifyNotified(
       {required DartNotify that, dynamic hint});
 
-  Future<String> crateApiAudioChatNetworkConfigGetRelay(
+  Future<String> crateApiAudioChatNetworkConfigGetRelayAddress(
       {required NetworkConfig that, dynamic hint});
 
   Future<String> crateApiAudioChatNetworkConfigGetRelayId(
@@ -163,7 +163,7 @@ abstract class RustLibApi extends BaseApi {
   NetworkConfig crateApiAudioChatNetworkConfigNew(
       {required String relayAddress, required String relayId, dynamic hint});
 
-  Future<void> crateApiAudioChatNetworkConfigSetRelay(
+  Future<void> crateApiAudioChatNetworkConfigSetRelayAddress(
       {required NetworkConfig that,
       required String relayAddress,
       dynamic hint});
@@ -1018,7 +1018,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<String> crateApiAudioChatNetworkConfigGetRelay(
+  Future<String> crateApiAudioChatNetworkConfigGetRelayAddress(
       {required NetworkConfig that, dynamic hint}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
@@ -1032,16 +1032,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         decodeSuccessData: sse_decode_String,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiAudioChatNetworkConfigGetRelayConstMeta,
+      constMeta: kCrateApiAudioChatNetworkConfigGetRelayAddressConstMeta,
       argValues: [that],
       apiImpl: this,
       hint: hint,
     ));
   }
 
-  TaskConstMeta get kCrateApiAudioChatNetworkConfigGetRelayConstMeta =>
+  TaskConstMeta get kCrateApiAudioChatNetworkConfigGetRelayAddressConstMeta =>
       const TaskConstMeta(
-        debugName: "NetworkConfig_get_relay",
+        debugName: "NetworkConfig_get_relay_address",
         argNames: ["that"],
       );
 
@@ -1102,7 +1102,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<void> crateApiAudioChatNetworkConfigSetRelay(
+  Future<void> crateApiAudioChatNetworkConfigSetRelayAddress(
       {required NetworkConfig that,
       required String relayAddress,
       dynamic hint}) {
@@ -1119,16 +1119,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: sse_decode_dart_error,
       ),
-      constMeta: kCrateApiAudioChatNetworkConfigSetRelayConstMeta,
+      constMeta: kCrateApiAudioChatNetworkConfigSetRelayAddressConstMeta,
       argValues: [that, relayAddress],
       apiImpl: this,
       hint: hint,
     ));
   }
 
-  TaskConstMeta get kCrateApiAudioChatNetworkConfigSetRelayConstMeta =>
+  TaskConstMeta get kCrateApiAudioChatNetworkConfigSetRelayAddressConstMeta =>
       const TaskConstMeta(
-        debugName: "NetworkConfig_set_relay",
+        debugName: "NetworkConfig_set_relay_address",
         argNames: ["that", "relayAddress"],
       );
 

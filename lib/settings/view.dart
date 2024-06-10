@@ -85,7 +85,8 @@ class SettingsPageState extends State<SettingsPage> {
                           : Theme.of(context).colorScheme.surface,
                       borderRadius: BorderRadius.circular(5),
                     ),
-                    child: const Text('Audio & Video', style: TextStyle(fontSize: 18)),
+                    child: const Text('Audio & Video',
+                        style: TextStyle(fontSize: 18)),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -139,7 +140,7 @@ class SettingsPageState extends State<SettingsPage> {
                   },
                   child: Container(
                     padding:
-                    const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
+                        const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
                     width: 175,
                     decoration: BoxDecoration(
                       color: route == 3
@@ -147,13 +148,12 @@ class SettingsPageState extends State<SettingsPage> {
                           : Theme.of(context).colorScheme.surface,
                       borderRadius: BorderRadius.circular(5),
                     ),
-                    child: const Text('Interface',
-                        style: TextStyle(fontSize: 18)),
+                    child:
+                        const Text('Interface', style: TextStyle(fontSize: 18)),
                   ),
                 ),
                 // overlay is only available on windows
-                if (Platform.isWindows)
-                  const SizedBox(height: 12),
+                if (Platform.isWindows) const SizedBox(height: 12),
                 if (Platform.isWindows)
                   InkWell(
                     onTap: () {
@@ -162,8 +162,8 @@ class SettingsPageState extends State<SettingsPage> {
                       });
                     },
                     child: Container(
-                      padding:
-                      const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
+                      padding: const EdgeInsets.symmetric(
+                          vertical: 5, horizontal: 10),
                       width: 175,
                       decoration: BoxDecoration(
                         color: route == 4
@@ -172,7 +172,7 @@ class SettingsPageState extends State<SettingsPage> {
                         borderRadius: BorderRadius.circular(5),
                       ),
                       child:
-                      const Text('Overlay', style: TextStyle(fontSize: 18)),
+                          const Text('Overlay', style: TextStyle(fontSize: 18)),
                     ),
                   ),
               ],
@@ -752,7 +752,7 @@ class NetworkSettingsState extends State<NetworkSettings> {
   }
 
   Future<void> _initialize() async {
-    _relayAddress = await widget.controller.networkConfig.getRelay();
+    _relayAddress = await widget.controller.networkConfig.getRelayAddress();
     _relayPeerId = await widget.controller.networkConfig.getRelayId();
 
     _relayAddressInput.text = _relayAddress;
@@ -824,7 +824,8 @@ class OverlaySettingsState extends State<OverlaySettings> {
             Button(
               text: overlayVisible ? "Hide overlay" : "Show overlay",
               onPressed: () {
-                if (widget.stateController.isCallActive || !widget.controller.overlayConfig.enabled) {
+                if (widget.stateController.isCallActive ||
+                    !widget.controller.overlayConfig.enabled) {
                   return;
                 } else if (overlayVisible) {
                   widget.overlay.hide();
@@ -836,12 +837,15 @@ class OverlaySettingsState extends State<OverlaySettings> {
                   overlayVisible = !overlayVisible;
                 });
               },
-              disabled: widget.stateController.isCallActive || !widget.controller.overlayConfig.enabled,
+              disabled: widget.stateController.isCallActive ||
+                  !widget.controller.overlayConfig.enabled,
               width: 100,
             ),
             const SizedBox(width: 20),
             Button(
-              text: widget.controller.overlayConfig.enabled ? "Disable overlay" : "Enable overlay",
+              text: widget.controller.overlayConfig.enabled
+                  ? "Disable overlay"
+                  : "Enable overlay",
               onPressed: () async {
                 if (widget.controller.overlayConfig.enabled) {
                   await widget.overlay.disable();
@@ -898,30 +902,38 @@ class OverlaySettingsState extends State<OverlaySettings> {
               children: [
                 const Text('Background Color', style: TextStyle(fontSize: 18)),
                 const SizedBox(height: 10),
-                Button(text: 'Change', onPressed: () {
-                  colorPicker(context, (Color color) {
-                    widget.overlay.setBackgroundColor(backgroundColor: argb(color));
-                    widget.controller.overlayConfig.backgroundColor = color;
-                    widget.controller.saveOverlayConfig();
-                    setState(() {});
-                  }, widget.controller.overlayConfig.backgroundColor);
-                }, disabled: false),
+                Button(
+                    text: 'Change',
+                    onPressed: () {
+                      colorPicker(context, (Color color) {
+                        widget.overlay
+                            .setBackgroundColor(backgroundColor: argb(color));
+                        widget.controller.overlayConfig.backgroundColor = color;
+                        widget.controller.saveOverlayConfig();
+                        setState(() {});
+                      }, widget.controller.overlayConfig.backgroundColor);
+                    },
+                    disabled: false),
               ],
             ),
             const SizedBox(width: 40),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Primary Font Color', style: TextStyle(fontSize: 18)),
+                const Text('Primary Font Color',
+                    style: TextStyle(fontSize: 18)),
                 const SizedBox(height: 10),
-                Button(text: 'Change', onPressed: () {
-                  colorPicker(context, (Color color) {
-                    widget.overlay.setFontColor(fontColor: argb(color));
-                    widget.controller.overlayConfig.fontColor = color;
-                    widget.controller.saveOverlayConfig();
-                    setState(() {});
-                  }, widget.controller.overlayConfig.fontColor);
-                }, disabled: false),
+                Button(
+                    text: 'Change',
+                    onPressed: () {
+                      colorPicker(context, (Color color) {
+                        widget.overlay.setFontColor(fontColor: argb(color));
+                        widget.controller.overlayConfig.fontColor = color;
+                        widget.controller.saveOverlayConfig();
+                        setState(() {});
+                      }, widget.controller.overlayConfig.fontColor);
+                    },
+                    disabled: false),
               ],
             )
           ],
@@ -1097,18 +1109,18 @@ class OverlayPositionWidgetState extends State<OverlayPositionWidget> {
                   onPanStart: (_) => _startDragging(),
                   onPanEnd: (_) => _stopDragging(),
                   child: Container(
-                    decoration: BoxDecoration(
-                      color: widget.controller.overlayConfig.backgroundColor,
-                      border: Border.all(color: Colors.yellow.shade400, width: 2),
-                    ),
-                    child: MouseRegion(
-                      cursor: SystemMouseCursors.move,
-                      child: SizedBox(
-                        width: _width,
-                        height: _height,
+                      decoration: BoxDecoration(
+                        color: widget.controller.overlayConfig.backgroundColor,
+                        border:
+                            Border.all(color: Colors.yellow.shade400, width: 2),
                       ),
-                    )
-                  ),
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.move,
+                        child: SizedBox(
+                          width: _width,
+                          height: _height,
+                        ),
+                      )),
                 ),
               ),
               Positioned(
@@ -1120,7 +1132,10 @@ class OverlayPositionWidgetState extends State<OverlayPositionWidget> {
                   onPanEnd: (_) => _stopResizing(),
                   child: const MouseRegion(
                     cursor: SystemMouseCursors.resizeDownRight,
-                    child: SizedBox(width: 20, height: 20,),
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                    ),
                   ),
                 ),
               ),
@@ -1132,7 +1147,8 @@ class OverlayPositionWidgetState extends State<OverlayPositionWidget> {
   }
 }
 
-void colorPicker(BuildContext context, void Function(Color) changeColor, Color currentColor) {
+void colorPicker(BuildContext context, void Function(Color) changeColor,
+    Color currentColor) {
   showDialog(
     context: context,
     builder: (BuildContext context) {

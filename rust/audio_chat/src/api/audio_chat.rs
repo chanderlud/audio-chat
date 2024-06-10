@@ -1,52 +1,55 @@
 use std::collections::{HashMap, VecDeque};
 use std::mem;
-pub use std::net::{IpAddr, SocketAddr};
 use std::net::Ipv4Addr;
+pub use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_throttle::RateLimiter;
 use atomic_float::AtomicF32;
-use cpal::{Device, Stream as CpalStream};
-pub use cpal::Host;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use flutter_rust_bridge::{DartFnFuture, frb, spawn, spawn_blocking_with};
-use flutter_rust_bridge::for_generated::futures::{Sink, SinkExt};
+pub use cpal::Host;
+use cpal::{Device, Stream as CpalStream};
 use flutter_rust_bridge::for_generated::futures::stream::{SplitSink, SplitStream};
+use flutter_rust_bridge::for_generated::futures::{Sink, SinkExt};
+use flutter_rust_bridge::{frb, spawn, spawn_blocking_with, DartFnFuture};
 use kanal::{
-    AsyncReceiver, AsyncSender, bounded, bounded_async, Receiver, Sender, unbounded_async,
+    bounded, bounded_async, unbounded_async, AsyncReceiver, AsyncSender, Receiver, Sender,
 };
-use libp2p::{dcutr, identify, Multiaddr, noise, PeerId, ping, Stream, StreamProtocol, tcp, yamux};
 use libp2p::futures::StreamExt;
 use libp2p::identity::Keypair;
 use libp2p::multiaddr::Protocol;
-use libp2p::swarm::SwarmEvent;
+use libp2p::swarm::{ConnectionId, SwarmEvent};
+use libp2p::{
+    autonat, dcutr, identify, noise, ping, tcp, yamux, Multiaddr, PeerId, Stream, StreamProtocol,
+};
 use libp2p_stream::Control;
 use log::{debug, error, info, warn};
-use nnnoiseless::{DenoiseState, FRAME_SIZE, RnnModel};
+use nnnoiseless::{DenoiseState, RnnModel, FRAME_SIZE};
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelRefMutIterator;
 use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::lookup_host;
 use tokio::select;
 use tokio::sync::{Mutex, Notify, RwLock};
-use tokio::time::{Instant, interval, sleep_until, timeout};
+use tokio::time::{interval, sleep_until, timeout, Instant};
 use tokio_util::bytes::Bytes;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tokio_util::compat::{Compat, FuturesAsyncReadCompatExt};
 
-use crate::{Behaviour, BehaviourEvent};
 use crate::api::contact::Contact;
 use crate::api::error::{DartError, Error, ErrorKind};
-use crate::api::items::{AudioHeader, message, Message};
-use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
+use crate::api::items::{message, AudioHeader, Message};
 use crate::api::overlay::overlay::Overlay;
+use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
 use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
+use crate::{Behaviour, BehaviourEvent};
 
 type Result<T> = std::result::Result<T, Error>;
 pub(crate) type DeviceName = Arc<Mutex<Option<String>>>;
@@ -134,7 +137,7 @@ pub struct AudioChat {
 
     /// Prompts the user to accept a call
     accept_call:
-    Arc<Mutex<dyn Fn(String, Option<Vec<u8>>, DartNotify) -> DartFnFuture<bool> + Send>>,
+        Arc<Mutex<dyn Fn(String, Option<Vec<u8>>, DartNotify) -> DartFnFuture<bool> + Send>>,
 
     /// Alerts the UI that a call has ended
     call_ended: Arc<Mutex<dyn Fn(String, bool) -> DartFnFuture<()> + Send>>,
@@ -441,35 +444,27 @@ impl AudioChat {
                     )),
                     dcutr: dcutr::Behaviour::new(keypair.public().to_peer_id()),
                     stream: libp2p_stream::Behaviour::new(),
-                    // auto_nat: autonat::Behaviour::new(
-                    //     keypair.public().to_peer_id(),
-                    //     autonat::Config {
-                    //         retry_interval: Duration::from_secs(10),
-                    //         refresh_interval: Duration::from_secs(30),
-                    //         boot_delay: Duration::from_secs(5),
-                    //         throttle_server_period: Duration::ZERO,
-                    //         only_global_ips: true,
-                    //         ..Default::default()
-                    //     },
-                    // ),
+                    auto_nat: autonat::Behaviour::new(
+                        keypair.public().to_peer_id(),
+                        autonat::Config {
+                            ..Default::default()
+                        },
+                    ),
                 })
                 .map_err(|_| ErrorKind::SwarmBuild)?
-                // TODO does having no timeout cause some of the issues which were being caused by the autoNAT setup?
-                .with_swarm_config(|cfg| {
-                    cfg.with_idle_connection_timeout(Duration::from_secs(30))
-                })
+                .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(30)))
                 .build();
 
         let listen_addr_quic = Multiaddr::empty()
             .with(Protocol::from(Ipv4Addr::UNSPECIFIED))
-            .with(Protocol::Udp(0))
+            .with(Protocol::Udp(*self.network_config.listen_port.read().await))
             .with(Protocol::QuicV1);
 
         swarm.listen_on(listen_addr_quic)?;
 
         let listen_addr_tcp = Multiaddr::empty()
             .with(Protocol::from(Ipv4Addr::UNSPECIFIED))
-            .with(Protocol::Tcp(0));
+            .with(Protocol::Tcp(*self.network_config.listen_port.read().await));
 
         swarm.listen_on(listen_addr_tcp)?;
 
@@ -481,13 +476,13 @@ impl AudioChat {
             .with(Protocol::Udp(socket_address.port()))
             .with(Protocol::QuicV1)
             .with_p2p(relay_identity)
-            .unwrap();
+            .map_err(|_| ErrorKind::SwarmBuild)?;
 
         let relay_address_tcp = Multiaddr::empty()
             .with(Protocol::from(socket_address.ip()))
             .with(Protocol::Tcp(socket_address.port()))
             .with_p2p(relay_identity)
-            .unwrap();
+            .map_err(|_| ErrorKind::SwarmBuild)?;
 
         let relay_address;
 
@@ -514,15 +509,15 @@ impl AudioChat {
                 SwarmEvent::Behaviour(BehaviourEvent::Ping(_)) => (),
                 SwarmEvent::NewExternalAddrCandidate { .. } => (),
                 SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Sent {
-                                                                   ..
-                                                               })) => {
+                    ..
+                })) => {
                     info!("Told relay its public address");
                     told_relay_observed_addr = true;
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received {
-                                                                   info: identify::Info { .. },
-                                                                   ..
-                                                               })) => {
+                    info: identify::Info { .. },
+                    ..
+                })) => {
                     info!("Relay told us our observed address");
                     learned_observed_addr = true;
                 }
@@ -537,12 +532,6 @@ impl AudioChat {
                 break;
             }
         }
-
-        // TODO this doesnt really seem to do much either
-        // swarm
-        //     .behaviour_mut()
-        //     .auto_nat
-        //     .add_server(relay_identity, Some(relay_address.clone()));
 
         swarm.listen_on(relay_address.clone())?;
 
@@ -581,7 +570,7 @@ impl AudioChat {
                                 info!("stream accepted for new session with {}", peer);
 
                                 self_clone
-                                    ._start_session(contact, None, stream.compat())
+                                    ._start_session(contact, None, stream)
                                     .await;
                             }
                         } else {
@@ -597,77 +586,141 @@ impl AudioChat {
             }
         });
 
+        let mut peer_states: HashMap<PeerId, PeerState> = HashMap::new();
+
         loop {
             select! {
                 result = swarm.next() => {
                     if let Some(event) = result {
                         match event {
-                            SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
-                                info!("Connection established with {} endpoint={:?}", peer_id, endpoint);
-
-                                if self.session_states.read().await.contains_key(&peer_id) {
-                                    warn!("received connection established for peer already in session");
+                            SwarmEvent::ConnectionEstablished { peer_id, endpoint, connection_id, .. } => {
+                                if peer_id == *self.network_config.relay_id.read().await {
                                     continue;
+                                }
+
+                                info!("Connection {} established with {} endpoint={:?}", connection_id, peer_id, endpoint);
+
+                                if let Some(peer_state) = peer_states.get_mut(&peer_id) {
+                                    peer_state.connections.insert(connection_id, None);
+                                    continue; // the other logic only runs once
+                                } else {
+                                    peer_states.insert(peer_id, PeerState::new(endpoint.is_dialer(), connection_id));
                                 }
 
                                 let contact_option = (self.get_contact.lock().await)(peer_id.to_bytes()).await;
 
                                 if let Some(contact) = contact_option {
-                                    if endpoint.is_dialer() {
-                                        let mut control = swarm.behaviour().stream.new_control();
-
-                                        match control.open_stream(peer_id, PROTOCOL).await {
-                                            Ok(stream) => {
-                                                debug!("opened stream with {}, starting new session", peer_id);
-                                                self._start_session(contact, Some(control), stream.compat()).await;
-                                            }
-                                            Err(error) => {
-                                                error!("error opening stream: {}", error);
-                                                (self.session_status.lock().await)(contact.peer_id(), "Inactive".to_string()).await;
-                                            }
-                                        }
-                                    } else {
-                                        // an incoming stream should be received
+                                    if endpoint.is_listener() {
+                                        // a stream will be established by the other client
                                         (self.session_status.lock().await)(contact.peer_id(), "Connecting".to_string()).await;
                                     }
-                                } else if peer_id != *self.network_config.relay_id.read().await {
+                                } else {
                                     warn!("Received a connection from an unknown peer: {:?}", peer_id);
 
                                     if swarm.disconnect_peer_id(peer_id).is_err() {
                                         error!("Error disconnecting from unknown peer");
                                     }
+
+                                    peer_states.remove(&peer_id);
                                 }
                             }
                             SwarmEvent::OutgoingConnectionError { peer_id, error, connection_id } => {
-                                info!("Outgoing connection error for connection {}", connection_id);
-
                                 if let Some(peer_id) = peer_id {
-                                    if !self.session_states.read().await.contains_key(&peer_id) {
-                                        error!("Session initialization failed for {} because {}", peer_id, error);
-                                        // if an outgoing error occurs before the session is established, the peer will not connect and the status should be updated
-                                        (self.session_status.lock().await)(peer_id.to_string(), "Inactive".to_string()).await;
+                                    if let Some(peer_state) = peer_states.get_mut(&peer_id) {
+                                        warn!("Outgoing connection failed for {} because {}", peer_id, error);
+                                        peer_state.connections.remove(&connection_id);
                                     } else {
-                                        warn!("Outgoing connection failed for active session with {} because {}", peer_id, error);
+                                        error!("Session initialization failed for {} because {}", peer_id, error);
+                                        // if an outgoing error occurs when no connection is active, the session initialization failed
+                                        (self.session_status.lock().await)(peer_id.to_string(), "Inactive".to_string()).await;
                                     }
                                 }
                             },
-                            SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
-                                warn!("Connection closed with {} cause={:?}", peer_id, cause);
-                            },
-                            SwarmEvent::Behaviour(BehaviourEvent::Ping(event)) => {
-                                // update the latency for the peer's session
-                                if let Some(state) = self.session_states.read().await.get(&event.peer) {
-                                    state.latency.store(event.result.map(|duration| duration.as_millis() as usize).unwrap_or(0), Relaxed);
+                            SwarmEvent::ConnectionClosed { peer_id, cause, connection_id, .. } => {
+                                warn!("Connection {} closed with {} cause={:?}", connection_id, peer_id, cause);
+
+                                if let Some(peer_state) = peer_states.get_mut(&peer_id) {
+                                    peer_state.connections.remove(&connection_id);
                                 }
                             },
-                            SwarmEvent::Behaviour(BehaviourEvent::Dcutr(event)) => {
-                                match event.result {
-                                    Ok(connection_id) => info!("DCUTR connection established with {} id={}", event.remote_peer_id, connection_id),
-                                    Err(error) => error!("DCUTR connection error for {}: {}", event.remote_peer_id, error),
+                            SwarmEvent::Behaviour(BehaviourEvent::Ping(event)) => {
+                                let latency = event.result.map(|duration| duration.as_millis()).ok();
+
+                                // update the latency for the peer's session
+                                if let Some(state) = self.session_states.read().await.get(&event.peer) {
+                                    state.latency.store(latency.unwrap_or(0) as usize, Relaxed);
+                                    continue; // the other logic is not needed while a session is active
+                                }
+
+                                // update the latency for the peer's connections
+                                if let Some(peer_state) = peer_states.get_mut(&event.peer) {
+                                    if let Some(connection_latency) = peer_state.connections.get_mut(&event.connection) {
+                                        *connection_latency = latency;
+                                    }
+
+                                    info!("connections: {:?}", peer_state.connections);
+
+                                    if !peer_state.dialer {
+                                        continue;
+                                    }
+
+                                    if peer_state.connections.iter().any(|(_, latency)| latency.is_none()) {
+                                        continue;
+                                    }
+
+                                    let connection = peer_state.connections.iter().min_by(|a, b| a.1.cmp(b.1));
+
+                                    if let Some((connection_id, _)) = connection {
+                                        info!("Using connection {} for {}", connection_id, event.peer);
+
+                                        for (id, _) in peer_state.connections.iter() {
+                                            if id != connection_id {
+                                                swarm.close_connection(*id);
+                                            }
+                                        }
+
+                                        let mut control = swarm.behaviour().stream.new_control();
+                                        let contact = (self.get_contact.lock().await)(event.peer.to_bytes()).await.unwrap();
+
+                                        // it may take multiple tries to open the stream because the of the RNG in the stream handler
+                                        loop {
+                                            if let Ok(stream) = control.open_stream(event.peer, PROTOCOL).await {
+                                                info!("opened stream with {} on connection {}, starting new session", event.peer, connection_id);
+                                                self._start_session(contact, Some(control), stream).await;
+                                                break;
+                                            }
+                                        }
+                                    } else {
+                                        warn!("No connection available for {}", event.peer);
+                                    }
+                                }
+                            },
+                            SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info })) => {
+                                info!("Received identify event from {}", peer_id);
+
+                                if let Some(peer_state) = peer_states.get_mut(&peer_id) {
+                                    info!("peer_state: {:?}", peer_state);
+
+                                    if peer_state.dialed || !peer_state.dialer {
+                                        continue;
+                                    } else {
+                                        peer_state.dialed = true;
+                                    }
+                                } else {
+                                    warn!("Received an identify event from an unknown peer: {:?}", peer_id);
+                                    continue;
+                                }
+
+                                info!("Received first identify event from {}", peer_id);
+
+                                for address in info.listen_addrs {
+                                    if let Err(error) = swarm.dial(address) {
+                                        error!("Error dialing {}: {}", peer_id, error);
+                                    }
                                 }
                             },
                             event => {
-                                debug!("Other swarm event: {:?}", event);
+                                debug!("other swarm event: {:?}", event);
                             },
                         }
                     } else {
@@ -678,13 +731,13 @@ impl AudioChat {
                 result = start.recv() => {
                     let peer_id = result?;
 
-                    // prevents starting a session for a peer who is already in a session
-                    if self.session_states.read().await.contains_key(&peer_id) {
-                        warn!("received session start for peer already in session");
+                    // prevents dialing a peer who is already connected
+                    if swarm.is_connected(&peer_id) {
+                        warn!("{} is already connected", peer_id);
                         continue;
                     }
 
-                    debug!("Dialing {} to establish session", peer_id);
+                    debug!("Dialing {} to establish connection", peer_id);
 
                     // dial the peer through the relay
                     if let Err(error) = swarm.dial(relay_address.clone().with(Protocol::P2p(peer_id))) {
@@ -707,8 +760,10 @@ impl AudioChat {
         &self,
         contact: Contact,
         control: Option<Control>,
-        stream: TransportStream,
+        stream: Stream,
     ) {
+        // stream.ignore_for_keep_alive();
+
         let message_channel = unbounded_async::<Message>();
         let (stream_sender, stream_receiver) = unbounded_async();
 
@@ -745,7 +800,7 @@ impl AudioChat {
                 .session(
                     contact,
                     control,
-                    stream,
+                    stream.compat(),
                     &state_clone,
                     message_channel,
                     stream_receiver,
@@ -777,7 +832,7 @@ impl AudioChat {
                 contact_clone.peer_id(),
                 "Inactive".to_string(),
             )
-                .await;
+            .await;
 
             info!("Session for {} cleaned up", contact_clone.nickname);
         });
@@ -1284,7 +1339,6 @@ impl AudioChat {
             let message_received = Arc::clone(&self.message_received);
             let call_state = Arc::clone(&self.call_state);
 
-            // TODO move this logic to the call controller
             select! {
                 result = input_handle => result?,
                 _ = output_handle => Ok(()),
@@ -1337,6 +1391,30 @@ impl AudioChat {
                 .host
                 .default_input_device()
                 .ok_or(ErrorKind::NoInputDevice.into()),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct PeerState {
+    /// when true the peer's identity addresses will not be dialed
+    dialed: bool,
+
+    dialer: bool,
+
+    /// a map of connections and their latencies
+    connections: HashMap<ConnectionId, Option<u128>>
+}
+
+impl PeerState {
+    fn new(dialer: bool, connection_id: ConnectionId) -> Self {
+        let mut connections = HashMap::new();
+        connections.insert(connection_id, None);
+
+        Self {
+            dialed: false,
+            dialer,
+            connections,
         }
     }
 }
@@ -1488,6 +1566,9 @@ pub struct NetworkConfig {
 
     /// The relay's peer id
     relay_id: Arc<RwLock<PeerId>>,
+
+    /// The libp2p port for the swarm
+    listen_port: Arc<RwLock<u16>>,
 }
 
 impl NetworkConfig {
@@ -1498,16 +1579,28 @@ impl NetworkConfig {
             relay_id: Arc::new(RwLock::new(
                 PeerId::from_str(&relay_id).map_err(Error::from)?,
             )),
+            listen_port: Arc::new(RwLock::new(0)),
         })
     }
 
-    // TODO try resolving domains here?
-    pub async fn set_relay(&self, relay_address: String) -> std::result::Result<(), DartError> {
-        *self.relay_address.write().await = relay_address.parse().map_err(Error::from)?;
-        Ok(())
+    // TODO test whether domain resolution works
+    pub async fn set_relay_address(
+        &self,
+        relay_address: String,
+    ) -> std::result::Result<(), DartError> {
+        if let Some(address) = lookup_host(&relay_address)
+            .await
+            .map_err(Error::from)?
+            .next()
+        {
+            *self.relay_address.write().await = address;
+            Ok(())
+        } else {
+            Err("Failed to resolve address".to_string().into())
+        }
     }
 
-    pub async fn get_relay(&self) -> String {
+    pub async fn get_relay_address(&self) -> String {
         self.relay_address.read().await.to_string()
     }
 
@@ -1551,7 +1644,7 @@ async fn call_controller(
 
     // the instant the session stopped receiving audio
     let mut disconnected_at = Instant::now();
-    
+
     // the instant the disconnect started and the duration of the disconnect
     let mut disconnect_durations: VecDeque<(Instant, Duration)> = VecDeque::new();
     // ticks to update the connection quality and remove old entries from `disconnect_durations`
@@ -1901,7 +1994,7 @@ fn input_processor(
 
     // output for 16 bit samples. the compiler does not recognize that it is used
     #[allow(unused_assignments)]
-        let mut int_buffer = [0; FRAME_SIZE];
+    let mut int_buffer = [0; FRAME_SIZE];
 
     // the position in pre_buf
     let mut position = 0;
@@ -2163,9 +2256,9 @@ async fn level_from_window(receiver: &AsyncReceiver<f32>, max: &mut f32) -> f32 
 
 /// Writes a protobuf message to the stream
 async fn write_message<M: prost::Message, W>(transport: &mut Transport<W>, message: M) -> Result<()>
-    where
-        W: AsyncWrite + Unpin,
-        Transport<W>: Sink<Bytes> + Unpin,
+where
+    W: AsyncWrite + Unpin,
+    Transport<W>: Sink<Bytes> + Unpin,
 {
     let len = message.encoded_len(); // get the length of the message
     let mut buffer = Vec::with_capacity(len);

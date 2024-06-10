@@ -1,6 +1,6 @@
 use std::fmt::Display;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize};
+use std::sync::Arc;
 
 use atomic_float::AtomicF64;
 use lazy_static::lazy_static;
@@ -64,9 +64,9 @@ mod tests {
     use log::{LevelFilter, Log};
     use tokio::time::sleep;
 
-    use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
     use crate::api::overlay::color::Color;
     use crate::api::overlay::overlay::Overlay;
+    use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
 
     #[tokio::test]
     async fn test_overlay() {
@@ -76,7 +76,7 @@ mod tests {
                 .file("tests.log")
                 .level(LevelFilter::Debug),
         )
-            .unwrap();
+        .unwrap();
 
         let bcolor = Color::new(0, 0, 0, 125);
         let fcolor = Color::new(255, 255, 255, 255);

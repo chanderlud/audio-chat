@@ -213,8 +213,8 @@ class NetworkConfig extends RustOpaque {
         RustLib.instance.api.rust_arc_decrement_strong_count_NetworkConfigPtr,
   );
 
-  Future<String> getRelay({dynamic hint}) => RustLib.instance.api
-      .crateApiAudioChatNetworkConfigGetRelay(that: this, hint: hint);
+  Future<String> getRelayAddress({dynamic hint}) => RustLib.instance.api
+      .crateApiAudioChatNetworkConfigGetRelayAddress(that: this, hint: hint);
 
   Future<String> getRelayId({dynamic hint}) => RustLib.instance.api
       .crateApiAudioChatNetworkConfigGetRelayId(that: this, hint: hint);
@@ -226,8 +226,8 @@ class NetworkConfig extends RustOpaque {
       RustLib.instance.api.crateApiAudioChatNetworkConfigNew(
           relayAddress: relayAddress, relayId: relayId, hint: hint);
 
-  Future<void> setRelay({required String relayAddress, dynamic hint}) =>
-      RustLib.instance.api.crateApiAudioChatNetworkConfigSetRelay(
+  Future<void> setRelayAddress({required String relayAddress, dynamic hint}) =>
+      RustLib.instance.api.crateApiAudioChatNetworkConfigSetRelayAddress(
           that: this, relayAddress: relayAddress, hint: hint);
 
   Future<void> setRelayId({required String relayId, dynamic hint}) =>
