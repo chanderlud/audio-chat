@@ -1968,27 +1968,36 @@ async fn statistics_collector(
     let mut input_max = 0_f32;
     let mut output_max = 0_f32;
 
-    let result = loop {
-        select! {
-            _ = interval.tick() => {
-                let statistics = Statistics {
-                    input_level: level_from_window(&input_receiver, &mut input_max).await,
-                    output_level: level_from_window(&output_receiver, &mut output_max).await,
-                    latency: latency.load(Relaxed),
-                    upload_bandwidth: upload_bandwidth.load(Relaxed),
-                    download_bandwidth: download_bandwidth.load(Relaxed),
-                    loss: LOSS.load(Relaxed),
-                };
+    let statistics_future = async {
+        loop {
+            interval.tick().await;
 
-                LATENCY.store(statistics.latency, Relaxed);
-                (callback.lock().await)(statistics).await;
-            }
-            _ = notify.notified() => {
-                debug!("Statistics collector ended");
-                break Ok(());
-            }
+            let statistics = Statistics {
+                input_level: level_from_window(&input_receiver, &mut input_max).await,
+                output_level: level_from_window(&output_receiver, &mut output_max).await,
+                latency: latency.load(Relaxed),
+                upload_bandwidth: upload_bandwidth.load(Relaxed),
+                download_bandwidth: download_bandwidth.load(Relaxed),
+                loss: LOSS.load(Relaxed),
+            };
+
+            LATENCY.store(statistics.latency, Relaxed);
+            (callback.lock().await)(statistics).await;
         }
     };
+
+    let control_future = async {
+        notify.notified().await;
+        // lock the callback to ensure the statistics future is cancel safe
+        _ = callback.lock().await;
+    };
+
+    select! {
+        _ = statistics_future => (),
+        _ = control_future => {
+            debug!("Statistics collector ended");
+        }
+    }
 
     // zero out the statistics when the collector ends
     let statistics = Statistics::default();
@@ -1998,7 +2007,7 @@ async fn statistics_collector(
     LOSS.store(0_f64, Relaxed);
     CONNECTED.store(false, Relaxed);
 
-    result
+    Ok(())
 }
 
 /// Processes the audio input and sends it to the sending socket
