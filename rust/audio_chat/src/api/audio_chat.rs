@@ -598,13 +598,14 @@ impl AudioChat {
                                     continue;
                                 }
 
-                                info!("Connection {} established with {} endpoint={:?}", connection_id, peer_id, endpoint);
+                                let relayed = endpoint.is_relayed();
+                                info!("Connection {} established with {} endpoint={:?} relayed={}", connection_id, peer_id, endpoint, relayed);
 
                                 if let Some(peer_state) = peer_states.get_mut(&peer_id) {
-                                    peer_state.connections.insert(connection_id, ConnectionState::new(endpoint.is_relayed()));
+                                    peer_state.connections.insert(connection_id, ConnectionState::new(relayed));
                                     continue; // the other logic only runs once
                                 } else {
-                                    peer_states.insert(peer_id, PeerState::new(endpoint.is_dialer(), connection_id));
+                                    peer_states.insert(peer_id, PeerState::new(endpoint.is_dialer(), connection_id, relayed));
                                 }
 
                                 let contact_option = (self.get_contact.lock().await)(peer_id.to_bytes()).await;
@@ -720,8 +721,6 @@ impl AudioChat {
                                 for address in info.listen_addrs {
                                     if address.ends_with(&Protocol::P2p(peer_id).into()) {
                                         continue;
-                                    } else {
-                                        debug!("Dialing {}", address);
                                     }
 
                                     if let Err(error) = swarm.dial(address) {
@@ -1417,9 +1416,9 @@ struct PeerState {
 }
 
 impl PeerState {
-    fn new(dialer: bool, connection_id: ConnectionId) -> Self {
+    fn new(dialer: bool, connection_id: ConnectionId, relayed: bool) -> Self {
         let mut connections = HashMap::new();
-        connections.insert(connection_id, ConnectionState::default());
+        connections.insert(connection_id, ConnectionState::new(relayed));
 
         Self {
             dialed: false,
@@ -1429,7 +1428,7 @@ impl PeerState {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct ConnectionState {
     latency: Option<u128>,
     relay: bool,
