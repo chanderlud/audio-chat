@@ -569,9 +569,7 @@ impl AudioChat {
                             } else {
                                 info!("stream accepted for new session with {}", peer);
 
-                                self_clone
-                                    ._start_session(contact, None, stream)
-                                    .await;
+                                self_clone._start_session(contact, None, stream).await;
                             }
                         } else {
                             warn!("Received a stream from an unknown peer: {:?}", peer);
@@ -599,19 +597,20 @@ impl AudioChat {
                                 }
 
                                 let relayed = endpoint.is_relayed();
+                                let listener = endpoint.is_listener();
                                 info!("Connection {} established with {} endpoint={:?} relayed={}", connection_id, peer_id, endpoint, relayed);
 
                                 if let Some(peer_state) = peer_states.get_mut(&peer_id) {
                                     peer_state.connections.insert(connection_id, ConnectionState::new(relayed));
                                     continue; // the other logic only runs once
                                 } else {
-                                    peer_states.insert(peer_id, PeerState::new(endpoint.is_dialer(), connection_id, relayed));
+                                    peer_states.insert(peer_id, PeerState::new(!listener, connection_id, relayed));
                                 }
 
                                 let contact_option = (self.get_contact.lock().await)(peer_id.to_bytes()).await;
 
                                 if let Some(contact) = contact_option {
-                                    if endpoint.is_listener() {
+                                    if listener {
                                         // a stream will be established by the other client
                                         (self.session_status.lock().await)(contact.peer_id(), "Connecting".to_string()).await;
                                     }
@@ -659,21 +658,31 @@ impl AudioChat {
                                         connection_latency.latency = latency;
                                     }
 
-                                    info!("connections: {:?}", peer_state.connections);
-
                                     if !peer_state.dialer {
                                         continue;
                                     }
+
+                                    info!("connection states: {:?}", peer_state.connections);
 
                                     if peer_state.connections.iter().any(|(_, state)| state.latency.is_none()) {
                                         debug!("not trying to establish a session with {} because not all connections have latency", event.peer);
                                         continue;
                                     } else if peer_state.connections.iter().all(|(_, state)| state.relay) {
+                                        // TODO what happens if no other connection is ever initiated?
                                         debug!("not trying to establish a session with {} because all connections are relayed", event.peer);
                                         continue;
                                     }
 
-                                    let connection = peer_state.connections.iter().min_by(|a, b| a.1.latency.cmp(&b.1.latency));
+                                    let connection = peer_state
+                                        .connections
+                                        .iter()
+                                        .min_by(|a, b| {
+                                            match (a.1.relay, b.1.relay) {
+                                                (false, true) => std::cmp::Ordering::Less, // prioritize non-relay connections
+                                                (true, false) => std::cmp::Ordering::Greater, // prioritize non-relay connections
+                                                _ => a.1.latency.cmp(&b.1.latency), // compare latencies if both have the same relay status
+                                            }
+                                        });
 
                                     if let Some((connection_id, _)) = connection {
                                         info!("Using connection {} for {}", connection_id, event.peer);
@@ -746,14 +755,13 @@ impl AudioChat {
                         continue;
                     }
 
-                    debug!("Dialing {} to establish connection", peer_id);
+                    debug!("initial dial for {}", peer_id);
 
                     // dial the peer through the relay
                     if let Err(error) = swarm.dial(relay_address.clone().with(Protocol::P2p(peer_id))) {
                         error!("Dial error for {}: {}", peer_id, error);
                         (self.session_status.lock().await)(peer_id.to_string(), "Inactive".to_string()).await;
                     } else {
-                        info!("Dialed {}", peer_id);
                         (self.session_status.lock().await)(peer_id.to_string(), "Connecting".to_string()).await;
                     }
                 }
@@ -765,12 +773,7 @@ impl AudioChat {
     }
 
     /// A wrapper which starts the session, registers it in the session states, and cleans up after it
-    async fn _start_session(
-        &self,
-        contact: Contact,
-        control: Option<Control>,
-        stream: Stream,
-    ) {
+    async fn _start_session(&self, contact: Contact, control: Option<Control>, stream: Stream) {
         // stream.ignore_for_keep_alive();
 
         let message_channel = unbounded_async::<Message>();
@@ -1412,7 +1415,7 @@ struct PeerState {
     dialer: bool,
 
     /// a map of connections and their latencies
-    connections: HashMap<ConnectionId, ConnectionState>
+    connections: HashMap<ConnectionId, ConnectionState>,
 }
 
 impl PeerState {
