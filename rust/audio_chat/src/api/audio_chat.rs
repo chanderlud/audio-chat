@@ -1700,14 +1700,14 @@ async fn call_controller(
                         (message_received.lock().await)(message.message).await;
                     }
                     Some(message::Message::ConnectionInterrupted(_)) => {
-                        info!("received connection interrupted message r={} rr={}", is_receiving, remote_is_receiving);
+                        // info!("received connection interrupted message r={} rr={}", is_receiving, remote_is_receiving);
 
                         let receiving = is_receiving && remote_is_receiving;
                         remote_is_receiving = false;
                         state_sender.send(receiving).await?;
                     }
                     Some(message::Message::ConnectionRestored(_)) => {
-                        info!("received connection restored message r={} rr={}", is_receiving, remote_is_receiving);
+                        // info!("received connection restored message r={} rr={}", is_receiving, remote_is_receiving);
 
                         if remote_is_receiving {
                             warn!("received connection restored message while already receiving");
@@ -1737,7 +1737,7 @@ async fn call_controller(
             },
             receiving = state_receiver.recv() => {
                 if receiving? {
-                    info!("state switched to not receiving r={} rr={}", is_receiving, remote_is_receiving);
+                    // info!("state switched to not receiving r={} rr={}", is_receiving, remote_is_receiving);
 
                     // the instant the disconnect began
                     disconnected_at = Instant::now();
@@ -1745,7 +1745,7 @@ async fn call_controller(
                     notify_ui = disconnected_at + disconnect_duration;
                 } else if is_receiving && remote_is_receiving {
                     let elapsed = disconnected_at.elapsed();
-                    info!("reconnected after {}ms interruption", elapsed.as_millis());
+                    // info!("reconnected after {}ms interruption", elapsed.as_millis());
 
                     // update the call state in the UI
                     (call_state.lock().await)(false).await;
@@ -1755,15 +1755,16 @@ async fn call_controller(
                     notify_ui = Instant::now() + Duration::from_secs(86400 * 365 * 30);
                     // set the overlay to connected
                     CONNECTED.store(true, Relaxed);
-                } else if is_receiving ^ remote_is_receiving {
-                    info!("partial reconnect r={} rr={}", is_receiving, remote_is_receiving);
-                } else {
-                    info!("full disconnect r={} rr={}", is_receiving, remote_is_receiving)
                 }
+                // else if is_receiving ^ remote_is_receiving {
+                //     info!("partial reconnect r={} rr={}", is_receiving, remote_is_receiving);
+                // } else {
+                //     info!("full disconnect r={} rr={}", is_receiving, remote_is_receiving)
+                // }
             },
             // receives when the receiving state changes
             Ok(receiving) = receiving.recv() => {
-                info!("received receiving state: {} | r={} rr={}", receiving, is_receiving, remote_is_receiving);
+                // info!("received receiving state: {} | r={} rr={}", receiving, is_receiving, remote_is_receiving);
 
                 if receiving != is_receiving {
                     state_sender.send(is_receiving && remote_is_receiving).await?;
