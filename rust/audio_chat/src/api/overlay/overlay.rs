@@ -1,4 +1,6 @@
+#[cfg(windows)]
 use std::mem;
+#[cfg(windows)]
 use std::ptr::{null, null_mut};
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize};
@@ -6,8 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use flutter_rust_bridge::frb;
-#[cfg(windows)]
 use kanal::OneshotSender;
+#[cfg(windows)]
 use log::error;
 use tokio::select;
 use tokio::sync::Notify;
@@ -121,8 +123,27 @@ impl Overlay {
 
     /// non-windows platforms don't have an overlay
     #[cfg(not(windows))]
-    pub fn new() -> crate::api::overlay::Overlay {
-        Self {}
+    pub async fn new(_enabled: bool,
+                     _x: i32,
+                     _y: i32,
+                     _width: i32,
+                     _height: i32,
+                     _font_height: i32,
+                     _background_color: u32,
+                     _font_color: u32,) -> Overlay {
+        Self {
+            enabled: Arc::new(Default::default()),
+            visible: Arc::new(Default::default()),
+            x: Arc::new(Default::default()),
+            y: Arc::new(Default::default()),
+            width: Arc::new(Default::default()),
+            height: Arc::new(Default::default()),
+            font_height: Arc::new(Default::default()),
+            background_color: Arc::new(Default::default()),
+            font_color: Arc::new(Default::default()),
+            window_changed: Arc::new(Default::default()),
+            redraw_overlay: Arc::new(Default::default()),
+        }
     }
 
     #[cfg(windows)]

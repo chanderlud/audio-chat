@@ -1,8 +1,11 @@
 extern crate bindgen;
 
+#[cfg(windows)]
 use std::env;
+#[cfg(windows)]
 use std::path::PathBuf;
 
+#[cfg(windows)]
 fn main() {
     // Tell cargo to tell rustc to link the Gdiplus shared library.
     println!("cargo:rustc-link-lib=Gdiplus");
@@ -80,3 +83,6 @@ fn main() {
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write bindings!");
 }
+
+#[cfg(not(windows))]
+fn main() {}

@@ -49,12 +49,12 @@ pub fn init_logger() {
 
         let mut config = Config::new().chan_len(Some(100)).level(level);
 
-        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
         {
             config = config.file("audio_chat.log");
         }
 
-        #[cfg(target_os = "android")]
+        #[cfg(any(target_os = "android", target_os = "macos"))]
         {
             config = config.custom(SendToDartLogger {});
         }

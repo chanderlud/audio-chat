@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use atomic_float::AtomicF64;
 use lazy_static::lazy_static;
+#[cfg(windows)]
 use widestring::error::ContainsNul;
 
 mod color;
@@ -38,12 +39,16 @@ enum ErrorKind {
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self._kind {
+            #[cfg(windows)]
             ErrorKind::CreateWindow => write!(f, "failed to create window"),
+            #[cfg(windows)]
             ErrorKind::ContainsNul => write!(f, "string contains nul byte"),
+            _ => write!(f, "unknown error"),
         }
     }
 }
 
+#[cfg(windows)]
 impl From<ContainsNul<u16>> for Error {
     fn from(_: ContainsNul<u16>) -> Self {
         Error {
