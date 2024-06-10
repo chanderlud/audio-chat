@@ -49,7 +49,7 @@ pub fn init_logger() {
 
         let mut config = Config::new().chan_len(Some(100)).level(level);
 
-        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "darwin"))]
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         {
             config = config.file("audio_chat.log");
         }
