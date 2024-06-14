@@ -77,7 +77,7 @@ abstract class RustLibApi extends BaseApi {
   void crateApiAudioChatAudioChatEndCall(
       {required AudioChat that, dynamic hint});
 
-  (List<String>, List<String>) crateApiAudioChatAudioChatListDevices(
+  Future<(List<String>, List<String>)> crateApiAudioChatAudioChatListDevices(
       {required AudioChat that, dynamic hint});
 
   Future<AudioChat> crateApiAudioChatAudioChatNew(
@@ -389,14 +389,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  (List<String>, List<String>) crateApiAudioChatAudioChatListDevices(
+  Future<(List<String>, List<String>)> crateApiAudioChatAudioChatListDevices(
       {required AudioChat that, dynamic hint}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAudioChat(
             that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 3, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_record_list_string_list_string,

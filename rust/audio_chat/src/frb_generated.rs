@@ -121,55 +121,28 @@ fn wire__crate__api__audio_chat__AudioChat_end_call_impl(
     )
 }
 fn wire__crate__api__audio_chat__AudioChat_list_devices_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
     data_len_: i32,
-) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "AudioChat_list_devices",
-            port: None,
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<AudioChat>,
-            >>::sse_decode(&mut deserializer);
-            deserializer.end();
-            transform_result_sse((move || {
-                let mut api_that_decoded = None;
-                let decode_indices_ =
-                    flutter_rust_bridge::for_generated::rust_auto_opaque_decode_compute_order(
-                        vec![
-                            flutter_rust_bridge::for_generated::rust_auto_opaque_lock_order_info(
-                                &api_that, 0, false,
-                            ),
-                        ],
-                    );
-                for i in decode_indices_ {
-                    match i {
-                        0 => api_that_decoded = Some(
-                            flutter_rust_bridge::for_generated::rust_auto_opaque_decode_sync_ref(
-                                &api_that,
-                            ),
-                        ),
-                        _ => unreachable!(),
-                    }
-                }
-                let api_that = api_that_decoded.unwrap();
-                crate::api::audio_chat::AudioChat::list_devices(&api_that)
-            })())
-        },
-    )
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec,_,_>(flutter_rust_bridge::for_generated::TaskInfo{ debug_name: "AudioChat_list_devices", port: Some(port_), mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal }, move || { 
+            let message = unsafe { flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_) };
+            let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<AudioChat>>>::sse_decode(&mut deserializer);deserializer.end(); move |context|  {
+                    transform_result_sse((move ||  {
+                        let mut api_that_decoded = None;
+let decode_indices_ = flutter_rust_bridge::for_generated::rust_auto_opaque_decode_compute_order(vec![flutter_rust_bridge::for_generated::rust_auto_opaque_lock_order_info(&api_that, 0, false)]);
+        for i in decode_indices_ {
+            match i {
+                0 => api_that_decoded = Some(flutter_rust_bridge::for_generated::rust_auto_opaque_decode_sync_ref(&api_that)),
+                _ => unreachable!(),
+            }
+        }
+        let api_that = api_that_decoded.unwrap();
+ crate::api::audio_chat::AudioChat::list_devices(&api_that)
+                    })())
+                } })
 }
 fn wire__crate__api__audio_chat__AudioChat_new_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
@@ -2834,6 +2807,12 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
+        3 => wire__crate__api__audio_chat__AudioChat_list_devices_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
         4 => wire__crate__api__audio_chat__AudioChat_new_impl(port, ptr, rust_vec_len, data_len),
         5 => wire__crate__api__audio_chat__AudioChat_restart_manager_impl(
             port,
@@ -2991,7 +2970,6 @@ fn pde_ffi_dispatcher_sync_impl(
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
         2 => wire__crate__api__audio_chat__AudioChat_end_call_impl(ptr, rust_vec_len, data_len),
-        3 => wire__crate__api__audio_chat__AudioChat_list_devices_impl(ptr, rust_vec_len, data_len),
         8 => wire__crate__api__audio_chat__AudioChat_set_deafened_impl(ptr, rust_vec_len, data_len),
         9 => wire__crate__api__audio_chat__AudioChat_set_denoise_impl(ptr, rust_vec_len, data_len),
         12 => wire__crate__api__audio_chat__AudioChat_set_input_volume_impl(

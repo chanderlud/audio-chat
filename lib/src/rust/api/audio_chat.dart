@@ -11,6 +11,8 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // The type `CachedAtomicFlag` is not used by any `pub` functions, thus it is ignored.
 // The type `CachedAtomicFloat` is not used by any `pub` functions, thus it is ignored.
+// The type `ConnectionState` is not used by any `pub` functions, thus it is ignored.
+// The type `PeerState` is not used by any `pub` functions, thus it is ignored.
 // The type `ProcessorMessage` is not used by any `pub` functions, thus it is ignored.
 // The type `SendStream` is not used by any `pub` functions, thus it is ignored.
 // The type `SessionState` is not used by any `pub` functions, thus it is ignored.
@@ -59,7 +61,7 @@ class AudioChat extends RustOpaque {
       .crateApiAudioChatAudioChatEndCall(that: this, hint: hint);
 
   /// Lists the input and output devices
-  (List<String>, List<String>) listDevices({dynamic hint}) =>
+  Future<(List<String>, List<String>)> listDevices({dynamic hint}) =>
       RustLib.instance.api
           .crateApiAudioChatAudioChatListDevices(that: this, hint: hint);
 
@@ -191,6 +193,7 @@ class DartNotify extends RustOpaque {
         RustLib.instance.api.rust_arc_decrement_strong_count_DartNotifyPtr,
   );
 
+  /// public notified function for dart
   Future<void> notified({dynamic hint}) => RustLib.instance.api
       .crateApiAudioChatDartNotifyNotified(that: this, hint: hint);
 }
@@ -235,7 +238,7 @@ class NetworkConfig extends RustOpaque {
           that: this, relayId: relayId, hint: hint);
 }
 
-/// Processed statistics for the frontend
+/// processed statistics for the frontend
 class Statistics {
   /// a percentage of the max input volume in the window
   final double inputLevel;

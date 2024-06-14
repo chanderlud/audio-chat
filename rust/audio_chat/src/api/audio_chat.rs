@@ -38,7 +38,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::lookup_host;
 use tokio::select;
 use tokio::sync::{Mutex, Notify, RwLock};
-use tokio::time::{interval, sleep_until, timeout, Instant};
+use tokio::time::{interval, sleep_until, timeout, Instant, Interval};
 use tokio_util::bytes::Bytes;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tokio_util::compat::{Compat, FuturesAsyncReadCompatExt};
@@ -397,7 +397,6 @@ impl AudioChat {
     }
 
     /// Lists the input and output devices
-    #[frb(sync)]
     pub fn list_devices(&self) -> std::result::Result<(Vec<String>, Vec<String>), DartError> {
         let input_devices = self.host.input_devices().map_err(Error::from)?;
         let output_devices = self.host.output_devices().map_err(Error::from)?;
@@ -680,7 +679,7 @@ impl AudioChat {
                                     // only start a session if all connections have latency
                                     debug!("not trying to establish a session with {} because not all connections have latency", event.peer);
                                     continue;
-                                } else if peer_state.connections.iter().all(|(_, state)| state.relay) {
+                                } else if peer_state.connections.iter().all(|(_, state)| state.relayed) {
                                     // TODO what happens if no other connection is ever initiated?
                                     debug!("not trying to establish a session with {} because all connections are relayed", event.peer);
                                     continue;
@@ -691,7 +690,7 @@ impl AudioChat {
                                     .connections
                                     .iter()
                                     .min_by(|a, b| {
-                                        match (a.1.relay, b.1.relay) {
+                                        match (a.1.relayed, b.1.relayed) {
                                             (false, true) => std::cmp::Ordering::Less, // prioritize non-relay connections
                                             (true, false) => std::cmp::Ordering::Greater, // prioritize non-relay connections
                                             _ => a.1.latency.cmp(&b.1.latency), // compare latencies if both have the same relay status
@@ -786,8 +785,8 @@ impl AudioChat {
         }
     }
 
-    /// A wrapper which starts the session, registers it in the session states, and cleans up after it
-    async fn _start_session(&self, contact: Contact, control: Option<Control>, stream: Stream) {
+    /// A wrapper which manages the session throughout its lifetime
+    async fn _start_session(&self, contact: Contact, mut control: Option<Control>, stream: Stream) {
         let message_channel = unbounded_async::<Message>();
         let (stream_sender, stream_receiver) = unbounded_async();
 
@@ -816,21 +815,49 @@ impl AudioChat {
         // insert the new state
         states.insert(contact.peer_id, state.clone());
 
+        // alert the UI that this session is now connected
+        (self.session_status.lock().await)(contact.peer_id(), "Connected".to_string()).await;
+
         let chat_clone = self.clone();
         spawn(async move {
             let contact_clone = contact.clone();
 
-            let result = chat_clone
-                .session(
-                    contact,
-                    control,
-                    stream.compat(),
-                    &state_clone,
-                    message_channel,
-                    stream_receiver,
-                )
-                .await;
+            // the length delimited transport used for the session
+            let mut transport = LengthDelimitedCodec::builder().new_framed(stream.compat());
+            // controls keep alive messages
+            let mut keep_alive = interval(Duration::from_secs(10));
 
+            let result = loop {
+                let future = chat_clone.session(
+                    &contact,
+                    control.as_mut(),
+                    &mut transport,
+                    &state_clone,
+                    &message_channel,
+                    &stream_receiver,
+                    &mut keep_alive,
+                );
+
+                if let Err(error) = future.await {
+                    if state.in_call.load(Relaxed) {
+                        info!("session error while call active, alerting ui");
+                        (chat_clone.call_ended.lock().await)(error.to_string(), false).await;
+                    }
+
+                    match error.kind {
+                        ErrorKind::KanalReceive(_)
+                        | ErrorKind::TransportRecv
+                        | ErrorKind::TransportSend => break Err(error),
+                        ErrorKind::SessionStoped => break Ok(()),
+                        _ => error!("Session error: {:?}", error),
+                    }
+                }
+
+                // the session is now safe to restart
+                state.in_call.store(false, Relaxed);
+            };
+
+            // result is *only* Ok when the session has been stopped
             if let Err(error) = result {
                 error!("Session error for {}: {}", contact_clone.nickname, error);
             } else {
@@ -838,19 +865,12 @@ impl AudioChat {
                 return; // the session has already been cleaned up
             }
 
-            debug!("removing session state for {}", contact_clone.nickname);
-
             // cleanup
             chat_clone
                 .session_states
                 .write()
                 .await
                 .remove(&contact_clone.peer_id);
-
-            debug!(
-                "session state removed for {} | updating session status",
-                contact_clone.nickname
-            );
 
             (chat_clone.session_status.lock().await)(
                 contact_clone.peer_id(),
@@ -862,168 +882,147 @@ impl AudioChat {
         });
     }
 
-    /// A session with a contact
+    /// The session logic
     async fn session(
         &self,
-        contact: Contact,
-        mut control: Option<Control>,
-        stream: TransportStream,
+        contact: &Contact,
+        control: Option<&mut Control>,
+        transport: &mut Transport<TransportStream>,
         state: &Arc<SessionState>,
-        message_channel: (AsyncSender<Message>, AsyncReceiver<Message>),
-        stream_receiver: AsyncReceiver<Stream>,
+        message_channel: &(AsyncSender<Message>, AsyncReceiver<Message>),
+        stream_receiver: &AsyncReceiver<Stream>,
+        keep_alive: &mut Interval,
     ) -> Result<()> {
-        // alert the UI that this session is now connected
-        (self.session_status.lock().await)(contact.peer_id(), "Connected".to_string()).await;
+        info!("[{}] session waiting for event", contact.nickname);
 
-        let mut transport = LengthDelimitedCodec::builder().new_framed(stream);
-        let mut keep_alive = interval(Duration::from_secs(10));
+        select! {
+            result = read_message::<Message, _>(transport) => {
+                let mut ringtone = None;
 
-        let result = loop {
-            // an async block is used to capture errors and handle them internally
-            let future = async {
-                info!("[{}] session waiting for event", contact.nickname);
+                info!("received {:?} from {}", result, contact.nickname);
+
+                match result? {
+                    Message { message: Some(message::Message::Hello(message)) } => {
+                        if !message.ringtone.is_empty() && self.play_custom_ringtones.load(Relaxed) {
+                            ringtone = Some(message.ringtone);
+                        }
+                    },
+                    Message { message: Some(message::Message::KeepAlive(_)) } => {
+                        return Ok::<(), Error>(());
+                    },
+                    message => {
+                        warn!("received unexpected {:?} from {}", message, contact.nickname);
+                        return Ok::<(), Error>(());
+                    }
+                }
+
+                if self.in_call.load(Relaxed) {
+                    // do not accept another call if already in one
+                    let busy = Message::busy();
+                    write_message(transport, busy).await?;
+                    return Ok(());
+                }
+
+                state.in_call.store(true, Relaxed); // blocks the session from being restarted
+                let cancel_prompt = Arc::new(Notify::new());
+                let dart_cancel = DartNotify { inner: Arc::clone(&cancel_prompt) };
+
+                let accept_call_clone = Arc::clone(&self.accept_call);
+                let contact_id = contact.id.clone();
+                let accept_handle = spawn(async move {
+                    (accept_call_clone.lock().await)(contact_id, ringtone, dart_cancel).await
+                });
 
                 select! {
-                    result = read_message::<Message, _>(&mut transport) => {
-                        let mut ringtone = None;
+                    accepted = accept_handle => {
+                        if accepted? {
+                            // respond with hello ack if the call is accepted
+                            let hello_ack = Message::hello_ack();
+                            write_message(transport, hello_ack).await?;
 
-                        match result? {
-                            Message { message: Some(message::Message::Hello(message)) } => {
-                                if !message.ringtone.is_empty() && self.play_custom_ringtones.load(Relaxed) {
-                                    ringtone = Some(message.ringtone);
-                                }
-                            },
-                            Message { message: Some(message::Message::KeepAlive(_)) } => {
-                                return Ok::<(), Error>(());
-                            },
-                            message => {
-                                warn!("received unexpected {:?} from {}", message, contact.nickname);
-                                return Ok::<(), Error>(());
-                            }
+                            // start the handshake
+                            self.handshake(transport, control, contact.peer_id, &message_channel, &stream_receiver, state).await?;
+                        } else {
+                            // reject the call if not accepted
+                            let reject = Message::reject();
+                            write_message(transport, reject).await?;
                         }
-
-                        if self.in_call.load(Relaxed) {
-                            // do not accept another call if already in one
-                            let busy = Message::busy();
-                            write_message(&mut transport, busy).await?;
-                            return Ok(());
-                        }
-
-                        state.in_call.store(true, Relaxed); // blocks the session from being restarted
-                        let cancel_prompt = Arc::new(Notify::new());
-                        let dart_cancel = DartNotify { inner: Arc::clone(&cancel_prompt) };
-
-                        let accept_call_clone = Arc::clone(&self.accept_call);
-                        let contact_id = contact.id.clone();
-                        let accept_handle = spawn(async move {
-                            (accept_call_clone.lock().await)(contact_id, ringtone, dart_cancel).await
-                        });
-
-                        select! {
-                            accepted = accept_handle => {
-                                if accepted? {
-                                    // respond with hello ack if the call is accepted
-                                    let hello_ack = Message::hello_ack();
-                                    write_message(&mut transport, hello_ack).await?;
-
-                                    // start the handshake
-                                    self.handshake(&mut transport, control.as_mut(), contact.peer_id, &message_channel, &stream_receiver, state).await?;
-                                } else {
-                                    // reject the call if not accepted
-                                    let reject = Message::reject();
-                                    write_message(&mut transport, reject).await?;
-                                }
-                            }
-                            result = read_message::<Message, _>(&mut transport) => {
-                                info!("received message while accept call was pending");
-
-                                match result {
-                                    Ok(Message { message: Some(message::Message::Goodbye(_)) }) => {
-                                        info!("received goodbye from {} while prompting for call", contact.nickname);
-                                        cancel_prompt.notify_one();
-                                    }
-                                    Ok(message) => {
-                                        warn!("received unexpected {:?} from {} while prompting for call", message, contact.nickname);
-                                    }
-                                    Err(error) => {
-                                        error!("Error reading message while prompting for call from {}: {}", contact.nickname, error);
-                                    }
-                                }
-                            }
-                        }
-
-                        Ok(())
                     }
-                    _ = state.start.notified() => {
-                        state.in_call.store(true, Relaxed); // blocks the session from being restarted
+                    result = read_message::<Message, _>(transport) => {
+                        info!("received message while accept call was pending");
 
-                        // queries the other client for a call
-                        let ringtone = (self.load_ringtone.lock().await)().await;
-                        let hello = Message::hello(ringtone);
-                        write_message(&mut transport, hello).await?;
-
-                        select! {
-                            result = timeout(HELLO_TIMEOUT, read_message(&mut transport)) => {
-                                // handles a variety of outcomes in response to Hello
-                                match result?? {
-                                    Message { message: Some(message::Message::HelloAck(_)) } => {
-                                        self.handshake(&mut transport, control.as_mut(), contact.peer_id, &message_channel, &stream_receiver, state).await?;
-                                    }
-                                    Message { message: Some(message::Message::Reject(_)) } => {
-                                        (self.call_ended.lock().await)(format!("{} did not accept the call", contact.nickname), true).await;
-                                    },
-                                    Message { message: Some(message::Message::Busy(_)) } => {
-                                        (self.call_ended.lock().await)(format!("{} is busy", contact.nickname), true).await;
-                                    }
-                                    message => {
-                                        (self.call_ended.lock().await)(format!("Received an unexpected message from {}", contact.nickname), true).await;
-                                        warn!("received unexpected {:?} from {} [stopped call process]", message, contact.nickname);
-                                    }
-                                }
+                        match result {
+                            Ok(Message { message: Some(message::Message::Goodbye(_)) }) => {
+                                info!("received goodbye from {} while prompting for call", contact.nickname);
+                                cancel_prompt.notify_one();
                             }
-                            _ = self.end_call.notified() => {
-                                info!("end call notified while waiting for hello ack");
-                                let goodbye = Message::goodbye();
-                                write_message(&mut transport, goodbye).await?;
+                            Ok(message) => {
+                                warn!("received unexpected {:?} from {} while prompting for call", message, contact.nickname);
+                            }
+                            Err(error) => {
+                                error!("Error reading message while prompting for call from {}: {}", contact.nickname, error);
                             }
                         }
-
-                        Ok(())
                     }
-                    // state will never notify while a call is active
-                    _ = state.stop.notified() => {
-                        info!("session state stop notified for {}", contact.nickname);
-                        Err(ErrorKind::SessionStoped.into())
-                    },
-                    _ = keep_alive.tick() => {
-                        let keep_alive = Message::keep_alive();
-                        write_message(&mut transport, keep_alive).await?;
-                        Ok(())
-                    },
-                }
-            };
-
-            if let Err(error) = future.await {
-                if state.in_call.load(Relaxed) {
-                    info!("session error while call active, alerting ui");
-                    (self.call_ended.lock().await)(error.to_string(), false).await;
                 }
 
-                match error.kind {
-                    ErrorKind::KanalReceive(_)
-                    | ErrorKind::TransportRecv
-                    | ErrorKind::TransportSend => break Err(error),
-                    ErrorKind::SessionStoped => break Ok(()),
-                    _ => error!("Session error: {:?}", error),
-                }
+                Ok(())
             }
+            _ = state.start.notified() => {
+                state.in_call.store(true, Relaxed); // blocks the session from being restarted
 
-            // the session is now safe to restart
-            state.in_call.store(false, Relaxed);
-        };
+                // queries the other client for a call
+                let ringtone = (self.load_ringtone.lock().await)().await;
+                let hello = Message::hello(ringtone);
+                write_message(transport, hello).await?;
 
-        info!("session for {} returning", contact.nickname);
-        result
+                loop {
+                    select! {
+                        result = timeout(HELLO_TIMEOUT, read_message(transport)) => {
+                            // handles a variety of outcomes in response to Hello
+                            match result?? {
+                                Message { message: Some(message::Message::HelloAck(_)) } => {
+                                    self.handshake(transport, control, contact.peer_id, &message_channel, &stream_receiver, state).await?;
+                                }
+                                Message { message: Some(message::Message::Reject(_)) } => {
+                                    (self.call_ended.lock().await)(format!("{} did not accept the call", contact.nickname), true).await;
+                                },
+                                Message { message: Some(message::Message::Busy(_)) } => {
+                                    (self.call_ended.lock().await)(format!("{} is busy", contact.nickname), true).await;
+                                }
+                                // keep alive messages are sometimes received here
+                                Message { message: Some(message::Message::KeepAlive(_)) } => continue,
+                                message => {
+                                    (self.call_ended.lock().await)(format!("Received an unexpected message from {}", contact.nickname), true).await;
+                                    warn!("received unexpected {:?} from {} [stopped call process]", message, contact.nickname);
+
+                                }
+                            }
+
+                            break;
+                        }
+                        _ = self.end_call.notified() => {
+                            info!("end call notified while waiting for hello ack");
+                            let goodbye = Message::goodbye();
+                            write_message(transport, goodbye).await?;
+                        }
+                    }
+                }
+
+                Ok(())
+            }
+            // state will never notify while a call is active
+            _ = state.stop.notified() => {
+                info!("session state stop notified for {}", contact.nickname);
+                Err(ErrorKind::SessionStoped.into())
+            },
+            _ = keep_alive.tick() => {
+                debug!("sending keep alive to {}", contact.nickname);
+                let keep_alive = Message::keep_alive();
+                write_message(transport, keep_alive).await?;
+                Ok(())
+            },
+        }
     }
 
     /// Gets everything ready for the call
@@ -1036,8 +1035,6 @@ impl AudioChat {
         stream_receiver: &AsyncReceiver<Stream>,
         state: &Arc<SessionState>,
     ) -> Result<()> {
-        debug!("handshake running");
-
         let dialer = control.is_some();
 
         // change the session state to accept incoming audio streams
@@ -1045,10 +1042,10 @@ impl AudioChat {
 
         let future = async {
             let stream = if let Some(control) = control {
-                // if dialer open stream
+                // if dialer, open stream
                 control.open_stream(peer, PROTOCOL).await?
             } else {
-                // if listener receive stream
+                // if listener, receive stream
                 stream_receiver.recv().await?
             };
 
@@ -1070,9 +1067,10 @@ impl AudioChat {
         self.in_call.store(true, Relaxed);
         // change the session state
         state.wants_audio.store(false, Relaxed);
-
+        // show the overlay
         self.overlay.show();
 
+        // stop_io must notify when the call ends, so it is external to the call function
         let stop_io = Arc::new(Notify::new());
 
         let result = self
@@ -1086,16 +1084,15 @@ impl AudioChat {
             )
             .await;
 
-        // ensure that the input and output streams are stopped
+        // ensure that all background i/o threads are stopped
         stop_io.notify_waiters();
 
         info!("call ended in receiver");
 
         // the call has ended
         self.in_call.store(false, Relaxed);
-
+        // hide the overlay
         self.overlay.hide();
-        info!("overlay hidden");
 
         match result {
             Ok(()) => Ok(()),
@@ -1426,11 +1423,13 @@ impl AudioChat {
     }
 }
 
+/// a state used for session negotiation
 #[derive(Debug)]
 struct PeerState {
     /// when true the peer's identity addresses will not be dialed
     dialed: bool,
 
+    /// when true the peer is the dialer
     dialer: bool,
 
     /// a map of connections and their latencies
@@ -1450,37 +1449,41 @@ impl PeerState {
     }
 }
 
+/// the state of a single connection during session negotiation
 #[derive(Debug)]
 struct ConnectionState {
+    /// the latency is ms when available
     latency: Option<u128>,
-    relay: bool,
+
+    /// whether the connection is relayed
+    relayed: bool,
 }
 
 impl ConnectionState {
-    fn new(relay: bool) -> Self {
+    fn new(relayed: bool) -> Self {
         Self {
             latency: None,
-            relay,
+            relayed,
         }
     }
 }
 
-/// Wraps a cpal stream to unsafely make it send
+/// wraps a cpal stream to unsafely make it send
 pub(crate) struct SendStream {
     pub(crate) stream: CpalStream,
 }
 
 unsafe impl Send for SendStream {}
 
-/// A message containing either a frame of audio or silence
+/// a message containing either a frame of audio or silence
 enum ProcessorMessage {
     Data(Bytes),
     Silence,
 }
 
-// common message constructors
+/// common processor message constructors
 impl ProcessorMessage {
-    fn data(bytes: &'static [u8]) -> Result<Self> {
+    fn slice(bytes: &'static [u8]) -> Result<Self> {
         Ok(Self::Data(Bytes::from(bytes)))
     }
 
@@ -1488,32 +1491,32 @@ impl ProcessorMessage {
         Self::Silence
     }
 
-    fn frame(frame: Bytes) -> Self {
+    fn bytes(frame: Bytes) -> Self {
         Self::Data(frame)
     }
 }
 
-/// Shared values for a single session
+/// shared values for a single session
 struct SessionState {
-    /// Signals the session to initiate a call
+    /// signals the session to initiate a call
     start: Notify,
 
-    /// Stops the session normally
+    /// stops the session normally
     stop: Notify,
 
-    /// If the session is in a call
+    /// if the session is in a call
     in_call: AtomicBool,
 
-    /// A reusable sender for messages while a call is active
+    /// a reusable sender for messages while a call is active
     message_sender: AsyncSender<Message>,
 
-    /// Forwards sub-streams to the session
+    /// forwards sub-streams to the session
     stream_sender: AsyncSender<Stream>,
 
-    /// A shared latency value for the session from libp2p ping
+    /// a shared latency value for the session from libp2p ping
     latency: Arc<AtomicUsize>,
 
-    /// Whether the session wants an audio stream
+    /// whether the session wants an audio stream
     wants_audio: Arc<AtomicBool>,
 }
 
@@ -1531,7 +1534,7 @@ impl SessionState {
     }
 }
 
-/// An AtomicBool Flag which is not loaded from the atomic every time
+/// an AtomicBool Flag which is not loaded from the atomic every time
 struct CachedAtomicFlag {
     counter: i32,
     cache: bool,
@@ -1582,7 +1585,7 @@ impl CachedAtomicFloat {
     }
 }
 
-/// Processed statistics for the frontend
+/// processed statistics for the frontend
 #[derive(Default)]
 pub struct Statistics {
     /// a percentage of the max input volume in the window
@@ -1607,13 +1610,13 @@ pub struct Statistics {
 #[frb(opaque)]
 #[derive(Clone)]
 pub struct NetworkConfig {
-    /// The match-maker server to use for signaling
+    /// the relay server's address
     relay_address: Arc<RwLock<SocketAddr>>,
 
-    /// The relay's peer id
+    /// the relay server's peer id
     relay_id: Arc<RwLock<PeerId>>,
 
-    /// The libp2p port for the swarm
+    /// the libp2p port for the swarm
     listen_port: Arc<RwLock<u16>>,
 }
 
@@ -1628,8 +1631,7 @@ impl NetworkConfig {
             listen_port: Arc::new(RwLock::new(0)),
         })
     }
-
-    // TODO test whether domain resolution works
+    
     pub async fn set_relay_address(
         &self,
         relay_address: String,
@@ -1660,18 +1662,20 @@ impl NetworkConfig {
     }
 }
 
-/// A notify that can be passed to dart code
+/// a notifier that can be passed to dart code
 #[frb(opaque)]
 pub struct DartNotify {
     inner: Arc<Notify>,
 }
 
 impl DartNotify {
+    /// public notified function for dart
     pub async fn notified(&self) {
         self.inner.notified().await;
     }
 }
 
+/// the call controller
 async fn call_controller(
     transport: &mut Transport<TransportStream>,
     receiver: AsyncReceiver<Message>,
@@ -1698,7 +1702,7 @@ async fn call_controller(
 
     // constant durations used in the connection quality algorithm
     let window_duration = Duration::from_secs(10);
-    let disconnect_duration = Duration::from_secs(2);
+    let disconnect_duration = Duration::from_millis(1_500);
 
     let (state_sender, state_receiver) = unbounded_async::<bool>();
 
@@ -1719,14 +1723,14 @@ async fn call_controller(
                         (message_received.lock().await)(message.message).await;
                     }
                     Some(message::Message::ConnectionInterrupted(_)) => {
-                        // info!("received connection interrupted message r={} rr={}", is_receiving, remote_is_receiving);
+                        info!("received connection interrupted message r={} rr={}", is_receiving, remote_is_receiving);
 
                         let receiving = is_receiving && remote_is_receiving;
                         remote_is_receiving = false;
                         state_sender.send(receiving).await?;
                     }
                     Some(message::Message::ConnectionRestored(_)) => {
-                        // info!("received connection restored message r={} rr={}", is_receiving, remote_is_receiving);
+                        info!("received connection restored message r={} rr={}", is_receiving, remote_is_receiving);
 
                         if remote_is_receiving {
                             warn!("received connection restored message while already receiving");
@@ -1756,7 +1760,7 @@ async fn call_controller(
             },
             receiving = state_receiver.recv() => {
                 if receiving? {
-                    // info!("state switched to not receiving r={} rr={}", is_receiving, remote_is_receiving);
+                    info!("state switched to not receiving r={} rr={}", is_receiving, remote_is_receiving);
 
                     // the instant the disconnect began
                     disconnected_at = Instant::now();
@@ -1764,26 +1768,25 @@ async fn call_controller(
                     notify_ui = disconnected_at + disconnect_duration;
                 } else if is_receiving && remote_is_receiving {
                     let elapsed = disconnected_at.elapsed();
-                    // info!("reconnected after {}ms interruption", elapsed.as_millis());
+                    info!("reconnected after {}ms interruption", elapsed.as_millis());
 
                     // update the call state in the UI
                     (call_state.lock().await)(false).await;
+                    // update the overlay to connected
+                    CONNECTED.store(true, Relaxed);
                     // record the disconnect
                     disconnect_durations.push_back((disconnected_at, elapsed));
                     // prevents any notification to the ui as audio is being received
                     notify_ui = Instant::now() + Duration::from_secs(86400 * 365 * 30);
-                    // set the overlay to connected
-                    CONNECTED.store(true, Relaxed);
+                } else if is_receiving ^ remote_is_receiving {
+                    info!("partial reconnect r={} rr={}", is_receiving, remote_is_receiving);
+                } else {
+                    info!("full disconnect r={} rr={}", is_receiving, remote_is_receiving)
                 }
-                // else if is_receiving ^ remote_is_receiving {
-                //     info!("partial reconnect r={} rr={}", is_receiving, remote_is_receiving);
-                // } else {
-                //     info!("full disconnect r={} rr={}", is_receiving, remote_is_receiving)
-                // }
             },
             // receives when the receiving state changes
             Ok(receiving) = receiving.recv() => {
-                // info!("received receiving state: {} | r={} rr={}", receiving, is_receiving, remote_is_receiving);
+                info!("received receiving state: {} | r={} rr={}", receiving, is_receiving, remote_is_receiving);
 
                 if receiving != is_receiving {
                     state_sender.send(is_receiving && remote_is_receiving).await?;
@@ -1800,6 +1803,7 @@ async fn call_controller(
                         error!("Error sending connection notification message: {}", error);
                     }
                 } else {
+                    // TODO it appears that this is happening occasionally
                     warn!("received duplicate receiving state: {}", receiving);
                 }
             },
@@ -1843,6 +1847,7 @@ async fn socket_input(
     stop: Arc<Notify>,
     bandwidth: Arc<AtomicUsize>,
 ) -> Result<()> {
+    // a static byte used as the silence signal
     let silence_byte = &[0];
 
     let future = async {
@@ -1888,8 +1893,9 @@ async fn socket_output(
             match timeout(TIMEOUT_DURATION, socket.next()).await {
                 Ok(Some(Ok(message))) => {
                     if !is_receiving {
-                        _ = receiving.send(true).await;
+                        info!("socket output started receiving when is_receiving was false");
                         is_receiving = true;
+                        _ = receiving.send(is_receiving).await;
                     }
 
                     let len = message.len();
@@ -1897,7 +1903,7 @@ async fn socket_output(
 
                     match len {
                         TRANSFER_BUFFER_SIZE => {
-                            _ = sender.try_send(ProcessorMessage::frame(message.freeze()));
+                            _ = sender.try_send(ProcessorMessage::bytes(message.freeze()));
                         }
                         1 => match message[0] {
                             0 => _ = sender.try_send(ProcessorMessage::silence()), // silence
@@ -1915,11 +1921,13 @@ async fn socket_output(
                     debug!("Socket output ended");
                     break Ok(());
                 }
+                Err(_) if is_receiving => {
+                    info!("socket output timed out when is_receiving was true");
+                    is_receiving = false;
+                    _ = receiving.send(is_receiving).await;
+                }
                 Err(_) => {
-                    if is_receiving {
-                        _ = receiving.send(false).await;
-                        is_receiving = false;
-                    }
+                    info!("socket output timed out when is_receiving was false");
                 }
             }
         }
@@ -1964,38 +1972,42 @@ async fn statistics_collector(
     callback: Arc<Mutex<dyn Fn(Statistics) -> DartFnFuture<()> + Send>>,
     notify: Arc<Notify>,
 ) -> Result<()> {
-    let mut interval = interval(Duration::from_millis(100));
+    // the interval for statistics updates
+    let mut update_interval = interval(Duration::from_millis(100));
+    // the interval for the input_max and output_max to decrease
+    let mut reset_interval = interval(Duration::from_secs(5));
+
+    let stop = Arc::new(AtomicBool::new(false));
+
     let mut input_max = 0_f32;
     let mut output_max = 0_f32;
 
-    let statistics_future = async {
-        loop {
-            interval.tick().await;
-
-            let statistics = Statistics {
-                input_level: level_from_window(&input_receiver, &mut input_max).await,
-                output_level: level_from_window(&output_receiver, &mut output_max).await,
-                latency: latency.load(Relaxed),
-                upload_bandwidth: upload_bandwidth.load(Relaxed),
-                download_bandwidth: download_bandwidth.load(Relaxed),
-                loss: LOSS.load(Relaxed),
-            };
-
-            LATENCY.store(statistics.latency, Relaxed);
-            (callback.lock().await)(statistics).await;
-        }
-    };
-
-    let control_future = async {
+    let stop_clone = Arc::clone(&stop);
+    spawn(async move {
         notify.notified().await;
-        // lock the callback to ensure the statistics future is cancel safe
-        _ = callback.lock().await;
-    };
+        stop_clone.store(true, Relaxed);
+        info!("statistics collector set stop=true");
+    });
 
-    select! {
-        _ = statistics_future => (),
-        _ = control_future => {
-            debug!("Statistics collector ended");
+    while !stop.load(Relaxed) {
+        select! {
+            _ = update_interval.tick() => {
+                let statistics = Statistics {
+                    input_level: level_from_window(&input_receiver, &mut input_max).await,
+                    output_level: level_from_window(&output_receiver, &mut output_max).await,
+                    latency: latency.load(Relaxed),
+                    upload_bandwidth: upload_bandwidth.load(Relaxed),
+                    download_bandwidth: download_bandwidth.load(Relaxed),
+                    loss: LOSS.load(Relaxed),
+                };
+
+                LATENCY.store(statistics.latency, Relaxed);
+                (callback.lock().await)(statistics).await;
+            }
+            _ = reset_interval.tick() => {
+                input_max /= 2_f32;
+                output_max /= 2_f32;
+            }
         }
     }
 
@@ -2007,6 +2019,7 @@ async fn statistics_collector(
     LOSS.store(0_f64, Relaxed);
     CONNECTED.store(false, Relaxed);
 
+    info!("statistics collector returning");
     Ok(())
 }
 
@@ -2139,7 +2152,7 @@ fn input_processor(
             )
         };
 
-        _ = sender.try_send(ProcessorMessage::data(bytes)?);
+        _ = sender.try_send(ProcessorMessage::slice(bytes)?);
     }
 
     debug!("Input processor ended");
@@ -2292,7 +2305,7 @@ async fn level_from_window(receiver: &AsyncReceiver<f32>, max: &mut f32) -> f32 
     let level = if window.is_empty() {
         0_f32
     } else {
-        let local_max = window.iter().cloned().fold(0_f32, f32::max);
+        let local_max = window.into_iter().reduce(f32::max).unwrap_or(0_f32);
         *max = max.max(local_max);
 
         if *max != 0_f32 {

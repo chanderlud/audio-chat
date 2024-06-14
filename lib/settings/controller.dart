@@ -3,12 +3,12 @@ import 'dart:typed_data';
 
 import 'package:audio_chat/src/rust/api/error.dart';
 import 'package:audio_chat/src/rust/api/audio_chat.dart';
-import 'package:debug_console/debug_console.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import '../console.dart';
 import '../src/rust/api/contact.dart';
 import '../src/rust/api/crypto.dart';
 
@@ -328,7 +328,7 @@ class SettingsController with ChangeNotifier {
           contacts[id] =
               Contact.fromParts(id: id, nickname: nickname, peerId: peerId);
         } on DartError catch (e) {
-          DebugConsole.warning('invalid contact format: $e');
+          DebugConsole.warn('invalid contact format: $e');
           return;
         }
       });
@@ -344,7 +344,7 @@ class SettingsController with ChangeNotifier {
         relayId: options.getString('relayId') ?? defaultRelayId,
       );
     } on DartError catch (e) {
-      DebugConsole.warning('invalid network config values: $e');
+      DebugConsole.warn('invalid network config values: $e');
       return NetworkConfig(
           relayAddress: defaultRelayAddress, relayId: defaultRelayId);
     }
@@ -374,7 +374,7 @@ class SettingsController with ChangeNotifier {
             defaultOverlayFontBackgroundColor),
       );
     } on DartError catch (e) {
-      DebugConsole.warning('invalid overlay config format: $e');
+      DebugConsole.warn('invalid overlay config format: $e');
 
       return OverlayConfig(
         enabled: defaultOverlayEnabled,

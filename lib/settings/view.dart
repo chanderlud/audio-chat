@@ -10,6 +10,7 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 
 import '../audio_level.dart';
+import '../console.dart';
 import '../main.dart';
 import '../src/rust/api/audio_chat.dart';
 import '../src/rust/api/error.dart';
@@ -22,6 +23,7 @@ class SettingsPage extends StatefulWidget {
   final StatisticsController statisticsController;
   final SoundPlayer player;
   final Overlay overlay;
+  final AudioDevices audioDevices;
 
   const SettingsPage(
       {super.key,
@@ -30,22 +32,28 @@ class SettingsPage extends StatefulWidget {
       required this.stateController,
       required this.player,
       required this.statisticsController,
-      required this.overlay});
+      required this.overlay,
+      required this.audioDevices});
 
   @override
   SettingsPageState createState() => SettingsPageState();
 }
 
 class SettingsPageState extends State<SettingsPage> {
-  /// 0 = audio, 1 = profiles, 2 = networking, 3 = interface, 4 = overlay
+  /// 0 = audio, 1 = profiles, 2 = networking, 3 = interface, 4 = logs, 5 = overlay
   int route = 0;
+  final TextEditingController _searchController = TextEditingController();
+  final GlobalKey<NetworkSettingsState> _key =
+      GlobalKey<NetworkSettingsState>();
 
   @override
   Widget build(BuildContext context) {
     double width;
 
-    if (route == 4) {
+    if (route == 5) {
       width = 1000;
+    } else if (route == 4) {
+      width = 1200;
     } else {
       width = 650;
     }
@@ -65,15 +73,26 @@ class SettingsPageState extends State<SettingsPage> {
               children: [
                 IconButton(
                   icon: const Icon(Icons.arrow_back),
-                  onPressed: Navigator.of(context).pop,
+                  onPressed: () async {
+                    if (route == 2 &&
+                        (_key.currentState?.unsavedChanges ?? false)) {
+                      bool leave = await unsavedConfirmation(context);
+
+                      if (!leave) {
+                        return;
+                      }
+                    }
+
+                    if (context.mounted) {
+                      Navigator.of(context).pop();
+                    }
+                  },
                 ),
                 const SizedBox(height: 20),
                 // TODO some on hover effects could be nice for these items
                 InkWell(
                   onTap: () {
-                    setState(() {
-                      route = 0;
-                    });
+                    tapHandler(0);
                   },
                   child: Container(
                     padding:
@@ -92,9 +111,7 @@ class SettingsPageState extends State<SettingsPage> {
                 const SizedBox(height: 12),
                 InkWell(
                   onTap: () {
-                    setState(() {
-                      route = 1;
-                    });
+                    tapHandler(1);
                   },
                   child: Container(
                     padding:
@@ -113,9 +130,7 @@ class SettingsPageState extends State<SettingsPage> {
                 const SizedBox(height: 12),
                 InkWell(
                   onTap: () {
-                    setState(() {
-                      route = 2;
-                    });
+                    tapHandler(2);
                   },
                   child: Container(
                     padding:
@@ -134,9 +149,7 @@ class SettingsPageState extends State<SettingsPage> {
                 const SizedBox(height: 12),
                 InkWell(
                   onTap: () {
-                    setState(() {
-                      route = 3;
-                    });
+                    tapHandler(3);
                   },
                   child: Container(
                     padding:
@@ -152,21 +165,38 @@ class SettingsPageState extends State<SettingsPage> {
                         const Text('Interface', style: TextStyle(fontSize: 18)),
                   ),
                 ),
+                const SizedBox(height: 12),
+                InkWell(
+                  onTap: () {
+                    tapHandler(4);
+                  },
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
+                    width: 175,
+                    decoration: BoxDecoration(
+                      color: route == 4
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).colorScheme.surface,
+                      borderRadius: BorderRadius.circular(5),
+                    ),
+                    child:
+                        const Text('View Log', style: TextStyle(fontSize: 18)),
+                  ),
+                ),
                 // overlay is only available on windows
                 if (Platform.isWindows) const SizedBox(height: 12),
                 if (Platform.isWindows)
                   InkWell(
                     onTap: () {
-                      setState(() {
-                        route = 4;
-                      });
+                      tapHandler(5);
                     },
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                           vertical: 5, horizontal: 10),
                       width: 175,
                       decoration: BoxDecoration(
-                        color: route == 4
+                        color: route == 5
                             ? Theme.of(context).colorScheme.primary
                             : Theme.of(context).colorScheme.surface,
                         borderRadius: BorderRadius.circular(5),
@@ -190,12 +220,14 @@ class SettingsPageState extends State<SettingsPage> {
                         (BuildContext context, BoxConstraints constraints) {
                       if (route == 0) {
                         return AVSettings(
-                            controller: widget.controller,
-                            audioChat: widget.audioChat,
-                            stateController: widget.stateController,
-                            player: widget.player,
-                            statisticsController: widget.statisticsController,
-                            constraints: constraints);
+                          controller: widget.controller,
+                          audioChat: widget.audioChat,
+                          stateController: widget.stateController,
+                          player: widget.player,
+                          statisticsController: widget.statisticsController,
+                          constraints: constraints,
+                          audioDevices: widget.audioDevices,
+                        );
                       } else if (route == 1) {
                         return ProfileSettings(
                             controller: widget.controller,
@@ -203,10 +235,40 @@ class SettingsPageState extends State<SettingsPage> {
                             stateController: widget.stateController);
                       } else if (route == 2) {
                         return NetworkSettings(
+                            key: _key,
                             controller: widget.controller,
                             audioChat: widget.audioChat,
-                            stateController: widget.stateController);
+                            stateController: widget.stateController,
+                            constraints: constraints);
                       } else if (route == 4) {
+                        String? filter = _searchController.text.isEmpty
+                            ? null
+                            : _searchController.text;
+                        List<Log> logs = console.getLogs(filter);
+
+                        return Column(
+                          children: [
+                            TextField(
+                              controller: _searchController,
+                              decoration: const InputDecoration(
+                                labelText: 'Search',
+                              ),
+                              onChanged: (String value) {
+                                setState(() {});
+                              },
+                            ),
+                            const SizedBox(height: 20),
+                            ListView.builder(
+                                itemCount: logs.length,
+                                shrinkWrap: true,
+                                itemBuilder: (context, index) {
+                                  Log log = logs[index];
+                                  return Text(
+                                      '${log.time} - ${log.type}: ${log.message}');
+                                }),
+                          ],
+                        );
+                      } else if (route == 5) {
                         return OverlaySettings(
                             overlay: widget.overlay,
                             controller: widget.controller,
@@ -222,15 +284,30 @@ class SettingsPageState extends State<SettingsPage> {
       ),
     );
   }
+
+  Future<void> tapHandler(int target) async {
+    if (route == 2 && (_key.currentState?.unsavedChanges ?? false)) {
+      bool leave = await unsavedConfirmation(context);
+
+      if (!leave) {
+        return;
+      }
+    }
+
+    setState(() {
+      route = target;
+    });
+  }
 }
 
-class AVSettings extends StatefulWidget {
+class AVSettings extends StatelessWidget {
   final SettingsController controller;
   final AudioChat audioChat;
   final StateController stateController;
   final StatisticsController statisticsController;
   final SoundPlayer player;
   final BoxConstraints constraints;
+  final AudioDevices audioDevices;
 
   const AVSettings(
       {super.key,
@@ -239,56 +316,8 @@ class AVSettings extends StatefulWidget {
       required this.stateController,
       required this.player,
       required this.statisticsController,
-      required this.constraints});
-
-  @override
-  AVSettingsState createState() => AVSettingsState();
-}
-
-class AVSettingsState extends State<AVSettings> {
-  List<String> inputDevices = [];
-  List<String> outputDevices = [];
-
-  /// triggers periodic device updates
-  Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    updateDevices();
-
-    // update the audio devices every 500ms
-    _timer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
-      updateDevices();
-    });
-  }
-
-  @override
-  void dispose() {
-    // cancel the timer when the widget is disposed
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  void updateDevices() {
-    var (inputDevices, outputDevices) = widget.audioChat.listDevices();
-
-    // default devices map to null
-    inputDevices.insert(0, 'Default');
-    outputDevices.insert(0, 'Default');
-
-    if (this.inputDevices != inputDevices) {
-      setState(() {
-        this.inputDevices = inputDevices;
-      });
-    }
-
-    if (this.outputDevices != outputDevices) {
-      setState(() {
-        this.outputDevices = outputDevices;
-      });
-    }
-  }
+      required this.constraints,
+      required this.audioDevices});
 
   @override
   Widget build(BuildContext context) {
@@ -296,104 +325,107 @@ class AVSettingsState extends State<AVSettings> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         ListenableBuilder(
-            listenable: widget.stateController,
+            listenable: stateController,
             builder: (BuildContext context, Widget? child) {
-              String inputInitialSelection;
+              return ListenableBuilder(
+                  listenable: audioDevices,
+                  builder: (BuildContext context, Widget? child) {
+                    String inputInitialSelection;
 
-              if (widget.controller.inputDevice == null) {
-                inputInitialSelection = 'Default';
-              } else if (inputDevices.contains(widget.controller.inputDevice)) {
-                inputInitialSelection = widget.controller.inputDevice!;
-              } else {
-                inputInitialSelection = 'Default';
-              }
+                    if (controller.inputDevice == null) {
+                      inputInitialSelection = 'Default';
+                    } else if (audioDevices.inputDevices
+                        .contains(controller.inputDevice)) {
+                      inputInitialSelection = controller.inputDevice!;
+                    } else {
+                      inputInitialSelection = 'Default';
+                    }
 
-              String outputInitialSelection;
+                    String outputInitialSelection;
 
-              if (widget.controller.outputDevice == null) {
-                outputInitialSelection = 'Default';
-              } else if (outputDevices
-                  .contains(widget.controller.outputDevice)) {
-                outputInitialSelection = widget.controller.outputDevice!;
-              } else {
-                outputInitialSelection = 'Default';
-              }
+                    if (controller.outputDevice == null) {
+                      outputInitialSelection = 'Default';
+                    } else if (audioDevices.outputDevices
+                        .contains(controller.outputDevice)) {
+                      outputInitialSelection = controller.outputDevice!;
+                    } else {
+                      outputInitialSelection = 'Default';
+                    }
 
-              double width = widget.constraints.maxWidth < 650
-                  ? widget.constraints.maxWidth
-                  : (widget.constraints.maxWidth - 20) / 2;
+                    double width = constraints.maxWidth < 650
+                        ? constraints.maxWidth
+                        : (constraints.maxWidth - 20) / 2;
 
-              return Center(
-                child: Wrap(
-                  spacing: 20,
-                  runSpacing: 20,
-                  children: [
-                    DropdownMenu<String>(
-                      width: width,
-                      label: const Text('Input Device'),
-                      enabled: !widget.stateController.blockAudioChanges,
-                      dropdownMenuEntries:
-                          inputDevices.map<DropdownMenuEntry<String>>((device) {
-                        return DropdownMenuEntry(
-                          value: device,
-                          label: device,
-                        );
-                      }).toList(),
-                      onSelected: (String? value) {
-                        if (value == 'Default') value = null;
-                        widget.controller.updateInputDevice(value);
-                        widget.audioChat.setInputDevice(device: value);
-                      },
-                      initialSelection: inputInitialSelection,
-                    ),
-                    DropdownMenu<String>(
-                      width: width,
-                      label: const Text('Output Device'),
-                      enabled: !widget.stateController.blockAudioChanges,
-                      dropdownMenuEntries: outputDevices
-                          .map<DropdownMenuEntry<String>>((device) {
-                        return DropdownMenuEntry(
-                          value: device,
-                          label: device,
-                        );
-                      }).toList(),
-                      onSelected: (String? value) {
-                        if (value == 'Default') value = null;
-                        widget.controller.updateOutputDevice(value);
-                        widget.audioChat.setOutputDevice(device: value);
-                        widget.player.updateOutputDevice(name: value);
-                      },
-                      initialSelection: outputInitialSelection,
-                    ),
-                  ],
-                ),
-              );
+                    return Center(
+                      child: Wrap(
+                        spacing: 20,
+                        runSpacing: 20,
+                        children: [
+                          DropdownMenu<String>(
+                            width: width,
+                            label: const Text('Input Device'),
+                            enabled: !stateController.blockAudioChanges,
+                            dropdownMenuEntries: audioDevices.inputDevices
+                                .map<DropdownMenuEntry<String>>((device) {
+                              return DropdownMenuEntry(
+                                value: device,
+                                label: device,
+                              );
+                            }).toList(),
+                            onSelected: (String? value) {
+                              if (value == 'Default') value = null;
+                              controller.updateInputDevice(value);
+                              audioChat.setInputDevice(device: value);
+                            },
+                            initialSelection: inputInitialSelection,
+                          ),
+                          DropdownMenu<String>(
+                            width: width,
+                            label: const Text('Output Device'),
+                            enabled: !stateController.blockAudioChanges,
+                            dropdownMenuEntries: audioDevices.outputDevices
+                                .map<DropdownMenuEntry<String>>((device) {
+                              return DropdownMenuEntry(
+                                value: device,
+                                label: device,
+                              );
+                            }).toList(),
+                            onSelected: (String? value) {
+                              if (value == 'Default') value = null;
+                              controller.updateOutputDevice(value);
+                              audioChat.setOutputDevice(device: value);
+                              player.updateOutputDevice(name: value);
+                            },
+                            initialSelection: outputInitialSelection,
+                          ),
+                        ],
+                      ),
+                    );
+                  });
             }),
         const SizedBox(height: 20),
         Row(children: [
           ListenableBuilder(
-              listenable: widget.stateController,
+              listenable: stateController,
               builder: (BuildContext context, Widget? child) {
                 return Button(
-                  text: widget.stateController.inAudioTest
-                      ? 'End Test'
-                      : 'Sound Test',
+                  text: stateController.inAudioTest ? 'End Test' : 'Sound Test',
                   width: 80,
                   height: 25,
-                  disabled: widget.stateController.isCallActive,
+                  disabled: stateController.isCallActive,
                   onPressed: () async {
-                    if (widget.stateController.inAudioTest) {
-                      widget.stateController.setInAudioTest();
-                      widget.audioChat.endCall();
+                    if (stateController.inAudioTest) {
+                      stateController.setInAudioTest();
+                      audioChat.endCall();
                     } else {
-                      widget.stateController.setInAudioTest();
+                      stateController.setInAudioTest();
                       try {
-                        await widget.audioChat.audioTest();
+                        await audioChat.audioTest();
                       } on DartError catch (e) {
                         if (!context.mounted) return;
                         showErrorDialog(
                             context, 'Error in Audio Test', e.message);
-                        widget.stateController.setInAudioTest();
+                        stateController.setInAudioTest();
                       }
                     }
                   },
@@ -401,11 +433,11 @@ class AVSettingsState extends State<AVSettings> {
               }),
           const SizedBox(width: 20),
           ListenableBuilder(
-              listenable: widget.statisticsController,
+              listenable: statisticsController,
               builder: (BuildContext context, Widget? child) {
                 return AudioLevel(
-                    level: widget.statisticsController.inputLevel,
-                    numRectangles: (widget.constraints.maxWidth - 145) ~/ 13.5);
+                    level: statisticsController.inputLevel,
+                    numRectangles: (constraints.maxWidth - 145) ~/ 13.5);
               }),
         ]),
         const SizedBox(height: 20),
@@ -416,13 +448,13 @@ class AVSettingsState extends State<AVSettings> {
             const Text('Noise Suppression', style: TextStyle(fontSize: 18)),
             // const SizedBox(width: 55),
             ListenableBuilder(
-                listenable: widget.controller,
+                listenable: controller,
                 builder: (BuildContext context, Widget? child) {
                   return ListenableBuilder(
-                      listenable: widget.stateController,
+                      listenable: stateController,
                       builder: (BuildContext context, Widget? child) {
                         return DropdownMenu<String>(
-                          enabled: !widget.stateController.blockAudioChanges,
+                          enabled: !stateController.blockAudioChanges,
                           dropdownMenuEntries: const [
                             DropdownMenuEntry(value: 'off', label: 'Off'),
                             DropdownMenuEntry(
@@ -430,23 +462,23 @@ class AVSettingsState extends State<AVSettings> {
                             DropdownMenuEntry(
                                 value: 'hogwash', label: 'Hogwash'),
                           ],
-                          initialSelection: widget.controller.useDenoise
-                              ? widget.controller.denoiseModel ?? 'vanilla'
+                          initialSelection: controller.useDenoise
+                              ? controller.denoiseModel ?? 'vanilla'
                               : 'off',
                           onSelected: (String? value) {
                             if (value == 'off') {
-                              widget.controller.updateUseDenoise(false);
-                              widget.audioChat.setDenoise(denoise: false);
+                              controller.updateUseDenoise(false);
+                              audioChat.setDenoise(denoise: false);
                             } else if (value == 'vanilla') {
-                              widget.controller.updateUseDenoise(true);
-                              widget.controller.setDenoiseModel(null);
-                              widget.audioChat.setDenoise(denoise: true);
-                              widget.audioChat.setModel(model: []);
+                              controller.updateUseDenoise(true);
+                              controller.setDenoiseModel(null);
+                              audioChat.setDenoise(denoise: true);
+                              audioChat.setModel(model: []);
                             } else {
-                              widget.controller.updateUseDenoise(true);
-                              widget.controller.setDenoiseModel(value);
-                              widget.audioChat.setDenoise(denoise: true);
-                              updateDenoiseModel(value!, widget.audioChat);
+                              controller.updateUseDenoise(true);
+                              controller.setDenoiseModel(value);
+                              audioChat.setDenoise(denoise: true);
+                              updateDenoiseModel(value!, audioChat);
                             }
                           },
                         );
@@ -462,13 +494,13 @@ class AVSettingsState extends State<AVSettings> {
             const Text('Play Custom Ringtones', style: TextStyle(fontSize: 18)),
             // const SizedBox(width: 20),
             ListenableBuilder(
-                listenable: widget.controller,
+                listenable: controller,
                 builder: (BuildContext context, Widget? child) {
                   return CustomSwitch(
-                      value: widget.controller.playCustomRingtones,
+                      value: controller.playCustomRingtones,
                       onChanged: (play) {
-                        widget.controller.updatePlayCustomRingtones(play);
-                        widget.audioChat.setPlayCustomRingtones(play: play);
+                        controller.updatePlayCustomRingtones(play);
+                        audioChat.setPlayCustomRingtones(play: play);
                       });
                 }),
           ],
@@ -480,7 +512,6 @@ class AVSettingsState extends State<AVSettings> {
           children: [
             Button(
                 text: 'Select custom ringtone file',
-                disabled: false,
                 onPressed: () async {
                   FilePickerResult? result =
                       await FilePicker.platform.pickFiles(
@@ -490,17 +521,16 @@ class AVSettingsState extends State<AVSettings> {
 
                   if (result != null) {
                     String? path = result.files.single.path;
-                    widget.controller.updateCustomRingtoneFile(path);
+                    controller.updateCustomRingtoneFile(path);
                   } else {
-                    widget.controller.updateCustomRingtoneFile(null);
+                    controller.updateCustomRingtoneFile(null);
                   }
                 }),
             ListenableBuilder(
-                listenable: widget.controller,
+                listenable: controller,
                 builder: (BuildContext context, Widget? child) {
                   return Text(
-                      widget.controller.customRingtoneFile ??
-                          'No file selected',
+                      controller.customRingtoneFile ?? 'No file selected',
                       style: const TextStyle(fontSize: 16));
                 }),
           ],
@@ -508,18 +538,17 @@ class AVSettingsState extends State<AVSettings> {
         const SizedBox(height: 20),
         const Text('Sound Effect Volume', style: TextStyle(fontSize: 16)),
         ListenableBuilder(
-            listenable: widget.controller,
+            listenable: controller,
             builder: (BuildContext context, Widget? child) {
               return Slider(
-                  value: widget.controller.soundVolume,
+                  value: controller.soundVolume,
                   onChanged: (value) {
-                    widget.controller.updateSoundVolume(value);
-                    widget.player.updateOutputVolume(volume: value);
+                    controller.updateSoundVolume(value);
+                    player.updateOutputVolume(volume: value);
                   },
                   min: -20,
                   max: 20,
-                  label:
-                      '${widget.controller.soundVolume.toStringAsFixed(2)} db');
+                  label: '${controller.soundVolume.toStringAsFixed(2)} db');
             }),
         const Divider(),
         const SizedBox(height: 20),
@@ -599,13 +628,12 @@ class ProfileSettingsState extends State<ProfileSettings> {
                             ListenableBuilder(
                                 listenable: widget.stateController,
                                 builder: (BuildContext context, Widget? child) {
-                                  // TODO the animation on this button is bad
                                   return Button(
                                     text: (widget.controller.activeProfile ==
                                             profile.id)
                                         ? 'Active'
                                         : 'Set Active',
-                                    width: 75,
+                                    width: 65,
                                     height: 25,
                                     disabled:
                                         widget.stateController.isCallActive ||
@@ -618,6 +646,7 @@ class ProfileSettingsState extends State<ProfileSettings> {
                                           .setIdentity(key: profile.keypair);
                                       widget.audioChat.restartManager();
                                     },
+                                    noSplash: true,
                                     disabledColor: widget
                                                     .controller.activeProfile ==
                                                 profile.id &&
@@ -653,7 +682,6 @@ class ProfileSettingsState extends State<ProfileSettings> {
                                             onPressed: () {
                                               Navigator.of(context).pop();
                                             },
-                                            disabled: false,
                                           ),
                                           Button(
                                             text: 'Delete',
@@ -662,7 +690,6 @@ class ProfileSettingsState extends State<ProfileSettings> {
                                                   .removeProfile(profile.id);
                                               Navigator.of(context).pop();
                                             },
-                                            disabled: false,
                                           )
                                         ],
                                       );
@@ -704,7 +731,6 @@ class ProfileSettingsState extends State<ProfileSettings> {
                               _profileNameInput.clear();
                               Navigator.of(context).pop();
                             },
-                            disabled: false,
                           )
                         ],
                       );
@@ -727,12 +753,14 @@ class NetworkSettings extends StatefulWidget {
   final SettingsController controller;
   final AudioChat audioChat;
   final StateController stateController;
+  final BoxConstraints constraints;
 
   const NetworkSettings(
       {super.key,
       required this.controller,
       required this.audioChat,
-      required this.stateController});
+      required this.stateController,
+      required this.constraints});
 
   @override
   NetworkSettingsState createState() => NetworkSettingsState();
@@ -741,9 +769,13 @@ class NetworkSettings extends StatefulWidget {
 class NetworkSettingsState extends State<NetworkSettings> {
   late String _relayAddress;
   late String _relayPeerId;
+  bool unsavedChanges = false;
 
   final TextEditingController _relayAddressInput = TextEditingController();
+  String? _relayAddressError;
+
   final TextEditingController _relayPeerIdInput = TextEditingController();
+  String? _relayPeerIdError;
 
   @override
   void initState() {
@@ -761,25 +793,108 @@ class NetworkSettingsState extends State<NetworkSettings> {
 
   @override
   Widget build(BuildContext context) {
+    double width = widget.constraints.maxWidth < 650
+        ? widget.constraints.maxWidth
+        : (widget.constraints.maxWidth - 20) / 2;
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Flexible(
-                child: TextInput(
+        Center(
+          child: Wrap(
+            spacing: 20,
+            runSpacing: 20,
+            children: [
+              SizedBox(
+                  width: width,
+                  child: TextInput(
                     labelText: 'Relay Address',
-                    controller: _relayAddressInput)),
-            const SizedBox(width: 20),
-            Flexible(
-                child: TextInput(
-                    labelText: 'Relay Peer ID', controller: _relayPeerIdInput)),
-          ],
-        )
+                    controller: _relayAddressInput,
+                    onChanged: (String value) {
+                      if (value != _relayAddress) {
+                        setState(() {
+                          unsavedChanges = true;
+                        });
+                      }
+                    },
+                    error: _relayAddressError == null
+                        ? null
+                        : Text(_relayAddressError!,
+                            style: const TextStyle(color: Colors.red)),
+                  )),
+              SizedBox(
+                  width: width,
+                  child: TextInput(
+                    labelText: 'Relay Peer ID',
+                    controller: _relayPeerIdInput,
+                    onChanged: (String value) {
+                      if (value != _relayPeerId) {
+                        setState(() {
+                          unsavedChanges = true;
+                        });
+                      }
+                    },
+                    error: _relayPeerIdError == null
+                        ? null
+                        : Text(_relayPeerIdError!,
+                            style: const TextStyle(color: Colors.red)),
+                  )),
+            ],
+          ),
+        ),
+        if (unsavedChanges) const SizedBox(height: 20),
+        if (unsavedChanges)
+          Button(
+            text: 'Save Changes',
+            onPressed: saveChanges,
+            width: 100,
+          ),
       ],
     );
+  }
+
+  Future<void> saveChanges() async {
+    String relayAddress = _relayAddressInput.text;
+    String relayId = _relayPeerIdInput.text;
+
+    bool changed = false;
+
+    try {
+      // this will raise an error if the relay ID isn't formatted right
+      await widget.controller.networkConfig.setRelayId(relayId: relayId);
+      _relayPeerId = relayId;
+      changed = true;
+      setState(() {
+        _relayPeerIdError = null;
+      });
+    } on DartError catch (error) {
+      setState(() {
+        _relayPeerIdError = error.message;
+      });
+    }
+
+    try {
+      // this will raise an error if the relay address isn't a valid socket address
+      await widget.controller.networkConfig
+          .setRelayAddress(relayAddress: relayAddress);
+      _relayAddress = relayAddress;
+      changed = true;
+      setState(() {
+        _relayAddressError = null;
+      });
+    } on DartError catch (error) {
+      setState(() {
+        _relayAddressError = error.message;
+      });
+    }
+
+    unsavedChanges = _relayAddressError != null || _relayPeerIdError != null;
+
+    if (changed) {
+      widget.controller.saveNetworkConfig();
+      widget.audioChat.restartManager();
+    }
   }
 }
 
@@ -839,7 +954,8 @@ class OverlaySettingsState extends State<OverlaySettings> {
               },
               disabled: widget.stateController.isCallActive ||
                   !widget.controller.overlayConfig.enabled,
-              width: 100,
+              width: 90,
+              height: 25,
             ),
             const SizedBox(width: 20),
             Button(
@@ -877,8 +993,8 @@ class OverlaySettingsState extends State<OverlaySettings> {
                 // save the config
                 widget.controller.saveOverlayConfig();
               },
-              disabled: false,
-              width: 150,
+              width: 110,
+              height: 25,
             ),
           ],
         ),
@@ -912,8 +1028,7 @@ class OverlaySettingsState extends State<OverlaySettings> {
                         widget.controller.saveOverlayConfig();
                         setState(() {});
                       }, widget.controller.overlayConfig.backgroundColor);
-                    },
-                    disabled: false),
+                    }),
               ],
             ),
             const SizedBox(width: 40),
@@ -932,8 +1047,7 @@ class OverlaySettingsState extends State<OverlaySettings> {
                         widget.controller.saveOverlayConfig();
                         setState(() {});
                       }, widget.controller.overlayConfig.fontColor);
-                    },
-                    disabled: false),
+                    }),
               ],
             )
           ],
@@ -1147,6 +1261,43 @@ class OverlayPositionWidgetState extends State<OverlayPositionWidget> {
   }
 }
 
+class AudioDevices extends ChangeNotifier {
+  final AudioChat audioChat;
+
+  late List<String> inputDevices = [];
+  late List<String> outputDevices = [];
+
+  AudioDevices({required this.audioChat}) {
+    Timer.periodic(const Duration(milliseconds: 500), (timer) {
+      updateDevices();
+    });
+  }
+
+  void updateDevices() async {
+    var (inputDevices, outputDevices) = await audioChat.listDevices();
+
+    // default devices map to null
+    inputDevices.insert(0, 'Default');
+    outputDevices.insert(0, 'Default');
+
+    bool notify = false;
+
+    if (this.inputDevices != inputDevices) {
+      this.inputDevices = inputDevices;
+      notify = true;
+    }
+
+    if (this.outputDevices != outputDevices) {
+      this.outputDevices = outputDevices;
+      notify = true;
+    }
+
+    if (notify) {
+      notifyListeners();
+    }
+  }
+}
+
 void colorPicker(BuildContext context, void Function(Color) changeColor,
     Color currentColor) {
   showDialog(
@@ -1166,10 +1317,38 @@ void colorPicker(BuildContext context, void Function(Color) changeColor,
             onPressed: () {
               Navigator.of(context).pop();
             },
-            disabled: false,
           ),
         ],
       );
     },
   );
+}
+
+Future<bool> unsavedConfirmation(BuildContext context) async {
+  bool? result = await showDialog<bool>(
+    context: context,
+    builder: (BuildContext context) {
+      return AlertDialog(
+        title: const Text('Unsaved Changes'),
+        content: const Text(
+            'You have unsaved changes. Are you sure you want to leave?'),
+        actions: [
+          Button(
+            text: 'Cancel',
+            onPressed: () {
+              Navigator.of(context).pop(false);
+            },
+          ),
+          Button(
+            text: 'Leave',
+            onPressed: () {
+              Navigator.of(context).pop(true);
+            },
+          )
+        ],
+      );
+    },
+  );
+
+  return result ?? false;
 }
