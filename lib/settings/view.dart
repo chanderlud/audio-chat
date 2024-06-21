@@ -53,7 +53,7 @@ class SettingsPageState extends State<SettingsPage> {
     if (route == 5) {
       width = 1000;
     } else if (route == 4) {
-      width = 1200;
+      width = 2000;
     } else {
       width = 650;
     }

@@ -1,4 +1,5 @@
 use cpal::SupportedStreamConfig;
+use crate::api::audio_chat::ChatMessage;
 
 include!(concat!(env!("OUT_DIR"), "/audio_chat.items.rs"));
 
@@ -75,10 +76,10 @@ impl Message {
         }
     }
 
-    pub(crate) fn chat(message: String) -> Self {
+    pub(crate) fn chat(message: &ChatMessage) -> Self {
         Self {
             message: Some(message::Message::Chat(Chat {
-                message,
+                text: message.text.clone(),
                 attachment: vec![],
             })),
         }

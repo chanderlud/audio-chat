@@ -32,13 +32,11 @@ pub fn init_logger() {
             GAG.lock().unwrap().replace(gag);
         }
 
-        // let level = if cfg!(debug_assertions) {
-        //     LevelFilter::Debug
-        // } else {
-        //     LevelFilter::Warn
-        // };
-
-        let level = LevelFilter::Debug;
+        let level = if cfg!(debug_assertions) {
+            LevelFilter::Debug
+        } else {
+            LevelFilter::Warn
+        };
 
         assert!(
             level <= log::STATIC_MAX_LEVEL,
@@ -49,15 +47,17 @@ pub fn init_logger() {
 
         let mut config = Config::new().chan_len(Some(100)).level(level);
 
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
-        {
-            config = config.file("audio_chat.log");
-        }
+        // #[cfg(any(target_os = "windows", target_os = "linux"))]
+        // {
+        //     config = config.file("audio_chat.log");
+        // }
+        //
+        // #[cfg(any(target_os = "android", target_os = "macos"))]
+        // {
+        //     config = config.custom(SendToDartLogger {});
+        // }
 
-        #[cfg(any(target_os = "android", target_os = "macos"))]
-        {
-            config = config.custom(SendToDartLogger {});
-        }
+        config = config.custom(SendToDartLogger {});
 
         fast_log::init(config).unwrap();
 

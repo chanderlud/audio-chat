@@ -31,6 +31,7 @@ async-throttle = "0.3"
 libp2p = { version = "0.53.2", features = ["tokio", "quic", "tcp", "ping", "dcutr", "relay", "identify", "macros", "noise", "yamux", "autonat"] }
 libp2p-stream = "0.1.0-alpha.1"
 gag = "1.0"
+chrono = "*"
 
 [build-dependencies]
 prost-build = "0.12"

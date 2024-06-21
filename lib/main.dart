@@ -64,7 +64,7 @@ Future<void> main() async {
 
   final soundPlayer = SoundPlayer(outputVolume: settingsController.soundVolume);
   soundPlayer.updateOutputDevice(name: settingsController.outputDevice);
-  soundPlayer.updateOutputVolume(volume: settingsController.outputVolume);
+  soundPlayer.updateOutputVolume(volume: settingsController.soundVolume);
 
   var host = soundPlayer.host();
 
@@ -440,7 +440,7 @@ class HomePage extends StatelessWidget {
                                 audioChat: audioChat,
                                 stateController: stateController,
                                 messageBus: messageBus,
-                                player: player))
+                                player: player, settingsController: settingsController))
                       ])),
                 ],
               );
@@ -1088,6 +1088,7 @@ class CallControls extends StatelessWidget {
 class ChatWidget extends StatefulWidget {
   final AudioChat audioChat;
   final StateController stateController;
+  final SettingsController settingsController;
   final MessageBus messageBus;
   final SoundPlayer player;
 
@@ -1096,7 +1097,7 @@ class ChatWidget extends StatefulWidget {
       required this.audioChat,
       required this.stateController,
       required this.messageBus,
-      required this.player});
+      required this.player, required this.settingsController});
 
   @override
   State<StatefulWidget> createState() => ChatWidgetState();
@@ -1107,8 +1108,8 @@ class ChatWidget extends StatefulWidget {
 // TODO a halfway decent UI
 class ChatWidgetState extends State<ChatWidget> {
   late TextEditingController _messageInput;
-  List<String> messages = [];
-  late StreamSubscription<String> messageSubscription;
+  List<ChatMessage> messages = [];
+  late StreamSubscription<ChatMessage> messageSubscription;
   bool active = false;
 
   @override
@@ -1117,6 +1118,18 @@ class ChatWidgetState extends State<ChatWidget> {
     messageSubscription =
         widget.messageBus.messageStream.listen(receivedMessage);
     _messageInput = TextEditingController();
+    widget.stateController.addListener(() {
+      if (widget.stateController.isCallActive == active) {
+        return;
+      } else if (!widget.stateController.isCallActive && active) {
+        messages.clear();
+        _messageInput.clear();
+      }
+
+      setState(() {
+        active = widget.stateController.isCallActive;
+      });
+    });
   }
 
   @override
@@ -1127,13 +1140,14 @@ class ChatWidgetState extends State<ChatWidget> {
   }
 
   // TODO add a sound effect here too
-  void sendMessage(String message) {
+  void sendMessage(String text) async {
     if (!active) return;
 
     Contact contact = widget.stateController.activeContact!;
 
     try {
-      widget.audioChat.sendChat(message: message, contact: contact);
+      ChatMessage message = await widget.audioChat.buildChat(contact: contact, text: text);
+      widget.audioChat.sendChat(message: message);
 
       setState(() {
         messages.add(message);
@@ -1144,7 +1158,7 @@ class ChatWidgetState extends State<ChatWidget> {
     }
   }
 
-  void receivedMessage(String message) async {
+  void receivedMessage(ChatMessage message) async {
     if (!active) return;
 
     // TODO add the sound effect
@@ -1162,6 +1176,7 @@ class ChatWidgetState extends State<ChatWidget> {
         color: Theme.of(context).colorScheme.secondaryContainer,
         borderRadius: BorderRadius.circular(10.0),
       ),
+      padding: const EdgeInsets.only(left: 10, right: 10, top: 5, bottom: 10),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1170,54 +1185,65 @@ class ChatWidgetState extends State<ChatWidget> {
               child: ListView.builder(
                   itemCount: messages.length,
                   itemBuilder: (BuildContext context, int index) {
-                    String message = messages[index];
-                    return ListTile(
-                      title: ListTile(
-                        title: Text(message),
+                    ChatMessage message = messages[index];
+                    bool sender = message.isSender(identity: widget.settingsController.peerId);
+
+                    return Align(
+                      alignment: sender ? Alignment.centerRight : Alignment.centerLeft,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        margin: const EdgeInsets.symmetric(vertical: 5),
+                        decoration: BoxDecoration(
+                          color: sender
+                              ? Theme.of(context).colorScheme.secondary
+                              : Theme.of(context).colorScheme.tertiaryContainer,
+                          borderRadius: BorderRadius.only(
+                              topLeft: const Radius.circular(10.0),
+                              topRight: const Radius.circular(10.0),
+                              bottomLeft: Radius.circular(sender ? 10.0 : 0),
+                              bottomRight: Radius.circular(sender ? 0 : 10.0)
+                        )),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(message.text),
+                            const SizedBox(width: 5),
+                            Text(message.time(), style: TextStyle(fontSize: 10, color: sender ? Colors.white60 : Colors.grey)),
+                          ],
+                        ),
                       ),
                     );
                   })),
           ListenableBuilder(
               listenable: widget.stateController,
               builder: (BuildContext context, Widget? child) {
-                // TODO these changes need to trigger rebuilds to prevent issues with the message display
-                if (!widget.stateController.isCallActive && active) {
-                  messages.clear();
-                  _messageInput.clear();
-                  active = false;
-                } else if (widget.stateController.isCallActive && !active) {
-                  active = true;
-                }
-
-                return Padding(
-                    padding:
-                        const EdgeInsets.only(bottom: 10, left: 20, right: 20),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Flexible(
-                            fit: FlexFit.loose,
-                            child: TextInput(
-                              controller: _messageInput,
-                              labelText: active ? 'Message' : 'Chat disabled',
-                              enabled: active,
-                              onSubmitted: (message) {
-                                if (message.isEmpty) return;
-                                sendMessage(message);
-                              },
-                            )),
-                        const SizedBox(width: 10),
-                        IconButton(
-                          onPressed: () {
-                            String message = _messageInput.text;
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                        fit: FlexFit.loose,
+                        child: TextInput(
+                          controller: _messageInput,
+                          labelText: active ? 'Message' : 'Chat disabled',
+                          enabled: active,
+                          onSubmitted: (message) {
                             if (message.isEmpty) return;
                             sendMessage(message);
                           },
-                          icon: const Icon(Icons.send),
-                        )
-                      ],
-                    ));
+                        )),
+                    const SizedBox(width: 10),
+                    IconButton(
+                      onPressed: () {
+                        String message = _messageInput.text;
+                        if (message.isEmpty) return;
+                        sendMessage(message);
+                      },
+                      icon: const Icon(Icons.send),
+                    )
+                  ],
+                );
               }),
         ],
       ),
@@ -1599,13 +1625,13 @@ class CustomTrackShape extends RoundedRectSliderTrackShape {
 
 /// Sends messages from the backend callback to the chat widget
 class MessageBus {
-  final _messageController = StreamController<String>.broadcast();
+  final _messageController = StreamController<ChatMessage>.broadcast();
 
   // for widgets to listen to the stream
-  Stream<String> get messageStream => _messageController.stream;
+  Stream<ChatMessage> get messageStream => _messageController.stream;
 
   // called to send a message
-  void sendMessage(String message) {
+  void sendMessage(ChatMessage message) {
     _messageController.sink.add(message);
   }
 
@@ -1708,8 +1734,7 @@ Future<List<int>> readAssetBytes(String assetName) async {
 
 /// Formats milliseconds into hours:minutes:seconds
 String formatElapsedTime(int milliseconds) {
-  int hundredths = (milliseconds / 10).truncate();
-  int seconds = (hundredths / 100).truncate();
+  int seconds = (milliseconds / 1000).truncate();
   int minutes = (seconds / 60).truncate();
   int hours = (minutes / 60).truncate();
 
@@ -1721,9 +1746,26 @@ String formatElapsedTime(int milliseconds) {
 }
 
 String formatBandwidth(int bytes) {
-  if (bytes < 100000000) {
-    return '${(bytes / 1000000).toStringAsFixed(2)} MB';
+  if (bytes < 100000) {
+    return '${roundToTotalDigits(bytes / 1000)} KB';
+  } else if (bytes < 100000000) {
+    return '${roundToTotalDigits(bytes / 1000000)} MB';
   } else {
-    return '${(bytes / 1000000000).toStringAsFixed(2)} GB';
+    return '${roundToTotalDigits(bytes / 1000000000)} GB';
   }
 }
+
+String roundToTotalDigits(double number) {
+  // get the number of digits before the decimal point
+  int integerDigits = number.abs().toInt().toString().length;
+
+  // calculate the number of fractional digits needed
+  int fractionalDigits = 3 - integerDigits;
+  if (fractionalDigits < 0) {
+    fractionalDigits = 0; // ff the total digits is less than the integer part, we round to the integer part
+  }
+
+  // round to the required number of fractional digits
+  return number.toStringAsFixed(fractionalDigits).padRight(4, '0');
+}
+

@@ -56,6 +56,11 @@ class AudioChat extends RustOpaque {
   Future<void> audioTest({dynamic hint}) => RustLib.instance.api
       .crateApiAudioChatAudioChatAudioTest(that: this, hint: hint);
 
+  Future<ChatMessage> buildChat(
+          {required Contact contact, required String text, dynamic hint}) =>
+      RustLib.instance.api.crateApiAudioChatAudioChatBuildChat(
+          that: this, contact: contact, text: text, hint: hint);
+
   /// Ends the call (if there is one)
   void endCall({dynamic hint}) => RustLib.instance.api
       .crateApiAudioChatAudioChatEndCall(that: this, hint: hint);
@@ -81,7 +86,7 @@ class AudioChat extends RustOpaque {
           required FutureOr<void> Function(AudioChat) startSessions,
           required FutureOr<Uint8List?> Function() loadRingtone,
           required FutureOr<void> Function(Statistics) statistics,
-          required FutureOr<void> Function(String) messageReceived,
+          required FutureOr<void> Function(ChatMessage) messageReceived,
           required FutureOr<void> Function(bool, bool) managerActive,
           required FutureOr<void> Function(Contact) callStarted,
           dynamic hint}) =>
@@ -114,10 +119,9 @@ class AudioChat extends RustOpaque {
           that: this, contact: contact, hint: hint);
 
   /// Sends a chat message
-  Future<void> sendChat(
-          {required String message, required Contact contact, dynamic hint}) =>
+  Future<void> sendChat({required ChatMessage message, dynamic hint}) =>
       RustLib.instance.api.crateApiAudioChatAudioChatSendChat(
-          that: this, message: message, contact: contact, hint: hint);
+          that: this, message: message, hint: hint);
 
   void setDeafened({required bool deafened, dynamic hint}) =>
       RustLib.instance.api.crateApiAudioChatAudioChatSetDeafened(
@@ -173,6 +177,39 @@ class AudioChat extends RustOpaque {
   Future<void> stopSession({required Contact contact, dynamic hint}) =>
       RustLib.instance.api.crateApiAudioChatAudioChatStopSession(
           that: this, contact: contact, hint: hint);
+}
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<ChatMessage>>
+@sealed
+class ChatMessage extends RustOpaque {
+  ChatMessage.dcoDecode(List<dynamic> wire)
+      : super.dcoDecode(wire, _kStaticData);
+
+  ChatMessage.sseDecode(BigInt ptr, int externalSizeOnNative)
+      : super.sseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        RustLib.instance.api.rust_arc_increment_strong_count_ChatMessage,
+    rustArcDecrementStrongCount:
+        RustLib.instance.api.rust_arc_decrement_strong_count_ChatMessage,
+    rustArcDecrementStrongCountPtr:
+        RustLib.instance.api.rust_arc_decrement_strong_count_ChatMessagePtr,
+  );
+
+  String get text => RustLib.instance.api.crateApiAudioChatChatMessageGetText(
+        that: this,
+      );
+
+  bool isSender({required String identity, dynamic hint}) =>
+      RustLib.instance.api.crateApiAudioChatChatMessageIsSender(
+          that: this, identity: identity, hint: hint);
+
+  void set text(String text) => RustLib.instance.api
+      .crateApiAudioChatChatMessageSetText(that: this, text: text);
+
+  String time({dynamic hint}) => RustLib.instance.api
+      .crateApiAudioChatChatMessageTime(that: this, hint: hint);
 }
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<DartNotify>>

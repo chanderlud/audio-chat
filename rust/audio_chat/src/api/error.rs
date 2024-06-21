@@ -55,6 +55,7 @@ pub(crate) enum ErrorKind {
     SwarmEnded,
     SessionStoped,
     CallEnded,
+    MissingContact,
 }
 
 impl From<std::io::Error> for Error {
@@ -272,6 +273,7 @@ impl Display for Error {
                 ErrorKind::SwarmEnded => "Swarm ended".to_string(),
                 ErrorKind::SessionStoped => "Session stopped".to_string(),
                 ErrorKind::CallEnded => "Call ended".to_string(),
+                ErrorKind::MissingContact => "Missing contact".to_string(),
             }
         )
     }

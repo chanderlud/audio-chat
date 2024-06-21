@@ -30,7 +30,7 @@ message Goodbye {
 
 // A chat message
 message Chat {
-  required string message = 1;
+  required string text = 1;
   repeated Attachment attachment = 2;
 }
 
