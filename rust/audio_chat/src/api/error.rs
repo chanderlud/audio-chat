@@ -16,7 +16,7 @@ use crate::BehaviourEvent;
 /// generic error type for audio chat
 #[derive(Debug)]
 pub(crate) struct Error {
-    pub kind: ErrorKind,
+    pub(crate) kind: ErrorKind,
 }
 
 #[derive(Debug)]

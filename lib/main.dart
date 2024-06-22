@@ -13,6 +13,7 @@ import 'package:audio_chat/settings/controller.dart';
 import 'package:flutter/material.dart' hide Overlay;
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_svg/svg.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -440,7 +441,8 @@ class HomePage extends StatelessWidget {
                                 audioChat: audioChat,
                                 stateController: stateController,
                                 messageBus: messageBus,
-                                player: player, settingsController: settingsController))
+                                player: player,
+                                settingsController: settingsController))
                       ])),
                 ],
               );
@@ -673,9 +675,10 @@ class ContactWidgetState extends State<ContactWidget> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const CircleAvatar(
+            CircleAvatar(
               maxRadius: 17,
-              child: Icon(Icons.person),
+              child: SvgPicture.asset('assets/icons/Profile.svg',
+                  semanticsLabel: 'A profile icon'),
             ),
             const SizedBox(width: 10),
             Text(widget.contact.nickname(),
@@ -753,14 +756,17 @@ class ContactWidgetState extends State<ContactWidget> {
                                             .saveContacts();
                                       }
 
-                                      if (context.mounted)
+                                      if (context.mounted) {
                                         Navigator.pop(context);
+                                      }
                                     } else {
                                       showErrorDialog(context, 'Warning',
                                           'Cannot delete a contact while in an active call');
                                     }
                                   },
-                                  icon: const Icon(Icons.delete),
+                                  icon: SvgPicture.asset(
+                                      'assets/icons/Trash.svg',
+                                      semanticsLabel: 'Delete contact icon'),
                                 ),
                               ],
                             ),
@@ -789,14 +795,16 @@ class ContactWidgetState extends State<ContactWidget> {
                           );
                         });
                   },
-                  icon: const Icon(Icons.edit)),
+                  icon: SvgPicture.asset('assets/icons/Edit.svg',
+                      semanticsLabel: 'Edit contact icon')),
             const Spacer(),
             if (status == 'Inactive')
               IconButton(
                   onPressed: () {
                     widget.audioChat.startSession(contact: widget.contact);
                   },
-                  icon: const Icon(Icons.refresh)),
+                  icon: SvgPicture.asset('assets/icons/Restart.svg',
+                      semanticsLabel: 'Retry the session initiation')),
             if (status == 'Inactive') const SizedBox(width: 4),
             if (status == 'Connecting')
               const SizedBox(
@@ -805,12 +813,21 @@ class ContactWidgetState extends State<ContactWidget> {
                   child: CircularProgressIndicator(strokeWidth: 3)),
             if (status == 'Connecting') const SizedBox(width: 10),
             if (!online)
-              const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 7, vertical: 8),
-                  child: Icon(Icons.dark_mode_outlined)),
+              Padding(
+                  padding: const EdgeInsets.only(left: 7, right: 10),
+                  child: SvgPicture.asset(
+                    'assets/icons/Offline.svg',
+                    semanticsLabel: 'Offline icon',
+                    width: 26,
+                  )),
             if (active)
               IconButton(
-                icon: const Icon(Icons.call_end, color: Colors.red),
+                visualDensity: VisualDensity.compact,
+                icon: SvgPicture.asset(
+                  'assets/icons/PhoneOff.svg',
+                  semanticsLabel: 'End call icon',
+                  width: 28,
+                ),
                 onPressed: () async {
                   outgoingSoundHandle?.cancel();
 
@@ -825,7 +842,12 @@ class ContactWidgetState extends State<ContactWidget> {
               ),
             if (!active && online)
               IconButton(
-                icon: const Icon(Icons.call),
+                visualDensity: VisualDensity.compact,
+                icon: SvgPicture.asset(
+                  'assets/icons/Phone.svg',
+                  semanticsLabel: 'Call icon',
+                  width: 28,
+                ),
                 onPressed: () async {
                   if (widget.stateController.isCallActive) {
                     showErrorDialog(context, 'Call failed',
@@ -917,7 +939,8 @@ class CallControls extends StatelessWidget {
                     children: [
                       const SizedBox(width: 15),
                       const Text('Session Manager Inactive',
-                          style: TextStyle(fontSize: 16, color: Colors.red)),
+                          style: TextStyle(
+                              fontSize: 16, color: Color(0xFFdc2626))),
                       stateController.sessionManagerRestartable
                           ? const Spacer()
                           : const SizedBox(width: 10),
@@ -926,8 +949,10 @@ class CallControls extends StatelessWidget {
                               onPressed: () {
                                 audioChat.restartManager();
                               },
-                              icon: const Icon(Icons.restart_alt,
-                                  color: Colors.red))
+                              icon: SvgPicture.asset('assets/icons/Restart.svg',
+                                  colorFilter: const ColorFilter.mode(
+                                      Color(0xFFdc2626), BlendMode.srcIn),
+                                  semanticsLabel: 'Restart session manager'))
                           : Container(),
                       const SizedBox(width: 5),
                     ],
@@ -1027,10 +1052,12 @@ class CallControls extends StatelessWidget {
                                 audioChat.setMuted(
                                     muted: stateController.isMuted);
                               },
-                              icon: stateController.isMuted |
-                                      stateController.isDeafened
-                                  ? const Icon(Icons.mic_off)
-                                  : const Icon(Icons.mic));
+                              icon: SvgPicture.asset(
+                                  stateController.isDeafened |
+                                          stateController.isMuted
+                                      ? 'assets/icons/MicrophoneOff.svg'
+                                      : 'assets/icons/Microphone.svg',
+                                  width: 24));
                         }),
                     ListenableBuilder(
                         listenable: stateController,
@@ -1053,9 +1080,12 @@ class CallControls extends StatelessWidget {
                                   audioChat.setMuted(muted: false);
                                 }
                               },
-                              icon: stateController.isDeafened
-                                  ? const Icon(Icons.volume_off)
-                                  : const Icon(Icons.volume_up));
+                              visualDensity: VisualDensity.comfortable,
+                              icon: SvgPicture.asset(
+                                  stateController.isDeafened
+                                      ? 'assets/icons/SpeakerOff.svg'
+                                      : 'assets/icons/Speaker.svg',
+                                  width: 28));
                         }),
                     IconButton(
                         onPressed: () {
@@ -1073,9 +1103,11 @@ class CallControls extends StatelessWidget {
                                 ),
                               ));
                         },
-                        icon: const Icon(Icons.settings)),
+                        icon: SvgPicture.asset('assets/icons/Settings.svg')),
+                    const SizedBox(width: 1),
                     IconButton(
-                        onPressed: () {}, icon: const Icon(Icons.screen_share)),
+                        onPressed: () {},
+                        icon: SvgPicture.asset('assets/icons/ScreenShare.svg')),
                   ],
                 )),
               ))
@@ -1097,15 +1129,13 @@ class ChatWidget extends StatefulWidget {
       required this.audioChat,
       required this.stateController,
       required this.messageBus,
-      required this.player, required this.settingsController});
+      required this.player,
+      required this.settingsController});
 
   @override
   State<StatefulWidget> createState() => ChatWidgetState();
 }
 
-// TODO switch from String to Chat (rust)
-// TODO differentiate between sent and received messages
-// TODO a halfway decent UI
 class ChatWidgetState extends State<ChatWidget> {
   late TextEditingController _messageInput;
   List<ChatMessage> messages = [];
@@ -1146,7 +1176,8 @@ class ChatWidgetState extends State<ChatWidget> {
     Contact contact = widget.stateController.activeContact!;
 
     try {
-      ChatMessage message = await widget.audioChat.buildChat(contact: contact, text: text);
+      ChatMessage message =
+          await widget.audioChat.buildChat(contact: contact, text: text);
       widget.audioChat.sendChat(message: message);
 
       setState(() {
@@ -1186,30 +1217,39 @@ class ChatWidgetState extends State<ChatWidget> {
                   itemCount: messages.length,
                   itemBuilder: (BuildContext context, int index) {
                     ChatMessage message = messages[index];
-                    bool sender = message.isSender(identity: widget.settingsController.peerId);
+                    bool sender = message.isSender(
+                        identity: widget.settingsController.peerId);
 
                     return Align(
-                      alignment: sender ? Alignment.centerRight : Alignment.centerLeft,
+                      alignment:
+                          sender ? Alignment.centerRight : Alignment.centerLeft,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 5),
                         margin: const EdgeInsets.symmetric(vertical: 5),
                         decoration: BoxDecoration(
-                          color: sender
-                              ? Theme.of(context).colorScheme.secondary
-                              : Theme.of(context).colorScheme.tertiaryContainer,
-                          borderRadius: BorderRadius.only(
-                              topLeft: const Radius.circular(10.0),
-                              topRight: const Radius.circular(10.0),
-                              bottomLeft: Radius.circular(sender ? 10.0 : 0),
-                              bottomRight: Radius.circular(sender ? 0 : 10.0)
-                        )),
+                            color: sender
+                                ? Theme.of(context).colorScheme.secondary
+                                : Theme.of(context)
+                                    .colorScheme
+                                    .tertiaryContainer,
+                            borderRadius: BorderRadius.only(
+                                topLeft: const Radius.circular(10.0),
+                                topRight: const Radius.circular(10.0),
+                                bottomLeft: Radius.circular(sender ? 10.0 : 0),
+                                bottomRight:
+                                    Radius.circular(sender ? 0 : 10.0))),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
                             Text(message.text),
                             const SizedBox(width: 5),
-                            Text(message.time(), style: TextStyle(fontSize: 10, color: sender ? Colors.white60 : Colors.grey)),
+                            Text(message.time(),
+                                style: TextStyle(
+                                    fontSize: 10,
+                                    color:
+                                        sender ? Colors.white60 : Colors.grey)),
                           ],
                         ),
                       ),
@@ -1233,15 +1273,20 @@ class ChatWidgetState extends State<ChatWidget> {
                             sendMessage(message);
                           },
                         )),
-                    const SizedBox(width: 10),
-                    IconButton(
-                      onPressed: () {
-                        String message = _messageInput.text;
-                        if (message.isEmpty) return;
-                        sendMessage(message);
-                      },
-                      icon: const Icon(Icons.send),
-                    )
+                    if (active) const SizedBox(width: 10),
+                    if (active)
+                      IconButton(
+                        onPressed: () {
+                          String message = _messageInput.text;
+                          if (message.isEmpty) return;
+                          sendMessage(message);
+                        },
+                        icon: SvgPicture.asset(
+                          'assets/icons/Send.svg',
+                          semanticsLabel: 'Send button icon',
+                          width: 36,
+                        ),
+                      )
                   ],
                 );
               }),
@@ -1762,10 +1807,10 @@ String roundToTotalDigits(double number) {
   // calculate the number of fractional digits needed
   int fractionalDigits = 3 - integerDigits;
   if (fractionalDigits < 0) {
-    fractionalDigits = 0; // ff the total digits is less than the integer part, we round to the integer part
+    fractionalDigits =
+        0; // ff the total digits is less than the integer part, we round to the integer part
   }
 
   // round to the required number of fractional digits
   return number.toStringAsFixed(fractionalDigits).padRight(4, '0');
 }
-

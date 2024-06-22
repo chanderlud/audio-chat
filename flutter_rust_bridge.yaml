@@ -1,2 +1,4 @@
-rust_input: rust/audio_chat/src/api/**/*.rs
+rust_input: crate::api
+rust_root: rust/audio_chat
 dart_output: lib/src/rust
+enable_lifetime: true

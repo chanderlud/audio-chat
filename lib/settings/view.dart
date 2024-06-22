@@ -8,6 +8,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart' hide Overlay;
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 import '../audio_level.dart';
 import '../console.dart';
@@ -72,7 +73,11 @@ class SettingsPageState extends State<SettingsPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 IconButton(
-                  icon: const Icon(Icons.arrow_back),
+                  icon: SvgPicture.asset(
+                    'assets/icons/Back.svg',
+                    semanticsLabel: 'Close Settings',
+                    width: 30,
+                  ),
                   onPressed: () async {
                     if (route == 2 &&
                         (_key.currentState?.unsavedChanges ?? false)) {
@@ -88,7 +93,7 @@ class SettingsPageState extends State<SettingsPage> {
                     }
                   },
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 15),
                 // TODO some on hover effects could be nice for these items
                 InkWell(
                   onTap: () {
@@ -361,43 +366,28 @@ class AVSettings extends StatelessWidget {
                         spacing: 20,
                         runSpacing: 20,
                         children: [
-                          DropdownMenu<String>(
-                            width: width,
-                            label: const Text('Input Device'),
-                            enabled: !stateController.blockAudioChanges,
-                            dropdownMenuEntries: audioDevices.inputDevices
-                                .map<DropdownMenuEntry<String>>((device) {
-                              return DropdownMenuEntry(
-                                value: device,
-                                label: device,
-                              );
-                            }).toList(),
-                            onSelected: (String? value) {
-                              if (value == 'Default') value = null;
-                              controller.updateInputDevice(value);
-                              audioChat.setInputDevice(device: value);
-                            },
-                            initialSelection: inputInitialSelection,
-                          ),
-                          DropdownMenu<String>(
-                            width: width,
-                            label: const Text('Output Device'),
-                            enabled: !stateController.blockAudioChanges,
-                            dropdownMenuEntries: audioDevices.outputDevices
-                                .map<DropdownMenuEntry<String>>((device) {
-                              return DropdownMenuEntry(
-                                value: device,
-                                label: device,
-                              );
-                            }).toList(),
+                          DropDown(
+                              label: 'Input Device',
+                              items: audioDevices.inputDevices,
+                              initialSelection: inputInitialSelection,
+                              onSelected: (String? value) {
+                                if (value == 'Default') value = null;
+                                controller.updateInputDevice(value);
+                                audioChat.setInputDevice(device: value);
+                              },
+                              width: width),
+                          DropDown(
+                            label: 'Output Device',
+                            items: audioDevices.outputDevices,
+                            initialSelection: outputInitialSelection,
                             onSelected: (String? value) {
                               if (value == 'Default') value = null;
                               controller.updateOutputDevice(value);
                               audioChat.setOutputDevice(device: value);
                               player.updateOutputDevice(name: value);
                             },
-                            initialSelection: outputInitialSelection,
-                          ),
+                            width: width,
+                          )
                         ],
                       ),
                     );
@@ -453,6 +443,7 @@ class AVSettings extends StatelessWidget {
                   return ListenableBuilder(
                       listenable: stateController,
                       builder: (BuildContext context, Widget? child) {
+                        // TODO migrate this to DropDown and fix the issues with it being bad
                         return DropdownMenu<String>(
                           enabled: !stateController.blockAudioChanges,
                           dropdownMenuEntries: const [
@@ -659,13 +650,16 @@ class ProfileSettingsState extends State<ProfileSettings> {
                                 }),
                             const SizedBox(width: 10),
                             IconButton(
-                              tooltip: 'Copy Peer ID',
-                              onPressed: () {
-                                Clipboard.setData(
-                                    ClipboardData(text: profile.peerId));
-                              },
-                              icon: const Icon(Icons.copy),
-                            ),
+                                tooltip: 'Copy Peer ID',
+                                onPressed: () {
+                                  Clipboard.setData(
+                                      ClipboardData(text: profile.peerId));
+                                },
+                                icon: SvgPicture.asset(
+                                  'assets/icons/Copy.svg',
+                                  semanticsLabel: 'Copy Peer ID',
+                                  width: 26,
+                                )),
                             IconButton(
                               tooltip: 'Delete Profile',
                               onPressed: () {
@@ -695,7 +689,11 @@ class ProfileSettingsState extends State<ProfileSettings> {
                                       );
                                     });
                               },
-                              icon: const Icon(Icons.delete),
+                              icon: SvgPicture.asset(
+                                'assets/icons/trash.svg',
+                                semanticsLabel: 'Delete Profile',
+                                width: 26,
+                              ),
                             ),
                           ],
                         ),
@@ -736,9 +734,11 @@ class ProfileSettingsState extends State<ProfileSettings> {
                       );
                     });
               },
-              icon: const Icon(
-                Icons.add,
-                size: 40,
+              visualDensity: VisualDensity.comfortable,
+              icon: SvgPicture.asset(
+                'assets/icons/Plus.svg',
+                semanticsLabel: 'Create Profile',
+                width: 38,
               ),
               tooltip: 'Create Profile',
             ),
@@ -1257,6 +1257,51 @@ class OverlayPositionWidgetState extends State<OverlayPositionWidget> {
           ),
         );
       },
+    );
+  }
+}
+
+class DropDown extends StatelessWidget {
+  final String label;
+  final List<String> items;
+  final String? initialSelection;
+  final void Function(String?) onSelected;
+  final double width;
+  final bool enabled;
+
+  const DropDown(
+      {super.key,
+      required this.label,
+      required this.items,
+      required this.initialSelection,
+      required this.onSelected,
+      required this.width,
+      this.enabled = true});
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownMenu<String>(
+      width: width,
+      label: Text(label),
+      enabled: enabled,
+      dropdownMenuEntries: items.map<DropdownMenuEntry<String>>((item) {
+        return DropdownMenuEntry(
+          value: item,
+          label: item,
+        );
+      }).toList(),
+      onSelected: onSelected,
+      initialSelection: initialSelection,
+      trailingIcon: SvgPicture.asset(
+        'assets/icons/DropdownDown.svg',
+        semanticsLabel: 'Open Dropdown',
+        width: 20,
+      ),
+      selectedTrailingIcon: SvgPicture.asset(
+        'assets/icons/DropdownUp.svg',
+        semanticsLabel: 'Close Dropdown',
+        width: 20,
+      ),
     );
   }
 }

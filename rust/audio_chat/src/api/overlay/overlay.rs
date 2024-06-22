@@ -259,7 +259,7 @@ impl Overlay {
 
     /// non-windows platforms don't have an overlay
     #[cfg(not(windows))]
-    pub fn _hide(&self) {}
+    fn _hide(&self) {}
 
     /// move and resize the overlay window
     pub fn move_overlay(&self, x: i32, y: i32, width: i32, height: i32) {
