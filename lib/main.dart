@@ -34,7 +34,7 @@ Future<void> main() async {
     DebugConsole.log(message);
   });
 
-  if (Platform.isAndroid) {
+  if (Platform.isAndroid || Platform.isIOS) {
     PermissionStatus status = await Permission.microphone.request();
 
     if (!status.isGranted) {
@@ -167,7 +167,6 @@ Future<void> main() async {
         stateController.setStatus('Active');
         stateController.callDisconnected = false;
       },
-      // TODO use a handle to cancel the sound as needed
       // called when the call disconnects or reconnects
       callState: (bool disconnected) async {
         if (disconnected &&
@@ -357,44 +356,6 @@ class HomePage extends StatelessWidget {
           }
         });
 
-    ListenableBuilder contactsList = ListenableBuilder(
-        listenable: settingsController,
-        builder: (BuildContext context, Widget? child) {
-          return ListenableBuilder(
-              listenable: stateController,
-              builder: (BuildContext context, Widget? child) {
-                List<Contact> contacts =
-                    settingsController.contacts.values.toList();
-
-                // sort contacts by session status then nickname
-                contacts.sort((a, b) {
-                  String aStatus = stateController.sessionStatus(a);
-                  String bStatus = stateController.sessionStatus(b);
-
-                  if (aStatus == bStatus) {
-                    return a.nickname().compareTo(b.nickname());
-                  } else if (aStatus == 'Connected') {
-                    return -1;
-                  } else if (bStatus == 'Connected') {
-                    return 1;
-                  } else if (aStatus == 'Connecting') {
-                    return -1;
-                  } else if (bStatus == 'Connecting') {
-                    return 1;
-                  } else {
-                    return 0;
-                  }
-                });
-
-                return ContactsList(
-                    audioChat: audioChat,
-                    contacts: contacts,
-                    stateController: stateController,
-                    settingsController: settingsController,
-                    player: player);
-              });
-        });
-
     PeriodicNotifier notifier = PeriodicNotifier();
 
     CallControls callControls = CallControls(
@@ -413,6 +374,45 @@ class HomePage extends StatelessWidget {
           padding: const EdgeInsets.all(20.0),
           child: LayoutBuilder(
               builder: (BuildContext context, BoxConstraints constraints) {
+            ListenableBuilder contactsList = ListenableBuilder(
+                listenable: settingsController,
+                builder: (BuildContext context, Widget? child) {
+                  return ListenableBuilder(
+                      listenable: stateController,
+                      builder: (BuildContext context, Widget? child) {
+                        List<Contact> contacts =
+                            settingsController.contacts.values.toList();
+
+                        // sort contacts by session status then nickname
+                        contacts.sort((a, b) {
+                          String aStatus = stateController.sessionStatus(a);
+                          String bStatus = stateController.sessionStatus(b);
+
+                          if (aStatus == bStatus) {
+                            return a.nickname().compareTo(b.nickname());
+                          } else if (aStatus == 'Connected') {
+                            return -1;
+                          } else if (bStatus == 'Connected') {
+                            return 1;
+                          } else if (aStatus == 'Connecting') {
+                            return -1;
+                          } else if (bStatus == 'Connecting') {
+                            return 1;
+                          } else {
+                            return 0;
+                          }
+                        });
+
+                        return ContactsList(
+                          audioChat: audioChat,
+                          contacts: contacts,
+                          stateController: stateController,
+                          settingsController: settingsController,
+                          player: player,
+                          maxWidth: constraints.maxWidth,
+                        );
+                      });
+                });
             if (constraints.maxWidth > 600) {
               return Column(
                 children: [
@@ -550,6 +550,7 @@ class ContactsList extends StatelessWidget {
   final SettingsController settingsController;
   final List<Contact> contacts;
   final SoundPlayer player;
+  final double maxWidth;
 
   const ContactsList(
       {super.key,
@@ -557,7 +558,8 @@ class ContactsList extends StatelessWidget {
       required this.contacts,
       required this.stateController,
       required this.settingsController,
-      required this.player});
+      required this.player,
+      required this.maxWidth});
 
   @override
   Widget build(BuildContext context) {
@@ -571,9 +573,38 @@ class ContactsList extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-              child: Text("Contacts", style: TextStyle(fontSize: 20))),
+          Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+              child: Row(
+                children: [
+                  const Text("Contacts", style: TextStyle(fontSize: 20)),
+                  if (maxWidth <= 600)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 10, top: 3),
+                      child: IconButton(
+                          onPressed: () {
+                            showDialog(
+                                context: context,
+                                builder: (BuildContext context) {
+                                  return SimpleDialog(
+                                    backgroundColor: Theme.of(context)
+                                        .colorScheme
+                                        .secondaryContainer,
+                                    children: [
+                                      ContactForm(
+                                        audioChat: audioChat,
+                                        settingsController: settingsController,
+                                      )
+                                    ],
+                                  );
+                                });
+                          },
+                          visualDensity: const VisualDensity(
+                              horizontal: -4.0, vertical: -4.0),
+                          icon: SvgPicture.asset('assets/icons/Plus.svg')),
+                    ),
+                ],
+              )),
           const SizedBox(height: 10.0),
           Flexible(
             fit: FlexFit.loose,
@@ -663,8 +694,115 @@ class ContactWidgetState extends State<ContactWidget> {
           isHovered = hover;
         });
       },
-      // on tap is required for on hover to work for some reason
-      onTap: () {},
+      onTap: () {
+        showDialog(
+            barrierDismissible: false,
+            context: context,
+            builder: (BuildContext context) {
+              return SimpleDialog(
+                title: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Edit Contact'),
+                    IconButton(
+                      onPressed: () async {
+                        if (!widget.stateController
+                            .isActiveContact(widget.contact)) {
+                          bool confirm = await showDialog<bool>(
+                              context: context,
+                              builder: (BuildContext context) {
+                                return SimpleDialog(
+                                  title: const Text('Warning'),
+                                  contentPadding:
+                                  const EdgeInsets.only(
+                                      bottom: 25,
+                                      left: 25,
+                                      right: 25),
+                                  titlePadding:
+                                  const EdgeInsets.only(
+                                      top: 25,
+                                      left: 25,
+                                      right: 25,
+                                      bottom: 20),
+                                  children: [
+                                    const Text(
+                                        'Are you sure you want to delete this contact?'),
+                                    const SizedBox(height: 20),
+                                    Row(
+                                      mainAxisAlignment:
+                                      MainAxisAlignment.end,
+                                      children: [
+                                        Button(
+                                          text: 'Cancel',
+                                          onPressed: () {
+                                            Navigator.pop(
+                                                context, false);
+                                          },
+                                        ),
+                                        const SizedBox(
+                                            width: 10),
+                                        Button(
+                                          text: 'Delete',
+                                          onPressed: () {
+                                            Navigator.pop(
+                                                context, true);
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                );
+                              }) ??
+                              false;
+
+                          if (confirm) {
+                            widget.settingsController
+                                .removeContact(widget.contact);
+                            widget.audioChat.stopSession(
+                                contact: widget.contact);
+                            widget.settingsController
+                                .saveContacts();
+                          }
+
+                          if (context.mounted) {
+                            Navigator.pop(context);
+                          }
+                        } else {
+                          showErrorDialog(context, 'Warning',
+                              'Cannot delete a contact while in an active call');
+                        }
+                      },
+                      icon: SvgPicture.asset(
+                          'assets/icons/Trash.svg',
+                          semanticsLabel: 'Delete contact icon'),
+                    ),
+                  ],
+                ),
+                contentPadding: const EdgeInsets.only(
+                    bottom: 25, left: 25, right: 25),
+                titlePadding: const EdgeInsets.only(
+                    top: 25, left: 25, right: 25, bottom: 20),
+                children: [
+                  TextInput(
+                      enabled: !widget.stateController
+                          .isActiveContact(widget.contact),
+                      controller: _nicknameInput,
+                      labelText: 'Nickname',
+                      onChanged: (value) {
+                        widget.contact.setNickname(nickname: value);
+                      }),
+                  const SizedBox(height: 20),
+                  Button(
+                    text: 'Save',
+                    onPressed: () {
+                      widget.settingsController.saveContacts();
+                      Navigator.pop(context);
+                    },
+                  ),
+                ],
+              );
+            });
+      },
       child: Container(
         margin: const EdgeInsets.all(5.0),
         decoration: BoxDecoration(
@@ -677,126 +815,12 @@ class ContactWidgetState extends State<ContactWidget> {
           children: [
             CircleAvatar(
               maxRadius: 17,
-              child: SvgPicture.asset('assets/icons/Profile.svg',
-                  semanticsLabel: 'A profile icon'),
+              // TODO the edit icon needs some work
+              child: SvgPicture.asset(isHovered ? 'assets/icons/Edit.svg' : 'assets/icons/Profile.svg'),
             ),
             const SizedBox(width: 10),
             Text(widget.contact.nickname(),
                 style: const TextStyle(fontSize: 16)),
-            if (isHovered) const SizedBox(width: 10),
-            if (isHovered)
-              IconButton(
-                  onPressed: () {
-                    showDialog(
-                        barrierDismissible: false,
-                        context: context,
-                        builder: (BuildContext context) {
-                          return SimpleDialog(
-                            title: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                const Text('Edit Contact'),
-                                IconButton(
-                                  onPressed: () async {
-                                    if (!widget.stateController
-                                        .isActiveContact(widget.contact)) {
-                                      bool confirm = await showDialog<bool>(
-                                              context: context,
-                                              builder: (BuildContext context) {
-                                                return SimpleDialog(
-                                                  title: const Text('Warning'),
-                                                  contentPadding:
-                                                      const EdgeInsets.only(
-                                                          bottom: 25,
-                                                          left: 25,
-                                                          right: 25),
-                                                  titlePadding:
-                                                      const EdgeInsets.only(
-                                                          top: 25,
-                                                          left: 25,
-                                                          right: 25,
-                                                          bottom: 20),
-                                                  children: [
-                                                    const Text(
-                                                        'Are you sure you want to delete this contact?'),
-                                                    const SizedBox(height: 20),
-                                                    Row(
-                                                      mainAxisAlignment:
-                                                          MainAxisAlignment.end,
-                                                      children: [
-                                                        Button(
-                                                          text: 'Cancel',
-                                                          onPressed: () {
-                                                            Navigator.pop(
-                                                                context, false);
-                                                          },
-                                                        ),
-                                                        const SizedBox(
-                                                            width: 10),
-                                                        Button(
-                                                          text: 'Delete',
-                                                          onPressed: () {
-                                                            Navigator.pop(
-                                                                context, true);
-                                                          },
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ],
-                                                );
-                                              }) ??
-                                          false;
-
-                                      if (confirm) {
-                                        widget.settingsController
-                                            .removeContact(widget.contact);
-                                        widget.audioChat.stopSession(
-                                            contact: widget.contact);
-                                        widget.settingsController
-                                            .saveContacts();
-                                      }
-
-                                      if (context.mounted) {
-                                        Navigator.pop(context);
-                                      }
-                                    } else {
-                                      showErrorDialog(context, 'Warning',
-                                          'Cannot delete a contact while in an active call');
-                                    }
-                                  },
-                                  icon: SvgPicture.asset(
-                                      'assets/icons/Trash.svg',
-                                      semanticsLabel: 'Delete contact icon'),
-                                ),
-                              ],
-                            ),
-                            contentPadding: const EdgeInsets.only(
-                                bottom: 25, left: 25, right: 25),
-                            titlePadding: const EdgeInsets.only(
-                                top: 25, left: 25, right: 25, bottom: 20),
-                            children: [
-                              TextInput(
-                                  enabled: !widget.stateController
-                                      .isActiveContact(widget.contact),
-                                  controller: _nicknameInput,
-                                  labelText: 'Nickname',
-                                  onChanged: (value) {
-                                    widget.contact.setNickname(nickname: value);
-                                  }),
-                              const SizedBox(height: 20),
-                              Button(
-                                text: 'Save',
-                                onPressed: () {
-                                  widget.settingsController.saveContacts();
-                                  Navigator.pop(context);
-                                },
-                              ),
-                            ],
-                          );
-                        });
-                  },
-                  icon: SvgPicture.asset('assets/icons/Edit.svg',
-                      semanticsLabel: 'Edit contact icon')),
             const Spacer(),
             if (status == 'Inactive')
               IconButton(
@@ -1367,7 +1391,9 @@ class CallDetailsWidget extends StatelessWidget {
                   listenable: statisticsController,
                   builder: (BuildContext context, Widget? child) {
                     Color color = getColor(statisticsController.latency / 200);
-                    return Icon(Icons.monitor_heart_rounded, color: color);
+                    return SvgPicture.asset('assets/icons/Latency.svg',
+                        colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+                        semanticsLabel: 'Latency icon');
                   }),
               const SizedBox(width: 7),
               ListenableBuilder(
@@ -1377,7 +1403,8 @@ class CallDetailsWidget extends StatelessWidget {
                         style: const TextStyle(height: 0));
                   }),
               const Spacer(),
-              Icon(Icons.upload, color: Theme.of(context).colorScheme.primary),
+              SvgPicture.asset('assets/icons/Upload.svg',
+                  semanticsLabel: 'Upload icon'),
               const SizedBox(width: 4),
               ListenableBuilder(
                   listenable: statisticsController,
@@ -1386,8 +1413,8 @@ class CallDetailsWidget extends StatelessWidget {
                         style: const TextStyle(height: 0));
                   }),
               const Spacer(),
-              Icon(Icons.download,
-                  color: Theme.of(context).colorScheme.primary),
+              SvgPicture.asset('assets/icons/Download.svg',
+                  semanticsLabel: 'Download icon'),
               const SizedBox(width: 4),
               ListenableBuilder(
                   listenable: statisticsController,
