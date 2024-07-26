@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:audio_chat/settings/controller.dart';
 import 'package:audio_chat/src/rust/api/player.dart';
+import 'package:collection/collection.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart' hide Overlay;
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
@@ -25,6 +26,7 @@ class SettingsPage extends StatefulWidget {
   final SoundPlayer player;
   final Overlay overlay;
   final AudioDevices audioDevices;
+  final BoxConstraints constraints;
 
   const SettingsPage(
       {super.key,
@@ -34,21 +36,58 @@ class SettingsPage extends StatefulWidget {
       required this.player,
       required this.statisticsController,
       required this.overlay,
-      required this.audioDevices});
+      required this.audioDevices,
+      required this.constraints});
 
   @override
   SettingsPageState createState() => SettingsPageState();
 }
 
-class SettingsPageState extends State<SettingsPage> {
+class SettingsPageState extends State<SettingsPage>
+    with SingleTickerProviderStateMixin {
   /// 0 = audio, 1 = profiles, 2 = networking, 3 = interface, 4 = logs, 5 = overlay
   int route = 0;
+  int? hovered;
+  bool? showMenu;
+
   final TextEditingController _searchController = TextEditingController();
   final GlobalKey<NetworkSettingsState> _key =
       GlobalKey<NetworkSettingsState>();
 
+  late AnimationController _animationController;
+  late Animation<Offset> _menuSlideAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+
+    showMenu = widget.constraints.maxWidth > 600;
+
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 100),
+      vsync: this,
+    );
+
+    if (showMenu == false) {
+      _animationController.value = 1;
+    } else {
+      _animationController.value = 0;
+    }
+
+    _menuSlideAnimation =
+        Tween<Offset>(begin: const Offset(0, 0), end: const Offset(-1, 0))
+            .animate(_animationController);
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
+    BoxConstraints constraints = widget.constraints;
     double width;
 
     if (route == 5) {
@@ -59,233 +98,224 @@ class SettingsPageState extends State<SettingsPage> {
       width = 650;
     }
 
-    return Scaffold(
-      body: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Container(
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
-            ),
-            padding: const EdgeInsets.only(left: 20, top: 15, right: 20),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.start,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                IconButton(
-                  icon: SvgPicture.asset(
-                    'assets/icons/Back.svg',
-                    semanticsLabel: 'Close Settings',
-                    width: 30,
-                  ),
-                  onPressed: () async {
-                    if (route == 2 &&
-                        (_key.currentState?.unsavedChanges ?? false)) {
-                      bool leave = await unsavedConfirmation(context);
+    if (constraints.maxWidth > 600 && showMenu == false) {
+      _animationController.reverse();
+      showMenu = null;
+    } else if (constraints.maxWidth > 600 && showMenu == true) {
+      showMenu = null;
+    } else if (constraints.maxWidth < 600 && showMenu == null) {
+      _animationController.forward();
+      showMenu = false;
+    }
 
-                      if (!leave) {
-                        return;
-                      }
-                    }
+    return Stack(
+      children: [
+        Align(
+          alignment: Alignment.topCenter,
+          child: Padding(
+              padding:
+                  EdgeInsets.only(left: constraints.maxWidth < 600 ? 0 : 200),
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: EdgeInsets.only(
+                          left: 20,
+                          right: 20,
+                          top: constraints.maxWidth < 600
+                              ? route == 0
+                                  ? 55
+                                  : 70
+                              : route == 0
+                                  ? 10
+                                  : 30),
+                      child: SizedBox(
+                        width: width,
+                        child: LayoutBuilder(builder:
+                            (BuildContext context, BoxConstraints constraints) {
+                          if (route == 0) {
+                            return AVSettings(
+                              controller: widget.controller,
+                              audioChat: widget.audioChat,
+                              stateController: widget.stateController,
+                              player: widget.player,
+                              statisticsController: widget.statisticsController,
+                              constraints: constraints,
+                              audioDevices: widget.audioDevices,
+                            );
+                          } else if (route == 1) {
+                            return ProfileSettings(
+                                controller: widget.controller,
+                                audioChat: widget.audioChat,
+                                stateController: widget.stateController);
+                          } else if (route == 2) {
+                            return NetworkSettings(
+                                key: _key,
+                                controller: widget.controller,
+                                audioChat: widget.audioChat,
+                                stateController: widget.stateController,
+                                constraints: constraints);
+                          } else if (route == 4) {
+                            String? filter = _searchController.text.isEmpty
+                                ? null
+                                : _searchController.text;
+                            List<Log> logs = console.getLogs(filter);
 
-                    if (context.mounted) {
-                      Navigator.of(context).pop();
-                    }
-                  },
-                ),
-                const SizedBox(height: 15),
-                // TODO some on hover effects could be nice for these items
-                InkWell(
-                  onTap: () {
-                    tapHandler(0);
-                  },
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
-                    width: 175,
-                    decoration: BoxDecoration(
-                      color: route == 0
-                          ? Theme.of(context).colorScheme.primary
-                          : Theme.of(context).colorScheme.surface,
-                      borderRadius: BorderRadius.circular(5),
-                    ),
-                    child: const Text('Audio & Video',
-                        style: TextStyle(fontSize: 18)),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                InkWell(
-                  onTap: () {
-                    tapHandler(1);
-                  },
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
-                    width: 175,
-                    decoration: BoxDecoration(
-                      color: route == 1
-                          ? Theme.of(context).colorScheme.primary
-                          : Theme.of(context).colorScheme.surface,
-                      borderRadius: BorderRadius.circular(5),
-                    ),
-                    child:
-                        const Text('Profiles', style: TextStyle(fontSize: 18)),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                InkWell(
-                  onTap: () {
-                    tapHandler(2);
-                  },
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
-                    width: 175,
-                    decoration: BoxDecoration(
-                      color: route == 2
-                          ? Theme.of(context).colorScheme.primary
-                          : Theme.of(context).colorScheme.surface,
-                      borderRadius: BorderRadius.circular(5),
-                    ),
-                    child: const Text('Networking',
-                        style: TextStyle(fontSize: 18)),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                InkWell(
-                  onTap: () {
-                    tapHandler(3);
-                  },
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
-                    width: 175,
-                    decoration: BoxDecoration(
-                      color: route == 3
-                          ? Theme.of(context).colorScheme.primary
-                          : Theme.of(context).colorScheme.surface,
-                      borderRadius: BorderRadius.circular(5),
-                    ),
-                    child:
-                        const Text('Interface', style: TextStyle(fontSize: 18)),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                InkWell(
-                  onTap: () {
-                    tapHandler(4);
-                  },
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
-                    width: 175,
-                    decoration: BoxDecoration(
-                      color: route == 4
-                          ? Theme.of(context).colorScheme.primary
-                          : Theme.of(context).colorScheme.surface,
-                      borderRadius: BorderRadius.circular(5),
-                    ),
-                    child:
-                        const Text('View Log', style: TextStyle(fontSize: 18)),
-                  ),
-                ),
-                // overlay is only available on windows
-                if (Platform.isWindows) const SizedBox(height: 12),
-                if (Platform.isWindows)
-                  InkWell(
-                    onTap: () {
-                      tapHandler(5);
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          vertical: 5, horizontal: 10),
-                      width: 175,
-                      decoration: BoxDecoration(
-                        color: route == 5
-                            ? Theme.of(context).colorScheme.primary
-                            : Theme.of(context).colorScheme.surface,
-                        borderRadius: BorderRadius.circular(5),
+                            return Column(
+                              children: [
+                                TextField(
+                                  controller: _searchController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Search',
+                                  ),
+                                  onChanged: (String value) {
+                                    setState(() {});
+                                  },
+                                ),
+                                const SizedBox(height: 20),
+                                ListView.builder(
+                                    itemCount: logs.length,
+                                    shrinkWrap: true,
+                                    itemBuilder: (context, index) {
+                                      Log log = logs[index];
+                                      return SelectableText(
+                                          '${log.time} - ${log.type}: ${log.message}');
+                                    }),
+                              ],
+                            );
+                          } else if (route == 5) {
+                            return OverlaySettings(
+                                overlay: widget.overlay,
+                                controller: widget.controller,
+                                stateController: widget.stateController);
+                          } else {
+                            return const SizedBox();
+                          }
+                        }),
                       ),
-                      child:
-                          const Text('Overlay', style: TextStyle(fontSize: 18)),
-                    ),
-                  ),
-              ],
+                    )
+                  ],
+                ),
+              )),
+        ),
+        if (constraints.maxWidth > 600 || (showMenu ?? true))
+          SlideTransition(
+            position: _menuSlideAnimation,
+            child: Container(
+              width: 200,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: const BorderRadius.only(
+                  topRight: Radius.circular(8),
+                  bottomRight: Radius.circular(8),
+                ),
+              ),
+              padding: const EdgeInsets.only(top: 60),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildMenuItem(0, 'Audio & Video'),
+                  const SizedBox(height: 12),
+                  _buildMenuItem(1, 'Profiles'),
+                  const SizedBox(height: 12),
+                  _buildMenuItem(2, 'Networking'),
+                  const SizedBox(height: 12),
+                  _buildMenuItem(3, 'Interface'),
+                  const SizedBox(height: 12),
+                  _buildMenuItem(4, 'View Log'),
+                  if (Platform.isWindows) const SizedBox(height: 12),
+                  if (Platform.isWindows) _buildMenuItem(5, 'Overlay'),
+                ],
+              ),
             ),
           ),
-          Flexible(
-              child: Align(
-            alignment: Alignment.topCenter,
-            child: SingleChildScrollView(
-              child: Padding(
-                  padding: const EdgeInsets.only(left: 20, right: 20, top: 30),
-                  child: SizedBox(
-                    width: width,
-                    child: LayoutBuilder(builder:
-                        (BuildContext context, BoxConstraints constraints) {
-                      if (route == 0) {
-                        return AVSettings(
-                          controller: widget.controller,
-                          audioChat: widget.audioChat,
-                          stateController: widget.stateController,
-                          player: widget.player,
-                          statisticsController: widget.statisticsController,
-                          constraints: constraints,
-                          audioDevices: widget.audioDevices,
-                        );
-                      } else if (route == 1) {
-                        return ProfileSettings(
-                            controller: widget.controller,
-                            audioChat: widget.audioChat,
-                            stateController: widget.stateController);
-                      } else if (route == 2) {
-                        return NetworkSettings(
-                            key: _key,
-                            controller: widget.controller,
-                            audioChat: widget.audioChat,
-                            stateController: widget.stateController,
-                            constraints: constraints);
-                      } else if (route == 4) {
-                        String? filter = _searchController.text.isEmpty
-                            ? null
-                            : _searchController.text;
-                        List<Log> logs = console.getLogs(filter);
+        Align(
+          alignment: Alignment.topLeft,
+          child: Container(
+              padding: const EdgeInsets.only(left: 5, top: 5, bottom: 5),
+              decoration: BoxDecoration(
+                color: (showMenu ?? true)
+                    ? null
+                    : Theme.of(context).colorScheme.tertiaryContainer,
+                borderRadius: const BorderRadius.only(
+                  bottomLeft: Radius.circular(8),
+                  bottomRight: Radius.circular(8),
+                ),
+              ),
+              child: Row(
+                children: [
+                  IconButton(
+                    visualDensity: VisualDensity.comfortable,
+                    icon: SvgPicture.asset(
+                      'assets/icons/Back.svg',
+                      semanticsLabel: 'Close Settings',
+                      width: 30,
+                    ),
+                    onPressed: () async {
+                      if (route == 2 &&
+                          (_key.currentState?.unsavedChanges ?? false)) {
+                        bool leave = await unsavedConfirmation(context);
 
-                        return Column(
-                          children: [
-                            TextField(
-                              controller: _searchController,
-                              decoration: const InputDecoration(
-                                labelText: 'Search',
-                              ),
-                              onChanged: (String value) {
-                                setState(() {});
-                              },
-                            ),
-                            const SizedBox(height: 20),
-                            ListView.builder(
-                                itemCount: logs.length,
-                                shrinkWrap: true,
-                                itemBuilder: (context, index) {
-                                  Log log = logs[index];
-                                  return Text(
-                                      '${log.time} - ${log.type}: ${log.message}');
-                                }),
-                          ],
-                        );
-                      } else if (route == 5) {
-                        return OverlaySettings(
-                            overlay: widget.overlay,
-                            controller: widget.controller,
-                            stateController: widget.stateController);
-                      } else {
-                        return const SizedBox();
+                        if (!leave) {
+                          return;
+                        }
                       }
-                    }),
-                  )),
-            ),
-          )),
-        ],
+
+                      if (context.mounted) {
+                        Navigator.of(context).pop();
+                      }
+                    },
+                  ),
+                  const SizedBox(width: 3),
+                  if (constraints.maxWidth < 600)
+                    IconButton(
+                      visualDensity: VisualDensity.comfortable,
+                      icon: SvgPicture.asset(
+                        showMenu ?? true
+                            ? 'assets/icons/HamburgerOpened.svg'
+                            : 'assets/icons/HamburgerClosed.svg',
+                        semanticsLabel: 'Menu',
+                        width: 30,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          if (showMenu ?? true) {
+                            _animationController.forward();
+                          } else {
+                            _animationController.reverse();
+                          }
+
+                          showMenu = !(showMenu ?? true);
+                        });
+                      },
+                    ),
+                ],
+              )),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMenuItem(int target, String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: InkWell(
+        onTap: () {
+          tapHandler(target);
+        },
+        onHover: (bool hover) {
+          hoverHandler(target, hover);
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
+          width: 175,
+          decoration: BoxDecoration(
+            color: getColor(target),
+            borderRadius: BorderRadius.circular(5),
+          ),
+          child: Text(text, style: const TextStyle(fontSize: 18)),
+        ),
       ),
     );
   }
@@ -303,9 +333,29 @@ class SettingsPageState extends State<SettingsPage> {
       route = target;
     });
   }
+
+  void hoverHandler(int target, bool hovered) {
+    setState(() {
+      if (hovered) {
+        this.hovered = target;
+      } else {
+        this.hovered = null;
+      }
+    });
+  }
+
+  Color getColor(int target) {
+    if (target == hovered) {
+      return Theme.of(context).colorScheme.secondary;
+    } else if (target == route) {
+      return Theme.of(context).colorScheme.primary;
+    } else {
+      return Theme.of(context).colorScheme.surface;
+    }
+  }
 }
 
-class AVSettings extends StatelessWidget {
+class AVSettings extends StatefulWidget {
   final SettingsController controller;
   final AudioChat audioChat;
   final StateController stateController;
@@ -325,97 +375,178 @@ class AVSettings extends StatelessWidget {
       required this.audioDevices});
 
   @override
+  State<StatefulWidget> createState() => _AVSettingsState();
+}
+
+class _AVSettingsState extends State<AVSettings> {
+  Capabilities? _capabilities;
+  RecordingConfig? _recordingConfig;
+  TemporaryConfig? _temporaryConfig;
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.audioDevices.startUpdates();
+
+    var capabilitiesFuture = widget.controller.screenshareConfig.capabilities();
+    var recordingConfigFuture =
+        widget.controller.screenshareConfig.recordingConfig();
+
+    Future.wait([capabilitiesFuture, recordingConfigFuture])
+        .then((List<dynamic> results) {
+      _capabilities = results[0];
+      _recordingConfig = results[1];
+      setState(() {});
+    });
+  }
+
+  @override
+  void activate() {
+    super.activate();
+    widget.audioDevices.startUpdates();
+  }
+
+  @override
+  void deactivate() {
+    widget.audioDevices.pauseUpdates();
+    super.deactivate();
+  }
+
+  void initTemporaryConfig(
+      String? encoder, String? device, int? bitrate, int? framerate) {
+    setState(() {
+      _temporaryConfig = TemporaryConfig(
+          encoder: encoder ?? defaultEncoder(),
+          device: device ?? defaultDevice(),
+          bitrate: bitrate ?? defaultBitrate(),
+          framerate: framerate ?? defaultFramerate(),
+          height: _recordingConfig?.height());
+    });
+  }
+
+  String defaultEncoder() {
+    return _recordingConfig?.encoder() ??
+        _capabilities?.encoders().firstOrNull ??
+        'h264';
+  }
+
+  String defaultDevice() {
+    return _recordingConfig?.device() ?? _capabilities!.devices().first;
+  }
+
+  int defaultBitrate() {
+    return _recordingConfig?.bitrate() ?? 2000000;
+  }
+
+  int defaultFramerate() {
+    return _recordingConfig?.framerate() ?? 30;
+  }
+
+  @override
   Widget build(BuildContext context) {
+    var encoders = _capabilities?.encoders() ?? [];
+    var devices = _capabilities?.devices() ?? [];
+
+    double width = widget.constraints.maxWidth < 650
+        ? widget.constraints.maxWidth
+        : (widget.constraints.maxWidth - 20) / 2;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        const Text(
+          'Audio Options',
+          style: TextStyle(fontSize: 20),
+        ),
+        const SizedBox(height: 17),
         ListenableBuilder(
-            listenable: stateController,
+            listenable: widget.stateController,
             builder: (BuildContext context, Widget? child) {
               return ListenableBuilder(
-                  listenable: audioDevices,
+                  listenable: widget.audioDevices,
                   builder: (BuildContext context, Widget? child) {
                     String inputInitialSelection;
 
-                    if (controller.inputDevice == null) {
+                    if (widget.controller.inputDevice == null) {
                       inputInitialSelection = 'Default';
-                    } else if (audioDevices.inputDevices
-                        .contains(controller.inputDevice)) {
-                      inputInitialSelection = controller.inputDevice!;
+                    } else if (widget.audioDevices.inputDevices
+                        .contains(widget.controller.inputDevice)) {
+                      inputInitialSelection = widget.controller.inputDevice!;
                     } else {
                       inputInitialSelection = 'Default';
                     }
 
                     String outputInitialSelection;
 
-                    if (controller.outputDevice == null) {
+                    if (widget.controller.outputDevice == null) {
                       outputInitialSelection = 'Default';
-                    } else if (audioDevices.outputDevices
-                        .contains(controller.outputDevice)) {
-                      outputInitialSelection = controller.outputDevice!;
+                    } else if (widget.audioDevices.outputDevices
+                        .contains(widget.controller.outputDevice)) {
+                      outputInitialSelection = widget.controller.outputDevice!;
                     } else {
                       outputInitialSelection = 'Default';
                     }
 
-                    double width = constraints.maxWidth < 650
-                        ? constraints.maxWidth
-                        : (constraints.maxWidth - 20) / 2;
+                    double width = widget.constraints.maxWidth < 650
+                        ? widget.constraints.maxWidth
+                        : (widget.constraints.maxWidth - 20) / 2;
 
-                    return Center(
-                      child: Wrap(
-                        spacing: 20,
-                        runSpacing: 20,
-                        children: [
-                          DropDown(
-                              label: 'Input Device',
-                              items: audioDevices.inputDevices,
-                              initialSelection: inputInitialSelection,
-                              onSelected: (String? value) {
-                                if (value == 'Default') value = null;
-                                controller.updateInputDevice(value);
-                                audioChat.setInputDevice(device: value);
-                              },
-                              width: width),
-                          DropDown(
-                            label: 'Output Device',
-                            items: audioDevices.outputDevices,
-                            initialSelection: outputInitialSelection,
+                    return Wrap(
+                      spacing: 20,
+                      runSpacing: 20,
+                      children: [
+                        DropDown(
+                            label: 'Input Device',
+                            items: widget.audioDevices.inputDevices,
+                            initialSelection: inputInitialSelection,
                             onSelected: (String? value) {
                               if (value == 'Default') value = null;
-                              controller.updateOutputDevice(value);
-                              audioChat.setOutputDevice(device: value);
-                              player.updateOutputDevice(name: value);
+                              widget.controller.updateInputDevice(value);
+                              widget.audioChat.setInputDevice(device: value);
                             },
-                            width: width,
-                          )
-                        ],
-                      ),
+                            width: width),
+                        DropDown(
+                          label: 'Output Device',
+                          items: widget.audioDevices.outputDevices,
+                          initialSelection: outputInitialSelection,
+                          onSelected: (String? value) {
+                            if (value == 'Default') value = null;
+                            widget.controller.updateOutputDevice(value);
+                            widget.audioChat.setOutputDevice(device: value);
+                            widget.player.updateOutputDevice(name: value);
+                          },
+                          width: width,
+                        )
+                      ],
                     );
                   });
             }),
         const SizedBox(height: 20),
         Row(children: [
           ListenableBuilder(
-              listenable: stateController,
+              listenable: widget.stateController,
               builder: (BuildContext context, Widget? child) {
                 return Button(
-                  text: stateController.inAudioTest ? 'End Test' : 'Sound Test',
+                  text: widget.stateController.inAudioTest
+                      ? 'End Test'
+                      : 'Sound Test',
                   width: 80,
                   height: 25,
-                  disabled: stateController.isCallActive,
+                  disabled: widget.stateController.isCallActive,
                   onPressed: () async {
-                    if (stateController.inAudioTest) {
-                      stateController.setInAudioTest();
-                      audioChat.endCall();
+                    if (widget.stateController.inAudioTest) {
+                      widget.stateController.setInAudioTest();
+                      widget.audioChat.endCall();
                     } else {
-                      stateController.setInAudioTest();
+                      widget.stateController.setInAudioTest();
                       try {
-                        await audioChat.audioTest();
+                        await widget.audioChat.audioTest();
                       } on DartError catch (e) {
                         if (!context.mounted) return;
                         showErrorDialog(
                             context, 'Error in Audio Test', e.message);
-                        stateController.setInAudioTest();
+                        widget.stateController.setInAudioTest();
                       }
                     }
                   },
@@ -423,11 +554,11 @@ class AVSettings extends StatelessWidget {
               }),
           const SizedBox(width: 20),
           ListenableBuilder(
-              listenable: statisticsController,
+              listenable: widget.statisticsController,
               builder: (BuildContext context, Widget? child) {
                 return AudioLevel(
-                    level: statisticsController.inputLevel,
-                    numRectangles: (constraints.maxWidth - 145) ~/ 13.5);
+                    level: widget.statisticsController.inputLevel,
+                    numRectangles: (widget.constraints.maxWidth - 145) ~/ 13.5);
               }),
         ]),
         const SizedBox(height: 20),
@@ -436,43 +567,38 @@ class AVSettings extends StatelessWidget {
           mainAxisSize: MainAxisSize.max,
           children: [
             const Text('Noise Suppression', style: TextStyle(fontSize: 18)),
-            // const SizedBox(width: 55),
             ListenableBuilder(
-                listenable: controller,
+                listenable: widget.controller,
                 builder: (BuildContext context, Widget? child) {
                   return ListenableBuilder(
-                      listenable: stateController,
+                      listenable: widget.stateController,
                       builder: (BuildContext context, Widget? child) {
-                        // TODO migrate this to DropDown and fix the issues with it being bad
-                        return DropdownMenu<String>(
-                          enabled: !stateController.blockAudioChanges,
-                          dropdownMenuEntries: const [
-                            DropdownMenuEntry(value: 'off', label: 'Off'),
-                            DropdownMenuEntry(
-                                value: 'vanilla', label: 'Vanilla'),
-                            DropdownMenuEntry(
-                                value: 'hogwash', label: 'Hogwash'),
-                          ],
-                          initialSelection: controller.useDenoise
-                              ? controller.denoiseModel ?? 'vanilla'
-                              : 'off',
-                          onSelected: (String? value) {
-                            if (value == 'off') {
-                              controller.updateUseDenoise(false);
-                              audioChat.setDenoise(denoise: false);
-                            } else if (value == 'vanilla') {
-                              controller.updateUseDenoise(true);
-                              controller.setDenoiseModel(null);
-                              audioChat.setDenoise(denoise: true);
-                              audioChat.setModel(model: []);
-                            } else {
-                              controller.updateUseDenoise(true);
-                              controller.setDenoiseModel(value);
-                              audioChat.setDenoise(denoise: true);
-                              updateDenoiseModel(value!, audioChat);
-                            }
-                          },
-                        );
+                        return DropDown(
+                            items: const ['Off', 'Vanilla', 'Hogwash'],
+                            initialSelection: widget.controller.useDenoise
+                                ? widget.controller.denoiseModel ?? 'Vanilla'
+                                : 'Off',
+                            onSelected: (String? value) {
+                              if (value == 'Off') {
+                                // save denoise option
+                                widget.controller.updateUseDenoise(false);
+                                // set denoise to false in audio chat
+                                widget.audioChat.setDenoise(denoise: false);
+                              } else {
+                                if (value == 'Vanilla') {
+                                  value = null;
+                                }
+
+                                // save denoise option
+                                widget.controller.updateUseDenoise(true);
+                                // save denoise model
+                                widget.controller.setDenoiseModel(value);
+                                // set denoise to true in audio chat
+                                widget.audioChat.setDenoise(denoise: true);
+                                // set denoise model in audio chat
+                                updateDenoiseModel(value, widget.audioChat);
+                              }
+                            });
                       });
                 }),
           ],
@@ -485,13 +611,13 @@ class AVSettings extends StatelessWidget {
             const Text('Play Custom Ringtones', style: TextStyle(fontSize: 18)),
             // const SizedBox(width: 20),
             ListenableBuilder(
-                listenable: controller,
+                listenable: widget.controller,
                 builder: (BuildContext context, Widget? child) {
                   return CustomSwitch(
-                      value: controller.playCustomRingtones,
+                      value: widget.controller.playCustomRingtones,
                       onChanged: (play) {
-                        controller.updatePlayCustomRingtones(play);
-                        audioChat.setPlayCustomRingtones(play: play);
+                        widget.controller.updatePlayCustomRingtones(play);
+                        widget.audioChat.setPlayCustomRingtones(play: play);
                       });
                 }),
           ],
@@ -512,16 +638,15 @@ class AVSettings extends StatelessWidget {
 
                   if (result != null) {
                     String? path = result.files.single.path;
-                    controller.updateCustomRingtoneFile(path);
+                    widget.controller.updateCustomRingtoneFile(path);
                   } else {
-                    controller.updateCustomRingtoneFile(null);
+                    widget.controller.updateCustomRingtoneFile(null);
                   }
                 }),
             ListenableBuilder(
-                listenable: controller,
+                listenable: widget.controller,
                 builder: (BuildContext context, Widget? child) {
-                  return Text(
-                      controller.customRingtoneFile ?? 'No file selected',
+                  return Text(widget.controller.customRingtoneFile ?? '',
                       style: const TextStyle(fontSize: 16));
                 }),
           ],
@@ -529,21 +654,101 @@ class AVSettings extends StatelessWidget {
         const SizedBox(height: 20),
         const Text('Sound Effect Volume', style: TextStyle(fontSize: 16)),
         ListenableBuilder(
-            listenable: controller,
+            listenable: widget.controller,
             builder: (BuildContext context, Widget? child) {
               return Slider(
-                  value: controller.soundVolume,
+                  value: widget.controller.soundVolume,
                   onChanged: (value) {
-                    controller.updateSoundVolume(value);
-                    player.updateOutputVolume(volume: value);
+                    widget.controller.updateSoundVolume(value);
+                    widget.player.updateOutputVolume(volume: value);
                   },
                   min: -20,
                   max: 20,
-                  label: '${controller.soundVolume.toStringAsFixed(2)} db');
+                  label:
+                      '${widget.controller.soundVolume.toStringAsFixed(2)} db');
             }),
         const Divider(),
+        const Text(
+          'Screenshare Options',
+          style: TextStyle(fontSize: 20),
+        ),
+        const SizedBox(height: 17),
+        Wrap(
+          spacing: 20,
+          runSpacing: 20,
+          children: [
+            DropDown(
+              label: 'Encoder',
+              items: encoders,
+              initialSelection:
+                  _recordingConfig?.encoder() ?? encoders.firstOrNull,
+              onSelected: (String? value) {
+                if (value == null) {
+                  return;
+                } else if (_temporaryConfig == null) {
+                  initTemporaryConfig(value, null, null, null);
+                } else {
+                  setState(() {
+                    _temporaryConfig!.encoder = value;
+                  });
+                }
+              },
+              width: width,
+            ),
+            DropDown(
+              label: 'Capture Device',
+              items: devices,
+              initialSelection:
+                  _recordingConfig?.device() ?? devices.firstOrNull,
+              onSelected: (String? value) {
+                if (value == null) {
+                  return;
+                } else if (_temporaryConfig == null) {
+                  initTemporaryConfig(null, value, null, null);
+                } else {
+                  setState(() {
+                    _temporaryConfig!.device = value;
+                  });
+                }
+              },
+              width: width,
+            )
+          ],
+        ),
         const SizedBox(height: 20),
-        const Text('Screen share settings')
+        Button(
+            text: _loading ? 'Verifying' : 'Save',
+            disabled: _temporaryConfig == null || _loading,
+            onPressed: () async {
+              try {
+                if (_loading) return;
+
+                setState(() {
+                  _loading = true;
+                });
+
+                await widget.controller.screenshareConfig.updateRecordingConfig(
+                    encoder: _temporaryConfig!.encoder,
+                    device: _temporaryConfig!.device,
+                    bitrate: _temporaryConfig!.bitrate,
+                    framerate: _temporaryConfig!.framerate,
+                    height: _temporaryConfig!.height);
+
+                widget.controller.saveScreenshareConfig();
+
+                setState(() {
+                  _temporaryConfig = null;
+                  _loading = false;
+                });
+              } on DartError catch (e) {
+                setState(() {
+                  _loading = false;
+                });
+                if (!context.mounted) return;
+                showErrorDialog(
+                    context, 'Error in Encoder Selection', e.message);
+              }
+            })
       ],
     );
   }
@@ -1262,27 +1467,27 @@ class OverlayPositionWidgetState extends State<OverlayPositionWidget> {
 }
 
 class DropDown extends StatelessWidget {
-  final String label;
+  final String? label;
   final List<String> items;
   final String? initialSelection;
   final void Function(String?) onSelected;
-  final double width;
+  final double? width;
   final bool enabled;
 
   const DropDown(
       {super.key,
-      required this.label,
+      this.label,
       required this.items,
       required this.initialSelection,
       required this.onSelected,
-      required this.width,
+      this.width,
       this.enabled = true});
 
   @override
   Widget build(BuildContext context) {
     return DropdownMenu<String>(
       width: width,
-      label: Text(label),
+      label: label == null ? null : Text(label!),
       enabled: enabled,
       dropdownMenuEntries: items.map<DropdownMenuEntry<String>>((item) {
         return DropdownMenuEntry(
@@ -1308,32 +1513,39 @@ class DropDown extends StatelessWidget {
 
 class AudioDevices extends ChangeNotifier {
   final AudioChat audioChat;
+  Timer? periodicTimer;
 
-  late List<String> inputDevices = [];
-  late List<String> outputDevices = [];
+  late List<String> _inputDevices = [];
+  late List<String> _outputDevices = [];
+
+  final ListEquality<String> _listEquality = const ListEquality<String>();
+
+  List<String> get inputDevices => ['Default', ..._inputDevices];
+  List<String> get outputDevices => ['Default', ..._outputDevices];
 
   AudioDevices({required this.audioChat}) {
-    Timer.periodic(const Duration(milliseconds: 500), (timer) {
-      updateDevices();
-    });
+    DebugConsole.debug('AudioDevices created');
+    updateDevices();
+  }
+
+  @override
+  void dispose() {
+    periodicTimer?.cancel();
+    super.dispose();
   }
 
   void updateDevices() async {
     var (inputDevices, outputDevices) = await audioChat.listDevices();
 
-    // default devices map to null
-    inputDevices.insert(0, 'Default');
-    outputDevices.insert(0, 'Default');
-
     bool notify = false;
 
-    if (this.inputDevices != inputDevices) {
-      this.inputDevices = inputDevices;
+    if (!_listEquality.equals(_inputDevices, inputDevices)) {
+      _inputDevices = inputDevices;
       notify = true;
     }
 
-    if (this.outputDevices != outputDevices) {
-      this.outputDevices = outputDevices;
+    if (!_listEquality.equals(_outputDevices, outputDevices)) {
+      _outputDevices = outputDevices;
       notify = true;
     }
 
@@ -1341,6 +1553,31 @@ class AudioDevices extends ChangeNotifier {
       notifyListeners();
     }
   }
+
+  void startUpdates() {
+    periodicTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
+      updateDevices();
+    });
+  }
+
+  void pauseUpdates() {
+    periodicTimer?.cancel();
+  }
+}
+
+class TemporaryConfig {
+  String encoder;
+  String device;
+  int bitrate;
+  int framerate;
+  int? height;
+
+  TemporaryConfig(
+      {required this.encoder,
+      required this.device,
+      required this.bitrate,
+      required this.framerate,
+      this.height});
 }
 
 void colorPicker(BuildContext context, void Function(Color) changeColor,

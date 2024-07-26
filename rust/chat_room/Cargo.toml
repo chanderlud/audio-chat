@@ -1,0 +1,16 @@
+[package]
+name = "chat_room"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+messages = { path = "../messages" }
+tokio = { version = "1.38", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec", "compat"] }
+libp2p = { version = "0.53.2", features = ["tokio", "quic", "tcp", "ping", "dcutr", "identify", "macros", "noise", "yamux", "autonat", "relay"] }
+libp2p-stream = { version = "0.1.0-alpha.1" }
+kanal = "0.1.0-pre8"
+rayon = "1.10.0"
+prost = "0.13"

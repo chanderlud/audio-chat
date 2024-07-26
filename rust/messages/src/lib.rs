@@ -1,17 +1,4 @@
-use cpal::SupportedStreamConfig;
-use crate::api::audio_chat::ChatMessage;
-
-include!(concat!(env!("OUT_DIR"), "/audio_chat.items.rs"));
-
-impl From<&SupportedStreamConfig> for AudioHeader {
-    fn from(value: &SupportedStreamConfig) -> Self {
-        Self {
-            channels: value.channels() as u32,
-            sample_rate: value.sample_rate().0,
-            sample_format: value.sample_format().to_string(),
-        }
-    }
-}
+include!(concat!(env!("OUT_DIR"), "/messages.items.rs"));
 
 impl From<&[u8]> for AudioHeader {
     fn from(value: &[u8]) -> Self {
@@ -36,7 +23,7 @@ impl From<&[u8]> for AudioHeader {
 }
 
 impl Message {
-    pub(crate) fn hello(ringtone: Option<Vec<u8>>) -> Self {
+    pub fn hello(ringtone: Option<Vec<u8>>) -> Self {
         Self {
             message: Some(message::Message::Hello(Hello {
                 ringtone: ringtone.unwrap_or_default(),
@@ -44,31 +31,31 @@ impl Message {
         }
     }
 
-    pub(crate) fn hello_ack() -> Self {
+    pub fn hello_ack() -> Self {
         Self {
             message: Some(message::Message::HelloAck(HelloAck {})),
         }
     }
 
-    pub(crate) fn reject() -> Self {
+    pub fn reject() -> Self {
         Self {
             message: Some(message::Message::Reject(Reject {})),
         }
     }
 
-    pub(crate) fn busy() -> Self {
+    pub fn busy() -> Self {
         Self {
             message: Some(message::Message::Busy(Busy {})),
         }
     }
 
-    pub(crate) fn goodbye_reason(reason: String) -> Self {
+    pub fn goodbye_reason(reason: String) -> Self {
         Self {
             message: Some(message::Message::Goodbye(Goodbye { reason })),
         }
     }
 
-    pub(crate) fn goodbye() -> Self {
+    pub fn goodbye() -> Self {
         Self {
             message: Some(message::Message::Goodbye(Goodbye {
                 reason: String::new(),
@@ -76,16 +63,13 @@ impl Message {
         }
     }
 
-    pub(crate) fn chat(message: &ChatMessage) -> Self {
+    pub fn chat(text: String, attachments: Vec<Attachment>) -> Self {
         Self {
-            message: Some(message::Message::Chat(Chat {
-                text: message.text.clone(),
-                attachment: vec![],
-            })),
+            message: Some(message::Message::Chat(Chat { text, attachments })),
         }
     }
 
-    pub(crate) fn connection_interrupted() -> Self {
+    pub fn connection_interrupted() -> Self {
         Self {
             message: Some(message::Message::ConnectionInterrupted(
                 ConnectionInterrupted {},
@@ -93,15 +77,41 @@ impl Message {
         }
     }
 
-    pub(crate) fn connection_restored() -> Self {
+    pub fn connection_restored() -> Self {
         Self {
             message: Some(message::Message::ConnectionRestored(ConnectionRestored {})),
         }
     }
 
-    pub(crate) fn keep_alive() -> Self {
+    pub fn keep_alive() -> Self {
         Self {
             message: Some(message::Message::KeepAlive(KeepAlive {})),
+        }
+    }
+
+    pub fn screenshare(encoder: &str) -> Self {
+        Self {
+            message: Some(message::Message::ScreenshareHeader(ScreenshareHeader {
+                encoder: encoder.to_string(),
+            })),
+        }
+    }
+
+    pub fn room_welcome(peers: Vec<Vec<u8>>) -> Self {
+        Self {
+            message: Some(message::Message::RoomWelcome(RoomWelcome { peers })),
+        }
+    }
+
+    pub fn room_join(peer: Vec<u8>) -> Self {
+        Self {
+            message: Some(message::Message::RoomJoin(RoomJoin { peer })),
+        }
+    }
+
+    pub fn room_leave(peer: Vec<u8>) -> Self {
+        Self {
+            message: Some(message::Message::RoomLeave(RoomLeave { peer })),
         }
     }
 }

@@ -11,8 +11,6 @@ fn add_lib(name: impl AsRef<str>, _static: bool) {
 }
 
 fn main() -> Result<()> {
-    prost_build::compile_protos(&["src/api/items.proto"], &["src/"])?;
-
     let target = std::env::var("TARGET").expect("ERR: Could not check the target for the build.");
 
     if target.contains("android") {

@@ -66,6 +66,9 @@ class SettingsController with ChangeNotifier {
   /// the network configuration
   late NetworkConfig networkConfig;
 
+  /// the screenshare configuration
+  late ScreenshareConfig screenshareConfig;
+
   /// the overlay configuration
   late OverlayConfig overlayConfig;
 
@@ -135,6 +138,7 @@ class SettingsController with ChangeNotifier {
     denoiseModel = options.getString('denoiseModel');
 
     networkConfig = loadNetworkConfig();
+    screenshareConfig = await loadScreenshareConfig();
     overlayConfig = loadOverlayConfig();
 
     notifyListeners();
@@ -354,6 +358,16 @@ class SettingsController with ChangeNotifier {
     await options.setString(
         'relayAddress', await networkConfig.getRelayAddress());
     await options.setString('relayId', await networkConfig.getRelayId());
+  }
+
+  Future<ScreenshareConfig> loadScreenshareConfig() async {
+    return await ScreenshareConfig.newInstance(
+      configStr: options.getString('screenshareConfig') ?? '',
+    );
+  }
+
+  Future<void> saveScreenshareConfig() async {
+    await options.setString("screenshareConfig", screenshareConfig.toString());
   }
 
   OverlayConfig loadOverlayConfig() {

@@ -19,8 +19,8 @@ use crate::api::audio_chat::{
     db_to_multiplier, get_output_device, mul, resampler_factory, DeviceName, SendStream,
 };
 use crate::api::error::{Error, ErrorKind};
-use crate::api::items::AudioHeader;
 use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
+use messages::AudioHeader;
 
 #[frb(opaque)]
 pub struct SoundPlayer {

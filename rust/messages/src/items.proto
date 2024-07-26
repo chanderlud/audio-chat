@@ -1,6 +1,6 @@
 syntax = "proto2";
 
-package audio_chat.items;
+package messages.items;
 
 // The specification for the audio data
 message AudioHeader {
@@ -31,7 +31,7 @@ message Goodbye {
 // A chat message
 message Chat {
   required string text = 1;
-  repeated Attachment attachment = 2;
+  repeated Attachment attachments = 2;
 }
 
 // An attachment to a chat message
@@ -49,6 +49,26 @@ message ConnectionRestored {}
 // A message used to keep the connection active
 message KeepAlive {}
 
+// The specification for the video data
+message ScreenshareHeader {
+  required string encoder = 1;
+}
+
+// A message from the chat room to the client which provides the list of peers
+message RoomWelcome {
+  repeated bytes peers = 1;
+}
+
+// A message from the chat room to the clients when a peer joins
+message RoomJoin {
+  required bytes peer = 1;
+}
+
+// A message from the chat room to the clients when a peer leaves
+message RoomLeave {
+  required bytes peer = 1;
+}
+
 // Messages used by controllers
 message Message {
   oneof message {
@@ -61,5 +81,9 @@ message Message {
     ConnectionInterrupted connection_interrupted = 7;
     ConnectionRestored connection_restored = 8;
     KeepAlive keep_alive = 9;
+    ScreenshareHeader screenshare_header = 10;
+    RoomWelcome room_welcome = 11;
+    RoomJoin room_join = 12;
+    RoomLeave room_leave = 13;
   }
 }

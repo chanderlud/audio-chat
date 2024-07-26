@@ -34,7 +34,10 @@ class Console {
       return logs;
     }
 
-    return logs.where((log) => log.message.contains(filter)).toList();
+    String lowerFilter = filter.toLowerCase();
+    return logs
+        .where((log) => log.message.toLowerCase().contains(lowerFilter))
+        .toList();
   }
 }
 

@@ -32,11 +32,13 @@ pub fn init_logger() {
             GAG.lock().unwrap().replace(gag);
         }
 
-        let level = if cfg!(debug_assertions) {
-            LevelFilter::Debug
-        } else {
-            LevelFilter::Warn
-        };
+        // let level = if cfg!(debug_assertions) {
+        //     LevelFilter::Debug
+        // } else {
+        //     LevelFilter::Warn
+        // };
+
+        let level = LevelFilter::Debug;
 
         assert!(
             level <= log::STATIC_MAX_LEVEL,

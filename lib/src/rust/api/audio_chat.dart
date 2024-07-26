@@ -9,9 +9,9 @@ import 'error.dart';
 import 'overlay/overlay.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `_start_session`, `bytes`, `calculate_rms`, `call_controller`, `call`, `db_to_multiplier`, `get_input_device`, `get_output_device`, `handshake`, `input_processor`, `latencies_missing`, `level_from_window`, `load`, `load`, `loopback`, `mul`, `new`, `new`, `new`, `new`, `new`, `open_stream`, `output_processor`, `read_message`, `relayed_only`, `resampler_factory`, `session_manager`, `session`, `silence`, `slice`, `socket_input`, `socket_output`, `statistics_collector`, `write_message`
+// These functions are ignored because they are not marked as `pub`: `_join_room`, `_start_session`, `atomic_u32_deserialize`, `atomic_u32_serialize`, `audio_input`, `audio_output`, `bytes`, `calculate_rms`, `call_controller`, `call`, `db_to_multiplier`, `get_input_device`, `get_output_device`, `handshake`, `input_processor`, `latencies_missing`, `level_from_window`, `load`, `load`, `loopback`, `mul`, `new`, `new`, `new`, `new`, `new`, `open_stream`, `output_processor`, `read_message`, `relayed_only`, `resampler_factory`, `session_manager`, `session`, `silence`, `slice`, `statistics_collector`, `write_message`
 // These types are ignored because they are not used by any `pub` functions: `CachedAtomicFlag`, `CachedAtomicFloat`, `ConnectionState`, `PeerState`, `ProcessorMessage`, `SendStream`, `SessionState`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `default`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `default`, `default`, `default`, `fmt`, `fmt`, `fmt`, `fmt`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < Host >>>
 abstract class ArcHost implements RustOpaqueInterface {}
@@ -21,11 +21,16 @@ abstract class AudioChat implements RustOpaqueInterface {
   /// Blocks while an audio test is running
   Future<void> audioTest();
 
-  Future<ChatMessage> buildChat(
-      {required Contact contact, required String text});
+  ChatMessage buildChat(
+      {required Contact contact,
+      required String text,
+      required List<(String, Uint8List)> attachments});
 
   /// Ends the call (if there is one)
   void endCall();
+
+  /// Join a chat room
+  Future<void> joinRoom({required Contact contact});
 
   /// Lists the input and output devices
   Future<(List<String>, List<String>)> listDevices();
@@ -35,12 +40,12 @@ abstract class AudioChat implements RustOpaqueInterface {
           {required List<int> identity,
           required ArcHost host,
           required NetworkConfig networkConfig,
+          required ScreenshareConfig screenshareConfig,
           required Overlay overlay,
           required FutureOr<bool> Function(String, Uint8List?, DartNotify)
               acceptCall,
           required FutureOr<void> Function(String, bool) callEnded,
           required FutureOr<Contact?> Function(Uint8List) getContact,
-          required FutureOr<void> Function() connected,
           required FutureOr<void> Function(bool) callState,
           required FutureOr<void> Function(String, String) sessionStatus,
           required FutureOr<void> Function(AudioChat) startSessions,
@@ -48,16 +53,17 @@ abstract class AudioChat implements RustOpaqueInterface {
           required FutureOr<void> Function(Statistics) statistics,
           required FutureOr<void> Function(ChatMessage) messageReceived,
           required FutureOr<void> Function(bool, bool) managerActive,
-          required FutureOr<void> Function(Contact) callStarted}) =>
+          required FutureOr<void> Function(DartNotify, bool)
+              screenshareStarted}) =>
       RustLib.instance.api.crateApiAudioChatAudioChatNew(
           identity: identity,
           host: host,
           networkConfig: networkConfig,
+          screenshareConfig: screenshareConfig,
           overlay: overlay,
           acceptCall: acceptCall,
           callEnded: callEnded,
           getContact: getContact,
-          connected: connected,
           callState: callState,
           sessionStatus: sessionStatus,
           startSessions: startSessions,
@@ -65,7 +71,7 @@ abstract class AudioChat implements RustOpaqueInterface {
           statistics: statistics,
           messageReceived: messageReceived,
           managerActive: managerActive,
-          callStarted: callStarted);
+          screenshareStarted: screenshareStarted);
 
   /// Restarts the session manager
   Future<void> restartManager();
@@ -88,7 +94,7 @@ abstract class AudioChat implements RustOpaqueInterface {
 
   void setInputVolume({required double decibel});
 
-  Future<void> setModel({required List<int> model});
+  Future<void> setModel({Uint8List? model});
 
   void setMuted({required bool muted});
 
@@ -100,6 +106,8 @@ abstract class AudioChat implements RustOpaqueInterface {
 
   void setRmsThreshold({required double decimal});
 
+  Future<void> startScreenshare({required Contact contact});
+
   /// Tries to start a session for a contact
   Future<void> startSession({required Contact contact});
 
@@ -107,11 +115,22 @@ abstract class AudioChat implements RustOpaqueInterface {
   Future<void> stopSession({required Contact contact});
 }
 
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Capabilities>>
+abstract class Capabilities implements RustOpaqueInterface {
+  List<String> devices();
+
+  List<String> encoders();
+}
+
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<ChatMessage>>
 abstract class ChatMessage implements RustOpaqueInterface {
+  List<(String, Uint8List)> attachments();
+
   String get text;
 
   void set text(String text);
+
+  void clearAttachments();
 
   bool isSender({required String identity});
 
@@ -122,6 +141,9 @@ abstract class ChatMessage implements RustOpaqueInterface {
 abstract class DartNotify implements RustOpaqueInterface {
   /// public notified function for dart
   Future<void> notified();
+
+  /// notifies one waiter
+  void notify();
 }
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<NetworkConfig>>
@@ -138,6 +160,40 @@ abstract class NetworkConfig implements RustOpaqueInterface {
   Future<void> setRelayAddress({required String relayAddress});
 
   Future<void> setRelayId({required String relayId});
+}
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RecordingConfig>>
+abstract class RecordingConfig implements RustOpaqueInterface {
+  int bitrate();
+
+  String device();
+
+  String encoder();
+
+  int framerate();
+
+  int? height();
+}
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<ScreenshareConfig>>
+abstract class ScreenshareConfig implements RustOpaqueInterface {
+  Future<Capabilities> capabilities();
+
+  // HINT: Make it `#[frb(sync)]` to let it become the default constructor of Dart class.
+  static Future<ScreenshareConfig> newInstance({required String configStr}) =>
+      RustLib.instance.api
+          .crateApiAudioChatScreenshareConfigNew(configStr: configStr);
+
+  Future<RecordingConfig?> recordingConfig();
+
+  String toString();
+
+  Future<void> updateRecordingConfig(
+      {required String encoder,
+      required String device,
+      required int bitrate,
+      required int framerate,
+      int? height});
 }
 
 /// processed statistics for the frontend

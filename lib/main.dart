@@ -10,12 +10,16 @@ import 'package:audio_chat/src/rust/api/player.dart';
 import 'package:audio_chat/src/rust/api/overlay/overlay.dart';
 import 'package:audio_chat/src/rust/frb_generated.dart';
 import 'package:audio_chat/settings/controller.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart' hide Overlay;
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_svg/svg.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:process_run/process_run.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:super_clipboard/super_clipboard.dart';
 
 import 'audio_level.dart';
 import 'console.dart';
@@ -67,14 +71,15 @@ Future<void> main() async {
   soundPlayer.updateOutputDevice(name: settingsController.outputDevice);
   soundPlayer.updateOutputVolume(volume: settingsController.soundVolume);
 
-  var host = soundPlayer.host();
+  ArcHost host = soundPlayer.host();
 
-  final messageBus = MessageBus();
+  final chatStateController = ChatStateController(soundPlayer);
 
   final audioChat = await AudioChat.newInstance(
       identity: settingsController.keypair,
       host: host,
       networkConfig: settingsController.networkConfig,
+      screenshareConfig: settingsController.screenshareConfig,
       overlay: overlay,
       // called when there is an incoming call
       acceptCall: (String id, Uint8List? ringtone, DartNotify cancel) async {
@@ -132,10 +137,7 @@ Future<void> main() async {
         }
 
         outgoingSoundHandle?.cancel();
-
-        stateController.setActiveContact(null);
-        stateController.setStatus('Inactive');
-        stateController.disableCallsTemporarily();
+        stateController.endOfCall();
 
         List<int> bytes = await readWavBytes('call_ended');
         await soundPlayer.play(bytes: bytes);
@@ -157,35 +159,36 @@ Future<void> main() async {
           return null;
         }
       },
-      // called when the call initially connects
-      connected: () async {
-        outgoingSoundHandle?.cancel();
-
-        List<int> bytes = await readWavBytes('connected');
-        await soundPlayer.play(bytes: bytes);
-
-        stateController.setStatus('Active');
-        stateController.callDisconnected = false;
-      },
-      // called when the call disconnects or reconnects
+      // called when the call connects, disconnects, or reconnects
       callState: (bool disconnected) async {
-        if (disconnected &&
-            stateController.isCallActive &&
-            !stateController.callDisconnected) {
-          List<int> bytes = await readWavBytes('disconnected');
-          await soundPlayer.play(bytes: bytes);
+        if (!stateController.isCallActive) {
+          return;
+        }
 
+        // ensure the outgoing sound has been canceled as the call is now active
+        outgoingSoundHandle?.cancel();
+        List<int> bytes;
+
+        if (disconnected && !stateController.callDisconnected) {
+          // handles disconnects in an active call
+          bytes = await readWavBytes('disconnected');
           stateController.setStatus('Reconnecting');
           stateController.callDisconnected = true;
-        } else if (!disconnected &&
-            stateController.isCallActive &&
-            stateController.callDisconnected) {
-          List<int> bytes = await readWavBytes('reconnected');
-          await soundPlayer.play(bytes: bytes);
-
+        } else if (!disconnected && stateController.callDisconnected) {
+          // handles reconnects in an active call
+          bytes = await readWavBytes('reconnected');
           stateController.setStatus('Active');
           stateController.callDisconnected = false;
+        } else if (!disconnected && !stateController.callDisconnected) {
+          // handles the initial connect
+          bytes = await readWavBytes('connected');
+          stateController.setStatus('Active');
+          stateController.callDisconnected = false;
+        } else {
+          return;
         }
+
+        await soundPlayer.play(bytes: bytes);
       },
       // called when a session changes status
       sessionStatus: stateController.updateSession,
@@ -207,18 +210,12 @@ Future<void> main() async {
       // called when the backend has updated statistics
       statistics: statisticsController.setStatistics,
       // called when a new chat message is received by the backend
-      messageReceived: messageBus.sendMessage,
+      messageReceived: chatStateController.messageReceived,
       // called when the session manager state changes
       managerActive: (bool active, bool restartable) {
         stateController.setSessionManager(active, restartable);
       },
-      // called when the backend is starting a call on its own
-      callStarted: (Contact contact) async {
-        stateController.setStatus('Connecting');
-        List<int> bytes = await readWavBytes('outgoing');
-        outgoingSoundHandle = await soundPlayer.play(bytes: bytes);
-        stateController.setActiveContact(contact);
-      });
+      screenshareStarted: stateController.screenshareStarted);
 
   final audioDevices = AudioDevices(audioChat: audioChat);
 
@@ -235,13 +232,18 @@ Future<void> main() async {
   if (settingsController.denoiseModel != null) {
     updateDenoiseModel(settingsController.denoiseModel!, audioChat);
   }
+  
+  // Future.microtask(() {
+  //   sleep(const Duration(seconds: 1));
+  //   audioChat.joinRoom(contact: Contact(nickname: 'test room', peerId: '12D3KooWRVJCFqFBrasjtcGHnRuuut9fQLsfcUNLfWFFqjMm2p4n'));
+  // });
 
   runApp(AudioChatApp(
     audioChat: audioChat,
     settingsController: settingsController,
     callStateController: stateController,
     player: soundPlayer,
-    messageBus: messageBus,
+    chatStateController: chatStateController,
     statisticsController: statisticsController,
     overlay: overlay,
     audioDevices: audioDevices,
@@ -255,7 +257,7 @@ class AudioChatApp extends StatelessWidget {
   final StateController callStateController;
   final StatisticsController statisticsController;
   final SoundPlayer player;
-  final MessageBus messageBus;
+  final ChatStateController chatStateController;
   final Overlay overlay;
   final AudioDevices audioDevices;
 
@@ -265,7 +267,7 @@ class AudioChatApp extends StatelessWidget {
       required this.settingsController,
       required this.callStateController,
       required this.player,
-      required this.messageBus,
+      required this.chatStateController,
       required this.statisticsController,
       required this.overlay,
       required this.audioDevices});
@@ -310,7 +312,7 @@ class AudioChatApp extends StatelessWidget {
         settingsController: settingsController,
         stateController: callStateController,
         player: player,
-        messageBus: messageBus,
+        chatStateController: chatStateController,
         statisticsController: statisticsController,
         overlay: overlay,
         audioDevices: audioDevices,
@@ -326,7 +328,7 @@ class HomePage extends StatelessWidget {
   final StateController stateController;
   final StatisticsController statisticsController;
   final SoundPlayer player;
-  final MessageBus messageBus;
+  final ChatStateController chatStateController;
   final Overlay overlay;
   final AudioDevices audioDevices;
 
@@ -336,7 +338,7 @@ class HomePage extends StatelessWidget {
       required this.settingsController,
       required this.stateController,
       required this.player,
-      required this.messageBus,
+      required this.chatStateController,
       required this.statisticsController,
       required this.overlay,
       required this.audioDevices});
@@ -368,6 +370,13 @@ class HomePage extends StatelessWidget {
       overlay: overlay,
       audioDevices: audioDevices,
     );
+
+    ChatWidget chatWidget = ChatWidget(
+        audioChat: audioChat,
+        stateController: stateController,
+        chatStateController: chatStateController,
+        player: player,
+        settingsController: settingsController);
 
     return Scaffold(
       body: Padding(
@@ -433,16 +442,26 @@ class HomePage extends StatelessWidget {
                       child: Row(mainAxisSize: MainAxisSize.min, children: [
                         Container(
                             constraints: const BoxConstraints(maxWidth: 260),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .tertiaryContainer,
+                              borderRadius: BorderRadius.circular(10.0),
+                            ),
                             child: callControls),
                         const SizedBox(width: 20),
                         Flexible(
                             fit: FlexFit.loose,
-                            child: ChatWidget(
-                                audioChat: audioChat,
-                                stateController: stateController,
-                                messageBus: messageBus,
-                                player: player,
-                                settingsController: settingsController))
+                            child: Container(
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .secondaryContainer,
+                                  borderRadius: BorderRadius.circular(10.0),
+                                ),
+                                padding: const EdgeInsets.only(
+                                    left: 10, right: 10, top: 5, bottom: 10),
+                                child: chatWidget))
                       ])),
                 ],
               );
@@ -454,10 +473,112 @@ class HomePage extends StatelessWidget {
                   child: contactsList,
                 ),
                 const SizedBox(height: 20),
-                Flexible(fit: FlexFit.loose, child: callControls),
+                HomeTabView(
+                    widgetOne: callControls,
+                    widgetTwo: Padding(
+                        padding: const EdgeInsets.only(
+                            left: 10, right: 10, top: 5, bottom: 10),
+                        child: chatWidget),
+                    colorOne: Theme.of(context).colorScheme.tertiaryContainer,
+                    colorTwo: Theme.of(context).colorScheme.secondaryContainer,
+                    iconOne: const Icon(Icons.call),
+                    iconTwo: const Icon(Icons.chat))
               ]);
             }
           })),
+    );
+  }
+}
+
+/// A two-widget tab view used to display the call controls and chat widget in a single column
+class HomeTabView extends StatefulWidget {
+  final Widget widgetOne;
+  final Widget widgetTwo;
+  final Color colorOne;
+  final Color colorTwo;
+  final Icon iconOne;
+  final Icon iconTwo;
+
+  const HomeTabView(
+      {super.key,
+      required this.widgetOne,
+      required this.widgetTwo,
+      required this.colorOne,
+      required this.colorTwo,
+      required this.iconOne,
+      required this.iconTwo});
+
+  @override
+  State<HomeTabView> createState() => HomeTabViewState();
+}
+
+class HomeTabViewState extends State<HomeTabView>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  late Color _backgroundColor = widget.colorOne;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(() {
+      setState(() {
+        _backgroundColor =
+            _tabController.index == 0 ? widget.colorOne : widget.colorTwo;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 2,
+      child: Flexible(
+        fit: FlexFit.loose,
+        child: Container(
+          decoration: BoxDecoration(
+            color: _backgroundColor,
+            borderRadius: BorderRadius.circular(10.0),
+          ),
+          child: Column(
+            children: [
+              Container(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.secondaryContainer,
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(10.0)),
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: TabBar(
+                  controller: _tabController,
+                  splashFactory: NoSplash.splashFactory,
+                  overlayColor: WidgetStateProperty.all(Colors.transparent),
+                  dividerHeight: 0,
+                  padding: const EdgeInsets.all(0),
+                  tabs: [
+                    widget.iconOne,
+                    widget.iconTwo,
+                  ],
+                ),
+              ),
+              Flexible(
+                child: TabBarView(
+                  controller: _tabController,
+                  children: [
+                    widget.widgetOne,
+                    widget.widgetTwo,
+                  ],
+                ),
+              )
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -709,59 +830,51 @@ class ContactWidgetState extends State<ContactWidget> {
                         if (!widget.stateController
                             .isActiveContact(widget.contact)) {
                           bool confirm = await showDialog<bool>(
-                              context: context,
-                              builder: (BuildContext context) {
-                                return SimpleDialog(
-                                  title: const Text('Warning'),
-                                  contentPadding:
-                                  const EdgeInsets.only(
-                                      bottom: 25,
-                                      left: 25,
-                                      right: 25),
-                                  titlePadding:
-                                  const EdgeInsets.only(
-                                      top: 25,
-                                      left: 25,
-                                      right: 25,
-                                      bottom: 20),
-                                  children: [
-                                    const Text(
-                                        'Are you sure you want to delete this contact?'),
-                                    const SizedBox(height: 20),
-                                    Row(
-                                      mainAxisAlignment:
-                                      MainAxisAlignment.end,
+                                  context: context,
+                                  builder: (BuildContext context) {
+                                    return SimpleDialog(
+                                      title: const Text('Warning'),
+                                      contentPadding: const EdgeInsets.only(
+                                          bottom: 25, left: 25, right: 25),
+                                      titlePadding: const EdgeInsets.only(
+                                          top: 25,
+                                          left: 25,
+                                          right: 25,
+                                          bottom: 20),
                                       children: [
-                                        Button(
-                                          text: 'Cancel',
-                                          onPressed: () {
-                                            Navigator.pop(
-                                                context, false);
-                                          },
-                                        ),
-                                        const SizedBox(
-                                            width: 10),
-                                        Button(
-                                          text: 'Delete',
-                                          onPressed: () {
-                                            Navigator.pop(
-                                                context, true);
-                                          },
+                                        const Text(
+                                            'Are you sure you want to delete this contact?'),
+                                        const SizedBox(height: 20),
+                                        Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.end,
+                                          children: [
+                                            Button(
+                                              text: 'Cancel',
+                                              onPressed: () {
+                                                Navigator.pop(context, false);
+                                              },
+                                            ),
+                                            const SizedBox(width: 10),
+                                            Button(
+                                              text: 'Delete',
+                                              onPressed: () {
+                                                Navigator.pop(context, true);
+                                              },
+                                            ),
+                                          ],
                                         ),
                                       ],
-                                    ),
-                                  ],
-                                );
-                              }) ??
+                                    );
+                                  }) ??
                               false;
 
                           if (confirm) {
                             widget.settingsController
                                 .removeContact(widget.contact);
-                            widget.audioChat.stopSession(
-                                contact: widget.contact);
-                            widget.settingsController
-                                .saveContacts();
+                            widget.audioChat
+                                .stopSession(contact: widget.contact);
+                            widget.settingsController.saveContacts();
                           }
 
                           if (context.mounted) {
@@ -772,14 +885,13 @@ class ContactWidgetState extends State<ContactWidget> {
                               'Cannot delete a contact while in an active call');
                         }
                       },
-                      icon: SvgPicture.asset(
-                          'assets/icons/Trash.svg',
+                      icon: SvgPicture.asset('assets/icons/Trash.svg',
                           semanticsLabel: 'Delete contact icon'),
                     ),
                   ],
                 ),
-                contentPadding: const EdgeInsets.only(
-                    bottom: 25, left: 25, right: 25),
+                contentPadding:
+                    const EdgeInsets.only(bottom: 25, left: 25, right: 25),
                 titlePadding: const EdgeInsets.only(
                     top: 25, left: 25, right: 25, bottom: 20),
                 children: [
@@ -803,6 +915,7 @@ class ContactWidgetState extends State<ContactWidget> {
               );
             });
       },
+      hoverColor: Colors.transparent,
       child: Container(
         margin: const EdgeInsets.all(5.0),
         decoration: BoxDecoration(
@@ -816,7 +929,9 @@ class ContactWidgetState extends State<ContactWidget> {
             CircleAvatar(
               maxRadius: 17,
               // TODO the edit icon needs some work
-              child: SvgPicture.asset(isHovered ? 'assets/icons/Edit.svg' : 'assets/icons/Profile.svg'),
+              child: SvgPicture.asset(isHovered
+                  ? 'assets/icons/Edit.svg'
+                  : 'assets/icons/Profile.svg'),
             ),
             const SizedBox(width: 10),
             Text(widget.contact.nickname(),
@@ -831,12 +946,15 @@ class ContactWidgetState extends State<ContactWidget> {
                       semanticsLabel: 'Retry the session initiation')),
             if (status == 'Inactive') const SizedBox(width: 4),
             if (status == 'Connecting')
-              const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 3)),
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 10),
+                child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 3)),
+              ),
             if (status == 'Connecting') const SizedBox(width: 10),
-            if (!online)
+            if (!online && status != 'Connecting')
               Padding(
                   padding: const EdgeInsets.only(left: 7, right: 10),
                   child: SvgPicture.asset(
@@ -846,19 +964,17 @@ class ContactWidgetState extends State<ContactWidget> {
                   )),
             if (active)
               IconButton(
-                visualDensity: VisualDensity.compact,
+                visualDensity: VisualDensity.comfortable,
                 icon: SvgPicture.asset(
                   'assets/icons/PhoneOff.svg',
                   semanticsLabel: 'End call icon',
-                  width: 28,
+                  width: 32,
                 ),
                 onPressed: () async {
                   outgoingSoundHandle?.cancel();
 
                   widget.audioChat.endCall();
-                  widget.stateController.setActiveContact(null);
-                  widget.stateController.setStatus('Inactive');
-                  widget.stateController.disableCallsTemporarily();
+                  widget.stateController.endOfCall();
 
                   List<int> bytes = await readWavBytes('call_ended');
                   await widget.player.play(bytes: bytes);
@@ -866,11 +982,11 @@ class ContactWidgetState extends State<ContactWidget> {
               ),
             if (!active && online)
               IconButton(
-                visualDensity: VisualDensity.compact,
+                visualDensity: VisualDensity.comfortable,
                 icon: SvgPicture.asset(
                   'assets/icons/Phone.svg',
                   semanticsLabel: 'Call icon',
-                  width: 28,
+                  width: 32,
                 ),
                 onPressed: () async {
                   if (widget.stateController.isCallActive) {
@@ -932,191 +1048,189 @@ class CallControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.tertiaryContainer,
-        borderRadius: BorderRadius.circular(10.0),
-      ),
-      child: Column(
-        children: [
-          const SizedBox(height: 10),
-          ListenableBuilder(
-              listenable: stateController,
-              builder: (BuildContext context, Widget? child) {
-                Widget body;
+    return Column(
+      children: [
+        const SizedBox(height: 10),
+        ListenableBuilder(
+            listenable: stateController,
+            builder: (BuildContext context, Widget? child) {
+              Widget body;
 
-                if (stateController.sessionManagerActive) {
-                  if (stateController.isCallActive) {
-                    body = ListenableBuilder(
-                        listenable: notifier,
-                        builder: (BuildContext context, Widget? child) {
-                          return Text(stateController.callDuration,
-                              style: const TextStyle(fontSize: 20));
-                        });
-                  } else {
-                    body = Text(stateController.status,
-                        style: const TextStyle(fontSize: 20));
-                  }
+              if (stateController.sessionManagerActive) {
+                if (stateController.isCallActive) {
+                  body = ListenableBuilder(
+                      listenable: notifier,
+                      builder: (BuildContext context, Widget? child) {
+                        return Text(stateController.callDuration,
+                            style: const TextStyle(fontSize: 20));
+                      });
                 } else {
-                  body = Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const SizedBox(width: 15),
-                      const Text('Session Manager Inactive',
-                          style: TextStyle(
-                              fontSize: 16, color: Color(0xFFdc2626))),
-                      stateController.sessionManagerRestartable
-                          ? const Spacer()
-                          : const SizedBox(width: 10),
-                      stateController.sessionManagerRestartable
-                          ? IconButton(
-                              onPressed: () {
-                                audioChat.restartManager();
-                              },
-                              icon: SvgPicture.asset('assets/icons/Restart.svg',
-                                  colorFilter: const ColorFilter.mode(
-                                      Color(0xFFdc2626), BlendMode.srcIn),
-                                  semanticsLabel: 'Restart session manager'))
-                          : Container(),
-                      const SizedBox(width: 5),
-                    ],
-                  );
+                  body = Text(stateController.status,
+                      style: const TextStyle(fontSize: 20));
                 }
-
-                return SizedBox(
-                  height: 40,
-                  child: Center(child: body),
-                );
-              }),
-          Padding(
-            padding: const EdgeInsets.only(left: 25, right: 25, top: 20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Output Volume', style: TextStyle(fontSize: 15)),
-                ListenableBuilder(
-                    listenable: settingsController,
-                    builder: (BuildContext context, Widget? child) {
-                      return Slider(
-                          value: settingsController.outputVolume,
-                          onChanged: (value) async {
-                            await settingsController.updateOutputVolume(value);
-                            audioChat.setOutputVolume(decibel: value);
-                          },
-                          min: -15,
-                          max: 15,
-                          label:
-                              '${settingsController.outputVolume.toStringAsFixed(2)} db');
-                    }),
-                const SizedBox(height: 2),
-                const Text('Input Volume', style: TextStyle(fontSize: 15)),
-                ListenableBuilder(
-                    listenable: settingsController,
-                    builder: (BuildContext context, Widget? child) {
-                      return Slider(
-                          value: settingsController.inputVolume,
-                          onChanged: (value) async {
-                            await settingsController.updateInputVolume(value);
-                            audioChat.setInputVolume(decibel: value);
-                          },
-                          min: -15,
-                          max: 15,
-                          label:
-                              '${settingsController.inputVolume.toStringAsFixed(2)} db');
-                    }),
-                const SizedBox(height: 2),
-                const Text('Input Sensitivity', style: TextStyle(fontSize: 15)),
-                ListenableBuilder(
-                    listenable: settingsController,
-                    builder: (BuildContext context, Widget? child) {
-                      return Slider(
-                          value: settingsController.inputSensitivity,
-                          onChanged: (value) async {
-                            await settingsController
-                                .updateInputSensitivity(value);
-                            audioChat.setRmsThreshold(decimal: value);
-                          },
-                          min: -16,
-                          max: 50,
-                          label:
-                              '${settingsController.inputSensitivity.toStringAsFixed(2)} db');
-                    }),
-              ],
-            ),
-          ),
-          const Spacer(),
-          Container(
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.secondaryContainer,
-                borderRadius: const BorderRadius.only(
-                    bottomLeft: Radius.circular(10.0),
-                    bottomRight: Radius.circular(10.0)),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(5.0),
-                child: Center(
-                    child: Row(
-                  mainAxisSize: MainAxisSize.min,
+              } else {
+                body = Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    ListenableBuilder(
-                        listenable: stateController,
-                        builder: (BuildContext context, Widget? child) {
-                          return IconButton(
-                              onPressed: () async {
-                                if (stateController.isDeafened) {
-                                  return;
-                                }
+                    const SizedBox(width: 15),
+                    const Text('Session Manager Inactive',
+                        style:
+                            TextStyle(fontSize: 16, color: Color(0xFFdc2626))),
+                    stateController.sessionManagerRestartable
+                        ? const Spacer()
+                        : const SizedBox(width: 10),
+                    stateController.sessionManagerRestartable
+                        ? IconButton(
+                            onPressed: () {
+                              audioChat.restartManager();
+                            },
+                            icon: SvgPicture.asset('assets/icons/Restart.svg',
+                                colorFilter: const ColorFilter.mode(
+                                    Color(0xFFdc2626), BlendMode.srcIn),
+                                semanticsLabel: 'Restart session manager'))
+                        : Container(),
+                    const SizedBox(width: 5),
+                  ],
+                );
+              }
 
-                                List<int> bytes = stateController.isMuted
-                                    ? await readWavBytes('unmute')
-                                    : await readWavBytes('mute');
-                                player.play(bytes: bytes);
+              return SizedBox(
+                height: 40,
+                child: Center(child: body),
+              );
+            }),
+        Padding(
+          padding: const EdgeInsets.only(left: 25, right: 25, top: 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Output Volume', style: TextStyle(fontSize: 15)),
+              ListenableBuilder(
+                  listenable: settingsController,
+                  builder: (BuildContext context, Widget? child) {
+                    return Slider(
+                        value: settingsController.outputVolume,
+                        onChanged: (value) async {
+                          await settingsController.updateOutputVolume(value);
+                          audioChat.setOutputVolume(decibel: value);
+                        },
+                        min: -15,
+                        max: 15,
+                        label:
+                            '${settingsController.outputVolume.toStringAsFixed(2)} db');
+                  }),
+              const SizedBox(height: 2),
+              const Text('Input Volume', style: TextStyle(fontSize: 15)),
+              ListenableBuilder(
+                  listenable: settingsController,
+                  builder: (BuildContext context, Widget? child) {
+                    return Slider(
+                        value: settingsController.inputVolume,
+                        onChanged: (value) async {
+                          await settingsController.updateInputVolume(value);
+                          audioChat.setInputVolume(decibel: value);
+                        },
+                        min: -15,
+                        max: 15,
+                        label:
+                            '${settingsController.inputVolume.toStringAsFixed(2)} db');
+                  }),
+              const SizedBox(height: 2),
+              const Text('Input Sensitivity', style: TextStyle(fontSize: 15)),
+              ListenableBuilder(
+                  listenable: settingsController,
+                  builder: (BuildContext context, Widget? child) {
+                    return Slider(
+                        value: settingsController.inputSensitivity,
+                        onChanged: (value) async {
+                          await settingsController
+                              .updateInputSensitivity(value);
+                          audioChat.setRmsThreshold(decimal: value);
+                        },
+                        min: -16,
+                        max: 50,
+                        label:
+                            '${settingsController.inputSensitivity.toStringAsFixed(2)} db');
+                  }),
+            ],
+          ),
+        ),
+        const Spacer(),
+        Container(
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.secondaryContainer,
+              borderRadius: const BorderRadius.only(
+                  bottomLeft: Radius.circular(10.0),
+                  bottomRight: Radius.circular(10.0)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(5.0),
+              child: Center(
+                  child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListenableBuilder(
+                      listenable: stateController,
+                      builder: (BuildContext context, Widget? child) {
+                        return IconButton(
+                            onPressed: () async {
+                              if (stateController.isDeafened) {
+                                return;
+                              }
 
-                                stateController.mute();
-                                audioChat.setMuted(
-                                    muted: stateController.isMuted);
-                              },
-                              icon: SvgPicture.asset(
-                                  stateController.isDeafened |
-                                          stateController.isMuted
-                                      ? 'assets/icons/MicrophoneOff.svg'
-                                      : 'assets/icons/Microphone.svg',
-                                  width: 24));
-                        }),
-                    ListenableBuilder(
-                        listenable: stateController,
-                        builder: (BuildContext context, Widget? child) {
-                          return IconButton(
-                              onPressed: () async {
-                                List<int> bytes = stateController.isDeafened
-                                    ? await readWavBytes('deafen')
-                                    : await readWavBytes('undeafen');
-                                player.play(bytes: bytes);
+                              List<int> bytes = stateController.isMuted
+                                  ? await readWavBytes('unmute')
+                                  : await readWavBytes('mute');
+                              player.play(bytes: bytes);
 
-                                stateController.deafen();
-                                audioChat.setDeafened(
-                                    deafened: stateController.isDeafened);
+                              stateController.mute();
+                              audioChat.setMuted(
+                                  muted: stateController.isMuted);
+                            },
+                            icon: SvgPicture.asset(
+                                stateController.isDeafened |
+                                        stateController.isMuted
+                                    ? 'assets/icons/MicrophoneOff.svg'
+                                    : 'assets/icons/Microphone.svg',
+                                width: 24));
+                      }),
+                  ListenableBuilder(
+                      listenable: stateController,
+                      builder: (BuildContext context, Widget? child) {
+                        return IconButton(
+                            onPressed: () async {
+                              List<int> bytes = stateController.isDeafened
+                                  ? await readWavBytes('deafen')
+                                  : await readWavBytes('undeafen');
+                              player.play(bytes: bytes);
 
-                                if (stateController.isDeafened &&
-                                    stateController.isMuted) {
-                                  audioChat.setMuted(muted: true);
-                                } else {
-                                  audioChat.setMuted(muted: false);
-                                }
-                              },
-                              visualDensity: VisualDensity.comfortable,
-                              icon: SvgPicture.asset(
-                                  stateController.isDeafened
-                                      ? 'assets/icons/SpeakerOff.svg'
-                                      : 'assets/icons/Speaker.svg',
-                                  width: 28));
-                        }),
-                    IconButton(
-                        onPressed: () {
-                          Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => SettingsPage(
+                              stateController.deafen();
+                              audioChat.setDeafened(
+                                  deafened: stateController.isDeafened);
+
+                              if (stateController.isDeafened &&
+                                  stateController.isMuted) {
+                                audioChat.setMuted(muted: true);
+                              } else {
+                                audioChat.setMuted(muted: false);
+                              }
+                            },
+                            visualDensity: VisualDensity.comfortable,
+                            icon: SvgPicture.asset(
+                                stateController.isDeafened
+                                    ? 'assets/icons/SpeakerOff.svg'
+                                    : 'assets/icons/Speaker.svg',
+                                width: 28));
+                      }),
+                  IconButton(
+                      onPressed: () {
+                        Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => Scaffold(body:
+                                  LayoutBuilder(builder: (BuildContext context,
+                                      BoxConstraints constraints) {
+                                return SettingsPage(
                                   controller: settingsController,
                                   audioChat: audioChat,
                                   stateController: stateController,
@@ -1124,19 +1238,38 @@ class CallControls extends StatelessWidget {
                                   player: player,
                                   overlay: overlay,
                                   audioDevices: audioDevices,
-                                ),
-                              ));
-                        },
-                        icon: SvgPicture.asset('assets/icons/Settings.svg')),
-                    const SizedBox(width: 1),
-                    IconButton(
-                        onPressed: () {},
-                        icon: SvgPicture.asset('assets/icons/ScreenShare.svg')),
-                  ],
-                )),
-              ))
-        ],
-      ),
+                                  constraints: constraints,
+                                );
+                              })),
+                            ));
+                      },
+                      icon: SvgPicture.asset('assets/icons/Settings.svg')),
+                  const SizedBox(width: 1),
+                  ListenableBuilder(
+                      listenable: stateController,
+                      builder: (BuildContext context, Widget? child) =>
+                          IconButton(
+                              onPressed: () {
+                                if (stateController.activeContact == null) {
+                                  return;
+                                }
+
+                                if (!stateController.isSendingScreenshare) {
+                                  audioChat.startScreenshare(
+                                      contact: stateController.activeContact!);
+                                } else {
+                                  stateController.stopScreenshare(true);
+                                }
+                              },
+                              icon: SvgPicture.asset(
+                                  stateController.isSendingScreenshare
+                                      ? 'assets/icons/PhoneOff.svg'
+                                      : 'assets/icons/Screenshare.svg',
+                                  semanticsLabel: 'Screenshare icon'))),
+                ],
+              )),
+            ))
+      ],
     );
   }
 }
@@ -1145,14 +1278,14 @@ class ChatWidget extends StatefulWidget {
   final AudioChat audioChat;
   final StateController stateController;
   final SettingsController settingsController;
-  final MessageBus messageBus;
+  final ChatStateController chatStateController;
   final SoundPlayer player;
 
   const ChatWidget(
       {super.key,
       required this.audioChat,
       required this.stateController,
-      required this.messageBus,
+      required this.chatStateController,
       required this.player,
       required this.settingsController});
 
@@ -1161,162 +1294,417 @@ class ChatWidget extends StatefulWidget {
 }
 
 class ChatWidgetState extends State<ChatWidget> {
-  late TextEditingController _messageInput;
-  List<ChatMessage> messages = [];
-  late StreamSubscription<ChatMessage> messageSubscription;
-  bool active = false;
+  final FocusNode _focusNode = FocusNode();
+  final Map<String, bool> _attachmentHovered = {};
 
   @override
   void initState() {
     super.initState();
-    messageSubscription =
-        widget.messageBus.messageStream.listen(receivedMessage);
-    _messageInput = TextEditingController();
-    widget.stateController.addListener(() {
-      if (widget.stateController.isCallActive == active) {
-        return;
-      } else if (!widget.stateController.isCallActive && active) {
-        messages.clear();
-        _messageInput.clear();
-      }
+    widget.stateController.addListener(_onStateControllerChange);
+    ClipboardEvents.instance?.registerPasteEventListener(_onPasteEvent);
 
-      setState(() {
-        active = widget.stateController.isCallActive;
-      });
+    _focusNode.addListener(() {
+      if (_focusNode.hasFocus) {
+        RawKeyboard.instance.addListener(_onKeyEvent);
+      } else {
+        RawKeyboard.instance.removeListener(_onKeyEvent);
+      }
     });
   }
 
   @override
   void dispose() {
-    messageSubscription.cancel();
-    _messageInput.dispose();
+    widget.stateController.removeListener(_onStateControllerChange);
+    ClipboardEvents.instance?.unregisterPasteEventListener(_onPasteEvent);
+    _focusNode.dispose();
     super.dispose();
   }
 
-  // TODO add a sound effect here too
   void sendMessage(String text) async {
-    if (!active) return;
+    if (!widget.chatStateController.active) return;
+    if (text.isEmpty && widget.chatStateController.attachments.isEmpty) return;
 
     Contact contact = widget.stateController.activeContact!;
 
     try {
-      ChatMessage message =
-          await widget.audioChat.buildChat(contact: contact, text: text);
-      widget.audioChat.sendChat(message: message);
+      ChatMessage message = widget.audioChat
+          .buildChat(contact: contact, text: text, attachments: widget.chatStateController.attachments);
+      await widget.audioChat.sendChat(message: message);
 
-      setState(() {
-        messages.add(message);
-        _messageInput.clear();
-      });
+      message.clearAttachments();
+      widget.chatStateController.messages.add(message);
+      widget.chatStateController.clearInput();
     } on DartError catch (error) {
+      if (!mounted) return;
       showErrorDialog(context, 'Message Send Failed', error.message);
     }
   }
 
-  void receivedMessage(ChatMessage message) async {
-    if (!active) return;
-
-    // TODO add the sound effect
-    // widget.player.play(bytes: await readWavBytes('message'));
+  void _onStateControllerChange() {
+    if (widget.stateController.isCallActive == widget.chatStateController.active) {
+      return;
+    } else if (!widget.stateController.isCallActive &&
+        widget.chatStateController.active) {
+      widget.chatStateController.clearState();
+    }
 
     setState(() {
-      messages.add(message);
+      widget.chatStateController.active = widget.stateController.isCallActive;
     });
+  }
+
+  Future<void> _onPasteEvent(ClipboardReadEvent event) async {
+    ClipboardReader reader = await event.getClipboardReader();
+    _handlePaste(reader);
+  }
+
+  // TODO mobile compatibility
+  Future<void> _onChooseFile() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles();
+
+    if (result != null) {
+      File file = File(result.files.single.path!);
+      String name = result.files.single.name;
+
+      widget.chatStateController.addAttachmentFile(name, file);
+    }
+  }
+
+  Future<void> _onKeyEvent(RawKeyEvent event) async {
+    if (event is RawKeyDownEvent) {
+      if (event.isControlPressed && event.logicalKey == LogicalKeyboardKey.keyV) {
+        final clipboard = SystemClipboard.instance;
+
+        if (clipboard != null) {
+          final reader = await clipboard.read();
+          _handlePaste(reader);
+        } else {
+          DebugConsole.debug('Clipboard is null');
+        }
+      }
+    }
+  }
+
+  Future<void> _handlePaste(ClipboardReader reader) async {
+    for (DataReader reader in reader.items) {
+      final formats = reader.getFormats(Formats.standardFormats);
+      String? suggestedName = await reader.getSuggestedName();
+
+      for (DataFormat format in formats) {
+        // TODO handle more formats
+        switch (format) {
+          // plain text is already handled in the text field
+          case Formats.plainText:
+            break;
+          case Formats.png || Formats.jpeg:
+            final image = await reader.readFile(format as FileFormat);
+            widget.chatStateController.addAttachmentMemory(suggestedName!, image!);
+        }
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.secondaryContainer,
-        borderRadius: BorderRadius.circular(10.0),
-      ),
-      padding: const EdgeInsets.only(left: 10, right: 10, top: 5, bottom: 10),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Flexible(
-              fit: FlexFit.loose,
-              child: ListView.builder(
-                  itemCount: messages.length,
-                  itemBuilder: (BuildContext context, int index) {
-                    ChatMessage message = messages[index];
-                    bool sender = message.isSender(
-                        identity: widget.settingsController.peerId);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+            fit: FlexFit.loose,
+            child: ListenableBuilder(
+              listenable: widget.chatStateController,
+              builder: (BuildContext context, Widget? child) {
+                return ListView.builder(
+                    itemCount: widget.chatStateController.messages.length,
+                    itemBuilder: (BuildContext context, int index) {
+                      ChatMessage message = widget.chatStateController.messages[index];
+                      bool sender = message.isSender(
+                          identity: widget.settingsController.peerId);
 
-                    return Align(
-                      alignment:
-                          sender ? Alignment.centerRight : Alignment.centerLeft,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 5),
-                        margin: const EdgeInsets.symmetric(vertical: 5),
-                        decoration: BoxDecoration(
-                            color: sender
-                                ? Theme.of(context).colorScheme.secondary
-                                : Theme.of(context)
-                                    .colorScheme
-                                    .tertiaryContainer,
-                            borderRadius: BorderRadius.only(
-                                topLeft: const Radius.circular(10.0),
-                                topRight: const Radius.circular(10.0),
-                                bottomLeft: Radius.circular(sender ? 10.0 : 0),
-                                bottomRight:
-                                    Radius.circular(sender ? 0 : 10.0))),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.end,
+                      List<(String, Uint8List)> attachments =
+                          message.attachments();
+
+                      List<Widget> widgets = attachments.map((attachment) {
+                        (File?, Image?)? file = widget.chatStateController.files[attachment.$1];
+
+                        if (file == null) {
+                          DebugConsole.debug('Attachment file is null');
+                          return Text('Attachment: ${attachment.$1}');
+                        } else {
+                          if (file.$2 != null) {
+                            return Container(
+                              width: 500,
+                              margin: const EdgeInsets.symmetric(vertical: 5),
+                              child: InkWell(
+                                hoverColor: Colors.transparent,
+                                onTap: () {
+                                  showImagePreview(file.$2!);
+                                },
+                                onSecondaryTapDown: (details) {
+                                  showAttachmentMenu(details.globalPosition, file.$1);
+                                },
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(5.0),
+                                  child: file.$2!,
+                                ),
+                              ),
+                            );
+                          } else {
+                            // TODO make this a proper attachment widget
+                            return InkWell(
+                              onSecondaryTapDown: (details) {
+                                showAttachmentMenu(details.globalPosition, file.$1);
+                              },
+                              child: Text('Attachment: ${attachment.$1}'),
+                            );
+                          }
+                        }
+                      }).toList();
+
+                      if (message.text.isNotEmpty) {
+                        widgets.insert(
+                            0,
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 5),
+                              margin: const EdgeInsets.symmetric(vertical: 5),
+                              decoration: BoxDecoration(
+                                  color: sender
+                                      ? Theme.of(context).colorScheme.secondary
+                                      : Theme.of(context)
+                                      .colorScheme
+                                      .tertiaryContainer,
+                                  borderRadius: BorderRadius.only(
+                                      topLeft: const Radius.circular(10.0),
+                                      topRight: const Radius.circular(10.0),
+                                      bottomLeft:
+                                      Radius.circular(sender ? 10.0 : 0),
+                                      bottomRight:
+                                      Radius.circular(sender ? 0 : 10.0))),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Theme(
+                                    data: ThemeData(
+                                        textSelectionTheme: TextSelectionThemeData(
+                                          selectionColor: sender ? Colors.blue : null,
+                                        )
+                                    ),
+                                    child: SelectableText(
+                                      message.text,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 5),
+                                  Text(message.time(),
+                                      style: TextStyle(
+                                          fontSize: 10,
+                                          color: sender
+                                              ? Colors.white60
+                                              : Colors.grey)),
+                                ],
+                              ),
+                            ));
+                      }
+
+                      return Align(
+                        alignment: sender
+                            ? Alignment.centerRight
+                            : Alignment.centerLeft,
+                        child: Column(
+                          crossAxisAlignment: sender
+                              ? CrossAxisAlignment.end
+                              : CrossAxisAlignment.start,
+                          children: widgets,
+                        ),
+                      );
+                    });
+              },
+            )),
+        ListenableBuilder(
+            listenable: widget.stateController,
+            builder: (BuildContext context, Widget? child) {
+              const noBorder = OutlineInputBorder(
+                  borderSide: BorderSide(
+                    color: Colors.transparent,
+                  )
+              );
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ListenableBuilder(listenable: widget.chatStateController, builder: (BuildContext context, Widget? child) {
+                    List<Widget> attachments = widget.chatStateController.attachments.map((attachment) {
+                      return InkWell(
+                        mouseCursor: SystemMouseCursors.basic,
+                        onTap: () {},
+                        onHover: (hovered) {
+                          setState(() {
+                            _attachmentHovered[attachment.$1] = hovered;
+                          });
+                        },
+                        child: Stack(
                           children: [
-                            Text(message.text),
-                            const SizedBox(width: 5),
-                            Text(message.time(),
-                                style: TextStyle(
-                                    fontSize: 10,
-                                    color:
-                                        sender ? Colors.white60 : Colors.grey)),
+                            Container(
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context).colorScheme.tertiaryContainer,
+                                  borderRadius: BorderRadius.circular(10.0),
+                                  border: Border.all(color: Colors.grey.shade400),
+                                ),
+                                margin: const EdgeInsets.only(top: 5, right: 5),
+                                child: Padding(padding: const EdgeInsets.only(left: 4, right: 4, top: 2, bottom: 4), child: Text(attachment.$1)),
+                            ),
+                            if (_attachmentHovered[attachment.$1] ?? false)
+                              Positioned(
+                                right: 0,
+                                child: InkWell(
+                                  onTap: () {
+                                    widget.chatStateController.removeAttachment(attachment.$1);
+                                  },
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(context).colorScheme.tertiaryContainer,
+                                      borderRadius: BorderRadius.circular(10.0),
+                                    ),
+                                    child: SvgPicture.asset(
+                                      'assets/icons/Trash.svg',
+                                      semanticsLabel: 'Close attachment icon',
+                                      colorFilter: const ColorFilter.mode(Color(0xFFdc2626), BlendMode.srcIn),
+                                      width: 20,
+                                    ),
+                                  ),
+                                )
+                              ),
                           ],
                         ),
-                      ),
+                      );
+                    }).toList();
+
+                    return Wrap(
+                      children: attachments,
                     );
-                  })),
-          ListenableBuilder(
-              listenable: widget.stateController,
-              builder: (BuildContext context, Widget? child) {
-                return Row(
-                  mainAxisAlignment: MainAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Flexible(
-                        fit: FlexFit.loose,
-                        child: TextInput(
-                          controller: _messageInput,
-                          labelText: active ? 'Message' : 'Chat disabled',
-                          enabled: active,
-                          onSubmitted: (message) {
-                            if (message.isEmpty) return;
-                            sendMessage(message);
-                          },
-                        )),
-                    if (active) const SizedBox(width: 10),
-                    if (active)
-                      IconButton(
-                        onPressed: () {
-                          String message = _messageInput.text;
-                          if (message.isEmpty) return;
-                          sendMessage(message);
-                        },
-                        icon: SvgPicture.asset(
-                          'assets/icons/Send.svg',
-                          semanticsLabel: 'Send button icon',
-                          width: 36,
-                        ),
-                      )
-                  ],
-                );
-              }),
-        ],
-      ),
+                  }),
+                  const SizedBox(height: 7),
+                  SizedBox(
+                    height: 50,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.tertiaryContainer,
+                        borderRadius: BorderRadius.circular(10.0),
+                        border: Border.all(color: widget.chatStateController.active ? Colors.grey.shade400 : Colors.grey.shade600),
+                      ),
+                      padding: EdgeInsets.symmetric(horizontal: widget.chatStateController.active ? 4 : 12),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (widget.chatStateController.active)
+                            IconButton(
+                              onPressed: _onChooseFile,
+                              icon: SvgPicture.asset(
+                                'assets/icons/Attachment.svg',
+                                semanticsLabel: 'Attachment button icon',
+                                width: 26,
+                              ),
+                              hoverColor: Colors.transparent,
+                            ),
+                          Flexible(
+                              fit: FlexFit.loose,
+                              child: TextField(
+                                focusNode: _focusNode,
+                                controller: widget.chatStateController.messageInput,
+                                enabled: widget.chatStateController.active,
+                                onSubmitted: (message) {
+                                  sendMessage(message);
+                                },
+                                decoration: InputDecoration(
+                                  labelText: widget.chatStateController.active
+                                      ? 'Message'
+                                      : 'Chat disabled',
+                                  floatingLabelBehavior: FloatingLabelBehavior.never,
+                                  disabledBorder: noBorder,
+                                  border: noBorder,
+                                  focusedBorder: noBorder,
+                                  enabledBorder: noBorder,
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 2),
+                                ),
+                              )),
+                          if (widget.chatStateController.active)
+                            IconButton(
+                              onPressed: () {
+                                String message = widget.chatStateController.messageInput.text;
+                                sendMessage(message);
+                              },
+                              icon: SvgPicture.asset(
+                                'assets/icons/Send.svg',
+                                semanticsLabel: 'Send button icon',
+                                width: 32,
+                              ),
+                              hoverColor: Colors.transparent,
+                            )
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            }),
+      ],
     );
+  }
+
+  void showAttachmentMenu(Offset position, File? file) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.transparent,
+      builder: (BuildContext context) {
+        return CustomPositionedDialog(
+          position: position,
+          file: file
+        );
+      },
+    );
+  }
+
+  void showImagePreview(Image image) {
+    showDialog(context: context, builder: (BuildContext context) {
+      return GestureDetector(
+        onTap: () {
+          Navigator.of(context).pop();
+        },
+        child: Stack(
+          children: [
+            Center(
+              child: InkWell(
+                onTap: () {},
+                child: image,
+              ),
+            ),
+          ],
+        ),
+      );
+    });
+  }
+}
+
+/// Turn [DataReader.getValue] into a future.
+extension _ReadValue on DataReader {
+  Future<Uint8List?>? readFile(FileFormat format) {
+    final c = Completer<Uint8List?>();
+    final progress = getFile(format, (file) async {
+      try {
+        final all = await file.readAll();
+        c.complete(all);
+      } catch (e) {
+        c.completeError(e);
+      }
+    }, onError: (e) {
+      c.completeError(e);
+    });
+    if (progress == null) {
+      c.complete(null);
+    }
+    return c.future;
   }
 }
 
@@ -1423,6 +1811,98 @@ class CallDetailsWidget extends StatelessWidget {
                         style: const TextStyle(height: 0));
                   }),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A custom right click dialog
+class CustomPositionedDialog extends StatelessWidget {
+  final Offset position;
+  final File? file;
+
+  const CustomPositionedDialog({super.key, required this.position, required this.file});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () {
+        Navigator.of(context).pop();
+      },
+      onSecondaryTap: () {
+        Navigator.of(context).pop();
+      },
+      child: Stack(
+        children: [
+          Positioned(
+            left: position.dx,
+            top: position.dy,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.tertiaryContainer,
+                borderRadius: BorderRadius.circular(5.0),
+              ),
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  InkWell(
+                    onTap: () async {
+                      final clipboard = SystemClipboard.instance;
+
+                      if (clipboard == null) {
+                        DebugConsole.warn('Clipboard not supported on this platform');
+                      } else {
+                        final item = DataWriterItem();
+
+                        if (file != null) {
+                          item.add(Formats.fileUri(Uri(path: file!.path)));
+                        } else {
+                          DebugConsole.warn('File is null');
+                        }
+
+                        clipboard.write([item]);
+                      }
+
+                      if (context.mounted) {
+                        Navigator.of(context).pop();
+                      }
+                    },
+                    child: const SizedBox(
+                      width: 125,
+                      child: Text('Copy'),
+                    ),
+                  ),
+                  // TODO need some kind of divider here
+                  const SizedBox(height: 5),
+                  if ((Platform.isMacOS || Platform.isLinux || Platform.isWindows) && file != null)
+                    InkWell(
+                      onTap: () {
+                        // init shell
+                        Shell shell = Shell();
+
+                        // TODO work on cross platform support
+                        if (Platform.isWindows) {
+                          shell.run('explorer.exe /select,${file!.path.replaceAll("/", "\\")}');
+                        } else if (Platform.isMacOS) {
+                          shell.run('open -R "${file!.path}"');
+                        } else {
+                          DebugConsole.warn('Opening file in folder not supported on this platform');
+                        }
+
+                        Navigator.of(context).pop();
+                      },
+                      child: const SizedBox(
+                        width: 125,
+                        child: Text('View in Folder'),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
         ],
       ),
@@ -1577,6 +2057,11 @@ class StateController extends ChangeNotifier {
   /// active, restartable
   (bool, bool) _sessionManager = (false, false);
 
+  DartNotify? _stopSendingScreenshare;
+  DartNotify? _stopReceivingScreenshare;
+  bool isSendingScreenshare = false;
+  bool isReceivingScreenshare = false;
+
   Contact? get activeContact => _activeContact;
   bool get isCallActive => _activeContact != null;
   bool get isDeafened => _deafened;
@@ -1600,6 +2085,7 @@ class StateController extends ChangeNotifier {
       _activeContact = null;
       _callTimer.stop();
       _callTimer.reset();
+      callDisconnected = false;
     } else if (status == 'Active') {
       _callTimer.start();
     }
@@ -1655,8 +2141,57 @@ class StateController extends ChangeNotifier {
       _callEndedRecently = false;
     });
   }
+
+  void screenshareStarted(DartNotify stop, bool sending) {
+    if (sending) {
+      DebugConsole.log('Sending screenshare started');
+      _stopSendingScreenshare = stop;
+      isSendingScreenshare = true;
+
+      // this catches the sending screenshare being closed by the receiver
+      Future.microtask(() async {
+        await stop.notified();
+        // if the screen share is still sending, stop the screenshare
+        if (isSendingScreenshare) {
+          stopScreenshare(true);
+        }
+      });
+    } else {
+      DebugConsole.log('Receiving screenshare started');
+      _stopReceivingScreenshare = stop;
+      isReceivingScreenshare = true;
+    }
+
+    notifyListeners();
+  }
+
+  void stopScreenshare(bool sending) {
+    DebugConsole.log('Stopping screenshare sending: $sending');
+
+    if (sending) {
+      _stopSendingScreenshare?.notify();
+      _stopSendingScreenshare = null;
+      isSendingScreenshare = false;
+    } else {
+      _stopReceivingScreenshare?.notify();
+      _stopReceivingScreenshare = null;
+      isReceivingScreenshare = false;
+    }
+
+    notifyListeners();
+  }
+
+  /// a group of actions run when the call ends
+  void endOfCall() {
+    setActiveContact(null);
+    setStatus('Inactive');
+    disableCallsTemporarily();
+    stopScreenshare(true);
+    stopScreenshare(false);
+  }
 }
 
+/// A controller responsible for managing the statistics of the call
 class StatisticsController extends ChangeNotifier {
   Statistics? _statistics;
 
@@ -1695,21 +2230,110 @@ class CustomTrackShape extends RoundedRectSliderTrackShape {
   }
 }
 
-/// Sends messages from the backend callback to the chat widget
-class MessageBus {
-  final _messageController = StreamController<ChatMessage>.broadcast();
+/// Manages the state of chat messages and attachments
+class ChatStateController extends ChangeNotifier {
+  /// a list of messages in the chat
+  List<ChatMessage> messages = [];
 
-  // for widgets to listen to the stream
-  Stream<ChatMessage> get messageStream => _messageController.stream;
+  /// a list of attachments to be sent with the next message
+  List<(String, Uint8List)> attachments = [];
 
-  // called to send a message
-  void sendMessage(ChatMessage message) {
-    _messageController.sink.add(message);
+  /// a flag indicating if the chat is active and should be enabled
+  bool active = false;
+
+  /// the input field for the chat
+  TextEditingController messageInput = TextEditingController();
+
+  /// a list of files used in the chat which optionally display images
+  Map<String, (File?, Image?)> files = {};
+
+  final SoundPlayer soundPlayer;
+
+  ChatStateController(this.soundPlayer);
+
+  /// called when the call receives a message
+  void messageReceived(ChatMessage message) async {
+    messages.add(message);
+
+    // handle any attachments
+    for (var attachment in message.attachments()) {
+      File? file = await saveFile(attachment.$2, attachment.$1);
+
+      if (file == null) {
+        continue;
+      }
+
+      // add the file record
+      _addFile(attachment.$1, file, attachment.$2);
+    }
+
+    // remove attachment data from memory
+    message.clearAttachments();
+    notifyListeners();
+
+    // play the received sound
+    soundPlayer.play(bytes: await readWavBytes('message_received'));
   }
 
-  // close the stream controller when it's no longer needed
-  void dispose() {
-    _messageController.close();
+  /// adds a file to the list of attachments
+  void addAttachmentFile(String name, File file) async {
+    final fileNameWithoutExtension = name.substring(0, name.lastIndexOf('.'));
+    final fileExtension = name.substring(name.lastIndexOf('.'));
+    String newName = '$fileNameWithoutExtension-${DateTime.now().millisecondsSinceEpoch}$fileExtension';
+
+    Uint8List bytes = await file.readAsBytes();
+    attachments.add((newName, bytes));
+    _addFile(newName, file, bytes);
+    notifyListeners();
+  }
+
+  /// adds an attachment from memory to the list of attachments
+  void addAttachmentMemory(String name, Uint8List data) {
+    final fileNameWithoutExtension = name.substring(0, name.lastIndexOf('.'));
+    final fileExtension = name.substring(name.lastIndexOf('.'));
+    String newName = '$fileNameWithoutExtension-${DateTime.now().millisecondsSinceEpoch}$fileExtension';
+
+    attachments.add((newName, data));
+    _addFile(newName, null, data);
+    notifyListeners();
+  }
+
+  /// adds a file to the list of files, optionally displaying images
+  void _addFile(String name, File? file, Uint8List data) {
+    if (isValidImageFormat(name)) {
+      Image? image = Image.memory(data, fit: BoxFit.contain);
+      files[name] = (file, image);
+    } else {
+      files[name] = (file, null);
+    }
+  }
+
+  /// clears the state of the chat
+  void clearState() {
+    messages.clear();
+    attachments.clear();
+    messageInput.clear();
+    notifyListeners();
+  }
+
+  /// clears the input field and attachments
+  void clearInput() {
+    messageInput.clear();
+    attachments.clear();
+    notifyListeners();
+  }
+
+  bool isValidImageFormat(String fileName) {
+    const validExtensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'];
+    final extension = fileName.split('.').last.toLowerCase();
+    return validExtensions.contains(extension);
+  }
+
+  /// removes an attachment before being sent
+  void removeAttachment(String name) {
+    attachments.removeWhere((attachment) => attachment.$1 == name);
+    files.remove(name);
+    notifyListeners();
   }
 }
 
@@ -1792,9 +2416,14 @@ Future<List<int>> readWavBytes(String assetName) {
   return readAssetBytes('sounds/$assetName.wav');
 }
 
-Future<void> updateDenoiseModel(String model, AudioChat audioChat) async {
+Future<void> updateDenoiseModel(String? model, AudioChat audioChat) async {
+  if (model == null) {
+    audioChat.setModel(model: null);
+    return;
+  }
+
   List<int> bytes = await readAssetBytes('models/$model.rnn');
-  audioChat.setModel(model: bytes);
+  audioChat.setModel(model: Uint8List.fromList(bytes));
 }
 
 /// Reads the bytes of a file from the assets
@@ -1840,4 +2469,24 @@ String roundToTotalDigits(double number) {
 
   // round to the required number of fractional digits
   return number.toStringAsFixed(fractionalDigits).padRight(4, '0');
+}
+
+// TODO verify cross-platform compatibility
+Future<File?> saveFile(Uint8List fileBytes, String fileName) async {
+  Directory? downloadsDirectory = await getDownloadsDirectory();
+
+  if (downloadsDirectory != null) {
+    final subdirectory = Directory('${downloadsDirectory.path}/Audio Chat');
+    if (!await subdirectory.exists()) {
+      await subdirectory.create();
+    }
+
+    final file = File('${subdirectory.path}/$fileName');
+    await file.writeAsBytes(fileBytes);
+
+    return file;
+  } else {
+    DebugConsole.warn('Unable to get downloads directory');
+    return null;
+  }
 }

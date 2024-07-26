@@ -1,61 +1,63 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::mem;
-pub use std::net::{IpAddr, SocketAddr};
 use std::net::Ipv4Addr;
+pub use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_throttle::RateLimiter;
 use atomic_float::AtomicF32;
 use chrono::{DateTime, Local};
-use cpal::{Device, Stream as CpalStream};
-pub use cpal::Host;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use flutter_rust_bridge::{DartFnFuture, frb, spawn, spawn_blocking_with};
-use flutter_rust_bridge::for_generated::futures::{Sink, SinkExt};
+pub use cpal::Host;
+use cpal::{Device, Stream as CpalStream};
 use flutter_rust_bridge::for_generated::futures::stream::{SplitSink, SplitStream};
-use kanal::{
-    AsyncReceiver, AsyncSender, bounded, bounded_async, Receiver, Sender, unbounded_async,
-};
-use libp2p::{
-    autonat, dcutr, identify, Multiaddr, noise, PeerId, ping, Stream, StreamProtocol, tcp, yamux,
-};
+use flutter_rust_bridge::for_generated::futures::{Sink, SinkExt};
+use flutter_rust_bridge::{frb, spawn, DartFnFuture};
+pub use kanal::AsyncReceiver;
+use kanal::{bounded, bounded_async, unbounded_async, AsyncSender, Receiver, Sender};
 use libp2p::futures::StreamExt;
 use libp2p::identity::Keypair;
 use libp2p::multiaddr::Protocol;
 use libp2p::swarm::{ConnectionId, SwarmEvent};
+use libp2p::{
+    autonat, dcutr, identify, noise, ping, tcp, yamux, Multiaddr, PeerId, Stream, StreamProtocol,
+};
 use libp2p_stream::Control;
 use log::{debug, error, info, warn};
-use nnnoiseless::{DenoiseState, FRAME_SIZE, RnnModel};
+use nnnoiseless::{DenoiseState, RnnModel, FRAME_SIZE};
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelRefMutIterator;
 use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::lookup_host;
 use tokio::select;
 use tokio::sync::{Mutex, Notify, RwLock};
-use tokio::time::{Instant, interval, Interval, sleep_until, timeout};
+use tokio::time::{interval, sleep_until, timeout, Instant, Interval};
 use tokio_util::bytes::Bytes;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tokio_util::compat::{Compat, FuturesAsyncReadCompatExt};
 
-use crate::{Behaviour, BehaviourEvent};
 use crate::api::contact::Contact;
 use crate::api::error::{DartError, Error, ErrorKind};
-use crate::api::items::{AudioHeader, message, Message};
-use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
 use crate::api::overlay::overlay::Overlay;
-use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
+use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
+use crate::api::screenshare;
+use crate::api::screenshare::{Decoder, Encoder};
+use crate::{Behaviour, BehaviourEvent};
+use messages::{message, Attachment, AudioHeader, Message, ScreenshareHeader};
 
 type Result<T> = std::result::Result<T, Error>;
 pub(crate) type DeviceName = Arc<Mutex<Option<String>>>;
 type TransportStream = Compat<Stream>;
 pub type Transport<T> = Framed<T, LengthDelimitedCodec>;
+type StartScreenshare = (PeerId, Option<ScreenshareHeader>);
 
 /// The number of bytes in a single network audio frame
 const TRANSFER_BUFFER_SIZE: usize = FRAME_SIZE * mem::size_of::<i16>();
@@ -74,7 +76,8 @@ const TIMEOUT_DURATION: Duration = Duration::from_millis(100);
 /// the number of frames to hold in a channel
 const CHANNEL_SIZE: usize = 2_400;
 /// the protocol identifier for audio chat
-const PROTOCOL: StreamProtocol = StreamProtocol::new("/audio-chat/0.0.1");
+const CHAT_PROTOCOL: StreamProtocol = StreamProtocol::new("/audio-chat/0.0.1");
+const ROOM_PROTOCOL: StreamProtocol = StreamProtocol::new("/audio-chat-room/0.0.1");
 
 #[frb(opaque)]
 #[derive(Clone)]
@@ -127,14 +130,23 @@ pub struct AudioChat {
     /// Signals the session manager to start a new session
     start_session: AsyncSender<PeerId>,
 
+    /// Signals the session manager to start a screenshare
+    start_screenshare: AsyncSender<StartScreenshare>,
+
     /// Restarts the session manager when needed
     restart_manager: Arc<Notify>,
 
     /// Network configuration for p2p connections
     network_config: NetworkConfig,
 
+    /// Configuration for the screenshare functionality
+    screenshare_config: ScreenshareConfig,
+
     /// A reference to the object that controls the call overlay
     overlay: Overlay,
+
+    /// A list of PeerIds which are chat rooms
+    chat_rooms: Arc<RwLock<HashSet<PeerId>>>,
 
     /// Prompts the user to accept a call
     accept_call:
@@ -145,9 +157,6 @@ pub struct AudioChat {
 
     /// Fetches a contact from the front end
     get_contact: Arc<Mutex<dyn Fn(Vec<u8>) -> DartFnFuture<Option<Contact>> + Send>>,
-
-    /// Alerts the UI that the call has connected
-    connected: Arc<Mutex<dyn Fn() -> DartFnFuture<()> + Send>>,
 
     /// Notifies the frontend that the call has disconnected or reconnected
     call_state: Arc<Mutex<dyn Fn(bool) -> DartFnFuture<()> + Send>>,
@@ -170,8 +179,8 @@ pub struct AudioChat {
     /// Alerts the UI when the manager is active and restartable
     manager_active: Arc<Mutex<dyn Fn(bool, bool) -> DartFnFuture<()> + Send>>,
 
-    /// Called when the backend is starting a call on its own
-    call_started: Arc<Mutex<dyn Fn(Contact) -> DartFnFuture<()> + Send>>,
+    /// Called when a screenshare starts
+    screenshare_started: Arc<Mutex<dyn Fn(DartNotify, bool) -> DartFnFuture<()> + Send>>,
 }
 
 impl AudioChat {
@@ -181,11 +190,11 @@ impl AudioChat {
         identity: Vec<u8>,
         host: Arc<Host>,
         network_config: &NetworkConfig,
+        screenshare_config: &ScreenshareConfig,
         overlay: &Overlay,
         accept_call: impl Fn(String, Option<Vec<u8>>, DartNotify) -> DartFnFuture<bool> + Send + 'static,
         call_ended: impl Fn(String, bool) -> DartFnFuture<()> + Send + 'static,
         get_contact: impl Fn(Vec<u8>) -> DartFnFuture<Option<Contact>> + Send + 'static,
-        connected: impl Fn() -> DartFnFuture<()> + Send + 'static,
         call_state: impl Fn(bool) -> DartFnFuture<()> + Send + 'static,
         session_status: impl Fn(String, String) -> DartFnFuture<()> + Send + 'static,
         start_sessions: impl Fn(AudioChat) -> DartFnFuture<()> + Send + 'static,
@@ -193,9 +202,10 @@ impl AudioChat {
         statistics: impl Fn(Statistics) -> DartFnFuture<()> + Send + 'static,
         message_received: impl Fn(ChatMessage) -> DartFnFuture<()> + Send + 'static,
         manager_active: impl Fn(bool, bool) -> DartFnFuture<()> + Send + 'static,
-        call_started: impl Fn(Contact) -> DartFnFuture<()> + Send + 'static,
+        screenshare_started: impl Fn(DartNotify, bool) -> DartFnFuture<()> + Send + 'static,
     ) -> AudioChat {
-        let (start_session, start) = unbounded_async::<PeerId>();
+        let (start_session, session) = unbounded_async::<PeerId>();
+        let (start_screenshare, screenshare) = unbounded_async::<StartScreenshare>();
 
         let chat = Self {
             host,
@@ -216,13 +226,15 @@ impl AudioChat {
             play_custom_ringtones: Default::default(),
             session_states: Default::default(),
             start_session,
+            start_screenshare,
             restart_manager: Default::default(),
             network_config: network_config.clone(),
+            screenshare_config: screenshare_config.clone(),
             overlay: overlay.clone(),
+            chat_rooms: Default::default(),
             accept_call: Arc::new(Mutex::new(accept_call)),
             call_ended: Arc::new(Mutex::new(call_ended)),
             get_contact: Arc::new(Mutex::new(get_contact)),
-            connected: Arc::new(Mutex::new(connected)),
             call_state: Arc::new(Mutex::new(call_state)),
             session_status: Arc::new(Mutex::new(session_status)),
             start_sessions: Arc::new(Mutex::new(start_sessions)),
@@ -230,7 +242,7 @@ impl AudioChat {
             statistics: Arc::new(Mutex::new(statistics)),
             message_received: Arc::new(Mutex::new(message_received)),
             manager_active: Arc::new(Mutex::new(manager_active)),
-            call_started: Arc::new(Mutex::new(call_started)),
+            screenshare_started: Arc::new(Mutex::new(screenshare_started)),
         };
 
         // start the session manager
@@ -241,7 +253,7 @@ impl AudioChat {
 
             loop {
                 while let Err(error) = rate_limiter
-                    .throttle(|| async { chat_clone.session_manager(&start).await })
+                    .throttle(|| async { chat_clone.session_manager(&session, &screenshare).await })
                     .await
                 {
                     (chat_clone.manager_active.lock().await)(false, false).await;
@@ -272,11 +284,22 @@ impl AudioChat {
     /// Attempts to start a call through an existing session
     pub async fn say_hello(&self, contact: &Contact) -> std::result::Result<(), DartError> {
         if let Some(state) = self.session_states.read().await.get(&contact.peer_id) {
-            state.start.notify_one();
+            state.start_call.notify_one();
             Ok(())
         } else {
             Err(String::from("No session found for contact").into())
         }
+    }
+
+    /// Join a chat room
+    pub async fn join_room(&self, contact: &Contact) {
+        // dials the room through the relay using the swarm
+        if self.start_session.send(contact.peer_id).await.is_err() {
+            error!("start_session channel is closed in join_room");
+        }
+
+        // the session manager will know to treat this connection as a chat room
+        self.chat_rooms.write().await.insert(contact.peer_id);
     }
 
     /// Ends the call (if there is one)
@@ -306,7 +329,7 @@ impl AudioChat {
     /// Stops a specific session (called when a contact is deleted)
     pub async fn stop_session(&self, contact: &Contact) {
         if let Some(state) = self.session_states.write().await.remove(&contact.peer_id) {
-            state.stop.notify_one();
+            state.stop_session.notify_one();
 
             // clean up the session state
             self.session_states.write().await.remove(&contact.peer_id);
@@ -320,7 +343,7 @@ impl AudioChat {
         let stop_io = Arc::new(Notify::new());
 
         let result = self
-            .call(None, None, None, None, None, false, &stop_io)
+            .call(None, None, None, None, None, &stop_io)
             .await
             .map_err(Error::from)
             .map_err(Into::into);
@@ -331,22 +354,29 @@ impl AudioChat {
         result
     }
 
-    pub async fn build_chat(&self, contact: &Contact, text: String) -> ChatMessage {
+    #[frb(sync)]
+    pub fn build_chat(
+        &self,
+        contact: &Contact,
+        text: String,
+        attachments: Vec<(String, Vec<u8>)>,
+    ) -> ChatMessage {
         ChatMessage {
             text,
-            sender: self.identity.read().await.public().to_peer_id(),
             receiver: contact.peer_id,
             timestamp: Local::now(),
+            attachments: attachments
+                .into_iter()
+                .map(|(name, data)| Attachment { name, data })
+                .collect(),
         }
     }
 
     /// Sends a chat message
-    pub async fn send_chat(
-        &self,
-        message: &ChatMessage,
-    ) -> std::result::Result<(), DartError> {
+    pub async fn send_chat(&self, message: &ChatMessage) -> std::result::Result<(), DartError> {
         if let Some(state) = self.session_states.read().await.get(&message.receiver) {
-            let message = Message::chat(message);
+            // TODO the attachments are cloned here, can cause issues when large
+            let message = Message::chat(message.text.clone(), message.attachments.clone());
 
             state
                 .message_sender
@@ -355,6 +385,14 @@ impl AudioChat {
                 .map_err(Error::from)?;
         }
 
+        Ok(())
+    }
+
+    pub async fn start_screenshare(&self, contact: &Contact) -> std::result::Result<(), DartError> {
+        self.start_screenshare
+            .send((contact.peer_id, None))
+            .await
+            .map_err(Error::from)?;
         Ok(())
     }
 
@@ -421,9 +459,9 @@ impl AudioChat {
         Ok((input_devices, output_devices))
     }
 
-    pub async fn set_model(&self, model: Vec<u8>) -> std::result::Result<(), DartError> {
-        let model = if !model.is_empty() {
-            RnnModel::from_bytes(&model).ok_or(String::from("invalid model"))?
+    pub async fn set_model(&self, model: Option<Vec<u8>>) -> std::result::Result<(), DartError> {
+        let model = if let Some(mode_bytes) = model {
+            RnnModel::from_bytes(&mode_bytes).ok_or(String::from("invalid model"))?
         } else {
             RnnModel::default()
         };
@@ -433,7 +471,11 @@ impl AudioChat {
     }
 
     /// Starts new sessions
-    async fn session_manager(&self, start: &AsyncReceiver<PeerId>) -> Result<()> {
+    async fn session_manager(
+        &self,
+        start: &AsyncReceiver<PeerId>,
+        screenshare: &AsyncReceiver<StartScreenshare>,
+    ) -> Result<()> {
         let mut swarm =
             libp2p::SwarmBuilder::with_existing_identity(self.identity.read().await.clone())
                 .with_tokio()
@@ -519,6 +561,7 @@ impl AudioChat {
                 SwarmEvent::ConnectionEstablished { .. } => (),
                 SwarmEvent::Behaviour(BehaviourEvent::Ping(_)) => (),
                 SwarmEvent::NewExternalAddrCandidate { .. } => (),
+                SwarmEvent::NewExternalAddrOfPeer { .. } => (),
                 SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Sent {
                     ..
                 })) => {
@@ -555,22 +598,22 @@ impl AudioChat {
             let mut control = swarm.behaviour().stream.new_control();
 
             async move {
-                while let Ok(mut incoming_streams) = control.accept(PROTOCOL) {
+                while let Ok(mut incoming_streams) = control.accept(CHAT_PROTOCOL) {
                     while let Some((peer, stream)) = incoming_streams.next().await {
                         let state_option =
                             self_clone.session_states.read().await.get(&peer).cloned();
 
                         if let Some(state) = state_option {
-                            if state.wants_audio.load(Relaxed) {
-                                info!("audio stream accepted for {}", peer);
+                            if state.wants_stream.load(Relaxed) {
+                                info!("sub-stream accepted for {}", peer);
 
                                 if let Err(error) = state.stream_sender.send(stream).await {
-                                    error!("error sending audio stream to {}: {}", peer, error);
+                                    error!("error sending sub-stream to {}: {}", peer, error);
                                 }
 
                                 continue;
                             } else {
-                                warn!("received a stream while {} did not want audio, starting new session", peer);
+                                warn!("received a stream while {} did not want sub-stream, starting new session", peer);
                             }
                         } else {
                             info!("stream accepted for new session with {}", peer);
@@ -619,6 +662,56 @@ impl AudioChat {
                         (self.session_status.lock().await)(peer_id.to_string(), "Inactive".to_string()).await;
                     } else {
                         (self.session_status.lock().await)(peer_id.to_string(), "Connecting".to_string()).await;
+                    }
+
+                    continue;
+                }
+                // starts a stream for outgoing screen shares
+                result = screenshare.recv() => {
+                    let (peer_id, header_option) = result?;
+                    info!("starting screenshare for {} {:?}", peer_id, header_option);
+
+                    if let Some(state) = self.session_states.read().await.get(&peer_id) {
+                        let stop = Arc::new(Notify::new());
+                        let dart_stop = DartNotify { inner: stop.clone() };
+
+                        if let Some(header) = header_option {
+                            if let Ok(stream) = swarm
+                                .behaviour()
+                                .stream
+                                .new_control()
+                                .open_stream(peer_id, CHAT_PROTOCOL)
+                                .await {
+                                let width = self.screenshare_config.width.load(Relaxed);
+                                let height = self.screenshare_config.height.load(Relaxed);
+                                spawn(screenshare::playback(stream, stop, state.download_bandwidth.clone(), header.encoder, width, height));
+                                (self.screenshare_started.lock().await)(dart_stop, false).await;
+                            }
+                        } else {
+                            if let Some(config) = self.screenshare_config.recording_config.read().await.clone() {
+                                let message = Message::screenshare(config.encoder.into());
+
+                                state
+                                    .message_sender
+                                    .send(message)
+                                    .await
+                                    .map_err(Error::from)?;
+
+                                state.wants_stream.store(true, Relaxed);
+
+                                if let Ok(stream) = state.stream_receiver.recv().await {
+                                    spawn(screenshare::record(stream, stop, state.upload_bandwidth.clone(), config));
+                                }
+
+                                state.wants_stream.store(false, Relaxed);
+                                (self.screenshare_started.lock().await)(dart_stop, true).await;
+                            } else {
+                                // TODO this should be blocked from occurring via the frontend i think
+                                warn!("screenshare started without recording configuration");
+                            }
+                        }
+                    } else {
+                        warn!("screenshare started for a peer without a session: {}", peer_id);
                     }
 
                     continue;
@@ -736,7 +829,7 @@ impl AudioChat {
                         continue; // the remaining logic is not needed while a session is active
                     }
 
-                    // if the session is still connection, update the latency and try to choose a connection
+                    // if the session is still connecting, update the latency and try to choose a connection
                     if let Some(peer_state) = peer_states.get_mut(&event.peer) {
                         // the dialer chooses the connection
                         if !peer_state.dialer {
@@ -793,8 +886,16 @@ impl AudioChat {
                                 });
 
                             let control = swarm.behaviour().stream.new_control();
-                            self.open_stream(event.peer, control, &mut peer_states)
-                                .await;
+
+                            if self.chat_rooms.read().await.contains(&event.peer) {
+                                // open the room streams and start necessary threads
+                                self._join_room(event.peer, control).await;
+                                peer_states.remove(&event.peer);
+                            } else {
+                                // open a session control stream and start the session controller
+                                self.open_stream(event.peer, control, &mut peer_states)
+                                    .await;
+                            }
                         } else {
                             warn!("no connection available for {}", event.peer);
                         }
@@ -803,6 +904,7 @@ impl AudioChat {
                 SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received {
                     peer_id,
                     info,
+                    ..
                 })) => {
                     if let Some(peer_state) = peer_states.get_mut(&peer_id) {
                         if peer_state.dialed || !peer_state.dialer {
@@ -861,7 +963,7 @@ impl AudioChat {
     ) {
         // it may take multiple tries to open the stream because the of the (dumb) RNG in the stream handler
         loop {
-            if let Ok(stream) = control.open_stream(peer_id, PROTOCOL).await {
+            if let Ok(stream) = control.open_stream(peer_id, CHAT_PROTOCOL).await {
                 info!("opened stream with {}, starting new session", peer_id);
 
                 if let Err(error) = self._start_session(peer_id, Some(control), stream).await {
@@ -873,6 +975,74 @@ impl AudioChat {
                 break;
             }
         }
+    }
+
+    async fn _join_room(&self, peer: PeerId, mut control: Control) {
+        // it may take multiple tries to open the stream because the of the (dumb) RNG in the stream handler
+        let control_stream = loop {
+            let control_stream = control.open_stream(peer, ROOM_PROTOCOL).await;
+
+            if let Ok(control_stream) = control_stream {
+                break control_stream;
+            }
+        };
+
+        let audio_stream = loop {
+            let audio_stream = control.open_stream(peer, ROOM_PROTOCOL).await;
+
+            if let Ok(audio_stream) = audio_stream {
+                break audio_stream;
+            }
+        };
+
+        let mut control_transport = LengthDelimitedCodec::builder()
+            .max_frame_length(usize::MAX)
+            .length_field_type::<u64>()
+            .new_framed(control_stream.compat());
+
+        let (message_sender, message_receiver) = unbounded_async::<Message>();
+
+        // create the state and a clone of it for the chat room
+        let state = Arc::new(SessionState::new(&message_sender));
+        let state_clone = Arc::clone(&state);
+
+        self.session_states.write().await.insert(peer, state);
+
+        // alert the UI that this chat room is now connected
+        (self.session_status.lock().await)(peer.to_string(), "Connected".to_string()).await;
+
+        let self_clone = self.clone();
+        spawn(async move {
+            let stop_io = Arc::new(Notify::new());
+
+            let result = self_clone.call(
+                Some(audio_stream),
+                Some(&mut control_transport),
+                Some(message_receiver),
+                Some(&state_clone),
+                Some(peer),
+                &stop_io,
+            ).await;
+
+            warn!("chat room call ended: {:?}", result);
+
+            stop_io.notify_waiters();
+
+            // cleanup
+            self_clone
+                .session_states
+                .write()
+                .await
+                .remove(&peer);
+
+            (self_clone.session_status.lock().await)(
+                peer.to_string(),
+                "Inactive".to_string(),
+            )
+                .await;
+
+            info!("chat room {} cleaned up", peer);
+        });
     }
 
     /// A wrapper which manages the session throughout its lifetime
@@ -887,10 +1057,9 @@ impl AudioChat {
             .ok_or(ErrorKind::MissingContact)?;
 
         let message_channel = unbounded_async::<Message>();
-        let (stream_sender, stream_receiver) = unbounded_async();
 
         // create the state and a clone of it for the session
-        let state = Arc::new(SessionState::new(&message_channel.0, stream_sender));
+        let state = Arc::new(SessionState::new(&message_channel.0));
         let state_clone = Arc::clone(&state);
 
         let mut states = self.session_states.write().await;
@@ -898,17 +1067,13 @@ impl AudioChat {
         if let Some(state) = states.get(&peer_id) {
             warn!("{} already has a session", contact.nickname);
 
-            // stop the session
-            state.stop.notify_one();
-
             if state.in_call.load(Relaxed) {
                 // if the session was in a call, end it so the session can end
                 self.end_call.notify_one();
-                // alerts the UI that a new call is starting
-                (self.call_started.lock().await)(contact.clone()).await;
-                // signals the new session to restart the call
-                state_clone.start.notify_one();
             }
+
+            // stop the session
+            state.stop_session.notify_one();
         }
 
         // insert the new state
@@ -917,37 +1082,40 @@ impl AudioChat {
         // alert the UI that this session is now connected
         (self.session_status.lock().await)(contact.peer_id(), "Connected".to_string()).await;
 
-        let chat_clone = self.clone();
+        let self_clone = self.clone();
         spawn(async move {
             let contact_clone = contact.clone();
 
             // the length delimited transport used for the session
-            let mut transport = LengthDelimitedCodec::builder().new_framed(stream.compat());
+            let mut transport = LengthDelimitedCodec::builder()
+                .max_frame_length(usize::MAX)
+                .length_field_type::<u64>()
+                .new_framed(stream.compat());
+
             // controls keep alive messages
             let mut keep_alive = interval(Duration::from_secs(10));
 
             let result = loop {
-                let future = chat_clone.session(
+                let future = self_clone.session(
                     &contact,
                     control.as_mut(),
                     &mut transport,
                     &state_clone,
                     &message_channel,
-                    &stream_receiver,
                     &mut keep_alive,
                 );
 
                 if let Err(error) = future.await {
                     if state.in_call.load(Relaxed) {
                         info!("session error while call active, alerting ui");
-                        (chat_clone.call_ended.lock().await)(error.to_string(), false).await;
+                        (self_clone.call_ended.lock().await)(error.to_string(), false).await;
                     }
 
                     match error.kind {
                         ErrorKind::KanalReceive(_)
                         | ErrorKind::TransportRecv
                         | ErrorKind::TransportSend => break Err(error),
-                        ErrorKind::SessionStoped => break Ok(()),
+                        ErrorKind::SessionStopped => break Ok(()),
                         _ => error!("Session error: {:?}", error),
                     }
                 }
@@ -965,13 +1133,13 @@ impl AudioChat {
             }
 
             // cleanup
-            chat_clone
+            self_clone
                 .session_states
                 .write()
                 .await
                 .remove(&contact_clone.peer_id);
 
-            (chat_clone.session_status.lock().await)(
+            (self_clone.session_status.lock().await)(
                 contact_clone.peer_id(),
                 "Inactive".to_string(),
             )
@@ -991,7 +1159,6 @@ impl AudioChat {
         transport: &mut Transport<TransportStream>,
         state: &Arc<SessionState>,
         message_channel: &(AsyncSender<Message>, AsyncReceiver<Message>),
-        stream_receiver: &AsyncReceiver<Stream>,
         keep_alive: &mut Interval,
     ) -> Result<()> {
         info!("[{}] session waiting for event", contact.nickname);
@@ -1008,7 +1175,7 @@ impl AudioChat {
                             ringtone = Some(message.ringtone);
                         }
                     },
-                    Message { message: Some(message::Message::KeepAlive(_)) } => {
+                    Message { message: Some(message::Message::KeepAlive(_) | message::Message::ConnectionInterrupted(_) | message::Message::ConnectionRestored(_)) } => {
                         return Ok::<(), Error>(());
                     },
                     message => {
@@ -1025,7 +1192,9 @@ impl AudioChat {
                 }
 
                 state.in_call.store(true, Relaxed); // blocks the session from being restarted
+
                 let cancel_prompt = Arc::new(Notify::new());
+                // a cancel Notify that can be used in the frontend
                 let dart_cancel = DartNotify { inner: Arc::clone(&cancel_prompt) };
 
                 let accept_call_clone = Arc::clone(&self.accept_call);
@@ -1042,7 +1211,7 @@ impl AudioChat {
                             write_message(transport, hello_ack).await?;
 
                             // start the handshake
-                            self.handshake(transport, control, contact.peer_id, message_channel, stream_receiver, state).await?;
+                            self.handshake(transport, control, contact.peer_id, message_channel, &state.stream_receiver, state).await?;
                             keep_alive.reset(); // start sending normal keep alive messages
                         } else {
                             // reject the call if not accepted
@@ -1070,7 +1239,7 @@ impl AudioChat {
 
                 Ok(())
             }
-            _ = state.start.notified() => {
+            _ = state.start_call.notified() => {
                 state.in_call.store(true, Relaxed); // blocks the session from being restarted
 
                 // queries the other client for a call
@@ -1084,7 +1253,7 @@ impl AudioChat {
                             // handles a variety of outcomes in response to Hello
                             match result?? {
                                 Message { message: Some(message::Message::HelloAck(_)) } => {
-                                    self.handshake(transport, control, contact.peer_id, message_channel, stream_receiver, state).await?;
+                                    self.handshake(transport, control, contact.peer_id, message_channel, &state.stream_receiver, state).await?;
                                     keep_alive.reset(); // start sending normal keep alive messages
                                 }
                                 Message { message: Some(message::Message::Reject(_)) } => {
@@ -1096,9 +1265,9 @@ impl AudioChat {
                                 // keep alive messages are sometimes received here
                                 Message { message: Some(message::Message::KeepAlive(_)) } => continue,
                                 message => {
+                                    // the front end needs to know that the call ended here
                                     (self.call_ended.lock().await)(format!("Received an unexpected message from {}", contact.nickname), true).await;
                                     warn!("received unexpected {:?} from {} [stopped call process]", message, contact.nickname);
-
                                 }
                             }
 
@@ -1115,9 +1284,9 @@ impl AudioChat {
                 Ok(())
             }
             // state will never notify while a call is active
-            _ = state.stop.notified() => {
+            _ = state.stop_session.notified() => {
                 info!("session state stop notified for {}", contact.nickname);
-                Err(ErrorKind::SessionStoped.into())
+                Err(ErrorKind::SessionStopped.into())
             },
             _ = keep_alive.tick() => {
                 debug!("sending keep alive to {}", contact.nickname);
@@ -1132,44 +1301,44 @@ impl AudioChat {
     async fn handshake(
         &self,
         transport: &mut Transport<TransportStream>,
-        control: Option<&mut Control>,
+        mut control: Option<&mut Control>,
         peer: PeerId,
         message_channel: &(AsyncSender<Message>, AsyncReceiver<Message>),
         stream_receiver: &AsyncReceiver<Stream>,
         state: &Arc<SessionState>,
     ) -> Result<()> {
-        let dialer = control.is_some();
-
         // change the session state to accept incoming audio streams
-        state.wants_audio.store(true, Relaxed);
+        state.wants_stream.store(true, Relaxed);
 
-        let future = async {
-            let stream = if let Some(control) = control {
-                // if dialer, open stream
-                control.open_stream(peer, PROTOCOL).await?
-            } else {
-                // if listener, receive stream
-                stream_receiver.recv().await?
+        // TODO evaluate this loop's performance in handling unexpected messages
+        let stream = loop {
+            let future = async {
+                let stream = if let Some(control) = control.as_mut() {
+                    // if dialer, open stream
+                    control.open_stream(peer, CHAT_PROTOCOL).await?
+                } else {
+                    // if listener, receive stream
+                    stream_receiver.recv().await?
+                };
+
+                Ok::<_, Error>(stream)
             };
 
-            Ok::<_, Error>(stream)
-        };
-
-        let stream = select! {
-            stream = future => stream?,
-            // handle unexpected messages while waiting for the audio stream
-            result = read_message::<Message, _>(transport) => {
-                warn!("received unexpected message while waiting for audio stream: {:?}", result);
-                return Ok(());
+            select! {
+                stream = future => break stream?,
+                // handle unexpected messages while waiting for the audio stream
+                // these messages tend to be from previous calls close together
+                result = read_message::<Message, _>(transport) => {
+                    warn!("received unexpected message while waiting for audio stream: {:?}", result);
+                    // return Err(ErrorKind::UnexpectedMessage.into());
+                }
             }
         };
 
-        // alert the UI that the call has connected
-        (self.connected.lock().await)().await;
         // change the app call state
         self.in_call.store(true, Relaxed);
         // change the session state
-        state.wants_audio.store(false, Relaxed);
+        state.wants_stream.store(false, Relaxed);
         // show the overlay
         self.overlay.show();
 
@@ -1183,15 +1352,15 @@ impl AudioChat {
                 Some(message_channel.1.clone()),
                 Some(state),
                 Some(peer),
-                dialer,
                 &stop_io,
             )
             .await;
 
+        info!("call ended in handshake");
+
         // ensure that all background i/o threads are stopped
         stop_io.notify_waiters();
-
-        info!("call ended in receiver");
+        info!("notified stop_io");
 
         // the call has ended
         self.in_call.store(false, Relaxed);
@@ -1226,14 +1395,14 @@ impl AudioChat {
         message_receiver: Option<AsyncReceiver<Message>>,
         state: Option<&Arc<SessionState>>,
         peer: Option<PeerId>,
-        dialer: bool,
         stop_io: &Arc<Notify>,
     ) -> Result<()> {
         // if any of the values required for a normal call is missing, the call is an audio test
         let audio_test = transport.is_none()
             || stream.is_none()
             || message_receiver.is_none()
-            || state.is_none() || peer.is_none();
+            || state.is_none()
+            || peer.is_none();
 
         // the denoise flag is constant for the entire call
         let denoise = self.denoise.load(Relaxed);
@@ -1254,8 +1423,17 @@ impl AudioChat {
         // channels used for moving values to the statistics collector
         let (input_rms_sender, input_rms_receiver) = unbounded_async::<f32>();
         let (output_rms_sender, output_rms_receiver) = unbounded_async::<f32>();
-        let upload_bandwidth: Arc<AtomicUsize> = Default::default();
-        let download_bandwidth: Arc<AtomicUsize> = Default::default();
+
+        // shared values for various statistics
+        let latency = state
+            .map(|state| Arc::clone(&state.latency))
+            .unwrap_or_default();
+        let upload_bandwidth = state
+            .map(|state| Arc::clone(&state.upload_bandwidth))
+            .unwrap_or_default();
+        let download_bandwidth = state
+            .map(|state| Arc::clone(&state.download_bandwidth))
+            .unwrap_or_default();
 
         let (receiving_sender, receiving_receiver) = unbounded_async::<bool>();
 
@@ -1269,31 +1447,35 @@ impl AudioChat {
         let input_config = input_device.default_input_config()?;
         info!("input_device: {:?}", input_device.name());
 
-        let mut audio_header = AudioHeader::from(&input_config);
+        let mut audio_header = AudioHeader {
+            channels: input_config.channels() as u32,
+            sample_rate: input_config.sample_rate().0,
+            sample_format: input_config.sample_format().to_string(),
+        };
 
         // rnnoise requires a 48kHz sample rate
         if denoise {
             audio_header.sample_rate = 48_000;
         }
 
+        let mut audio_transport = stream.map(|stream| {
+            LengthDelimitedCodec::builder()
+                .max_frame_length(TRANSFER_BUFFER_SIZE)
+                .length_field_type::<u16>()
+                .new_framed(stream.compat())
+        });
+
         let remote_input_config: AudioHeader = if audio_test {
             // the client will be receiving its own audio
             audio_header
         } else {
-            let transport = transport.as_mut().unwrap();
-
-            // the dialer reads the message first because its stream opens instantly
-            if dialer {
-                let message = read_message(transport).await?;
-                info!("sending audio header");
-                write_message(transport, audio_header).await?;
-                message
-            } else {
-                info!("sending audio header");
-                write_message(transport, audio_header).await?;
-                read_message(transport).await?
-            }
+            // exchange audio headers using the audio transport
+            let transport = audio_transport.as_mut().unwrap();
+            write_message(transport, audio_header).await?;
+            read_message(transport).await?
         };
+
+        info!("exchanged audio headers");
 
         // get a reference to input volume for the processor
         let input_volume = Arc::clone(&self.input_volume);
@@ -1311,7 +1493,7 @@ impl AudioChat {
         ));
 
         // spawn the input processor thread
-        let input_processor_handle = std::thread::spawn(move || {
+        std::thread::spawn(move || {
             input_processor(
                 input_receiver,
                 processed_input_sender,
@@ -1330,7 +1512,7 @@ impl AudioChat {
         let output_volume = Arc::clone(&self.output_volume);
 
         // spawn the output processor thread
-        let output_processor_handle = std::thread::spawn(move || {
+        std::thread::spawn(move || {
             output_processor(
                 output_receiver.to_sync(),
                 processed_output_sender,
@@ -1396,26 +1578,7 @@ impl AudioChat {
         input_stream.stream.play()?;
         output_stream.stream.play()?;
 
-        // shared values used in the call controller
-        let end_call = Arc::clone(&self.end_call);
-
-        let latency = if let Some(state) = state {
-            Arc::clone(&state.latency)
-        } else {
-            Default::default()
-        };
-
-        let input_processor_future = spawn_blocking_with(
-            move || input_processor_handle.join(),
-            FLUTTER_RUST_BRIDGE_HANDLER.thread_pool(),
-        );
-
-        let output_processor_future = spawn_blocking_with(
-            move || output_processor_handle.join(),
-            FLUTTER_RUST_BRIDGE_HANDLER.thread_pool(),
-        );
-
-        let statistics_handle = spawn(statistics_collector(
+        spawn(statistics_collector(
             input_rms_receiver,
             output_rms_receiver,
             latency,
@@ -1426,81 +1589,75 @@ impl AudioChat {
         ));
 
         if audio_test {
-            let loopback_handle = spawn(loopback(
+            spawn(loopback(
                 processed_input_receiver,
                 output_sender,
                 Arc::clone(stop_io),
             ));
 
-            select! {
-                _ = loopback_handle => (),
-                // this unwrap is safe because the processor thread will not panic
-                result = output_processor_future => result?.unwrap()?,
-                // this unwrap is safe because the processor thread will not panic
-                result = input_processor_future => result?.unwrap()?,
-                _ = self.end_call.notified() => (),
-                result = statistics_handle => result??,
-            }
-        } else {
-            let audio_transport = LengthDelimitedCodec::builder()
-                .max_frame_length(TRANSFER_BUFFER_SIZE)
-                .length_field_type::<u16>()
-                .new_framed(stream.unwrap().compat());
+            // select! {
+            //     _ = loopback_handle => (),
+            //     // this unwrap is safe because the processor thread will not panic
+            //     // result = output_processor_future => result?.unwrap()?,
+            //     // this unwrap is safe because the processor thread will not panic
+            //     // result = input_processor_future => result?.unwrap()?,
+            //     _ = self.end_call.notified() => (),
+            //     // result = statistics_handle => result??,
+            // }
 
-            let (write, read) = audio_transport.split();
-
-            let input_handle = spawn(socket_input(
-                processed_input_receiver,
-                write,
-                Arc::clone(stop_io),
-                upload_bandwidth,
-            ));
-
-            let output_handle = spawn(socket_output(
-                output_sender,
-                read,
-                Arc::clone(stop_io),
-                download_bandwidth,
-                receiving_sender,
-            ));
-
-            let transport = transport.as_mut().unwrap();
-            let message_receiver = message_receiver.unwrap();
-
-            let message_received = Arc::clone(&self.message_received);
-            let call_state = Arc::clone(&self.call_state);
-
-            let controller_future = call_controller(
-                transport,
-                message_receiver,
-                end_call,
-                receiving_receiver,
-                message_received,
-                call_state,
-                peer.unwrap(),
-                self.identity.read().await.public().to_peer_id(),
-            );
-
-            let result = select! {
-                result = input_handle => result?.map(|_| String::new()),
-                result = output_handle => result?.map(|_| String::new()),
-                // this unwrap is safe because the processor thread will not panic
-                result = output_processor_future => result?.unwrap().map(|_| String::new()),
-                // this unwrap is safe because the processor thread will not panic
-                result = input_processor_future => result?.unwrap().map(|_| String::new()),
-                result = statistics_handle => result?.map(|_| String::new()),
-                result = controller_future => result,
-            };
-
-            match result {
-                Ok(message) => (self.call_ended.lock().await)(message, true).await,
-                Err(error) => match error.kind {
-                    ErrorKind::CallEnded => (), // when the call is ended externally, no UI notification is needed
-                    _ => (self.call_ended.lock().await)(error.to_string(), false).await,
-                },
-            }
+            self.end_call.notified().await;
+            return Ok(());
         }
 
+        let (write, read) = audio_transport.unwrap().split();
+
+        spawn(audio_input(
+            processed_input_receiver,
+            write,
+            Arc::clone(stop_io),
+            upload_bandwidth,
+        ));
+
+        spawn(audio_output(
+            output_sender,
+            read,
+            Arc::clone(stop_io),
+            download_bandwidth,
+            receiving_sender,
+        ));
+
+        let transport = transport.as_mut().unwrap();
+        let message_receiver = message_receiver.unwrap();
+
+        // shared values used in the call controller
+        let end_call = Arc::clone(&self.end_call);
+        let message_received = Arc::clone(&self.message_received);
+        let call_state = Arc::clone(&self.call_state);
+
+        let controller_future = call_controller(
+            transport,
+            message_receiver,
+            end_call,
+            receiving_receiver,
+            message_received,
+            call_state,
+            self.start_screenshare.clone(),
+            peer.unwrap(),
+            self.identity.read().await.public().to_peer_id(),
+        );
+
+        info!("call controller starting");
+
+        match controller_future.await {
+            Ok(message) => (self.call_ended.lock().await)(message, true).await,
+            Err(error) => match error.kind {
+                ErrorKind::CallEnded => (), // when the call is ended externally, no UI notification is needed
+                _ => (self.call_ended.lock().await)(error.to_string(), false).await,
+            },
+        }
+
+        stop_io.notify_waiters();
+        info!("call controller returned and was handled, call returning");
         Ok(())
     }
 
@@ -1600,8 +1757,8 @@ enum ProcessorMessage {
 
 /// common processor message constructors
 impl ProcessorMessage {
-    fn slice(bytes: &'static [u8]) -> Result<Self> {
-        Ok(Self::Data(Bytes::from(bytes)))
+    fn slice(bytes: &'static [u8]) -> Self {
+        Self::Data(Bytes::from(bytes))
     }
 
     fn silence() -> Self {
@@ -1616,10 +1773,10 @@ impl ProcessorMessage {
 /// shared values for a single session
 struct SessionState {
     /// signals the session to initiate a call
-    start: Notify,
+    start_call: Notify,
 
     /// stops the session normally
-    stop: Notify,
+    stop_session: Notify,
 
     /// if the session is in a call
     in_call: AtomicBool,
@@ -1630,23 +1787,39 @@ struct SessionState {
     /// forwards sub-streams to the session
     stream_sender: AsyncSender<Stream>,
 
+    /// receives sub-streams for the session
+    stream_receiver: AsyncReceiver<Stream>,
+
     /// a shared latency value for the session from libp2p ping
     latency: Arc<AtomicUsize>,
 
-    /// whether the session wants an audio stream
-    wants_audio: Arc<AtomicBool>,
+    /// a shared upload bandwidth value for the session
+    upload_bandwidth: Arc<AtomicUsize>,
+
+    /// a shared download bandwidth value for the session
+    download_bandwidth: Arc<AtomicUsize>,
+
+    /// whether the session wants a sub-stream
+    wants_stream: Arc<AtomicBool>,
 }
 
 impl SessionState {
-    fn new(message_sender: &AsyncSender<Message>, stream_sender: AsyncSender<Stream>) -> Self {
+    fn new(
+        message_sender: &AsyncSender<Message>,
+    ) -> Self {
+        let stream_channel = unbounded_async();
+
         Self {
-            start: Notify::new(),
-            stop: Notify::new(),
+            start_call: Notify::new(),
+            stop_session: Notify::new(),
             in_call: AtomicBool::new(false),
             message_sender: message_sender.clone(),
-            stream_sender,
+            stream_sender: stream_channel.0,
+            stream_receiver: stream_channel.1,
             latency: Default::default(),
-            wants_audio: Default::default(),
+            upload_bandwidth: Default::default(),
+            download_bandwidth: Default::default(),
+            wants_stream: Default::default(),
         }
     }
 }
@@ -1779,7 +1952,220 @@ impl NetworkConfig {
     }
 }
 
-/// a notifier that can be passed to dart code
+#[frb(opaque)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ScreenshareConfig {
+    /// the screenshare capabilities. default until loaded
+    #[serde(skip)]
+    capabilities: Arc<RwLock<Capabilities>>,
+
+    /// a validated recording configuration
+    #[serde(with = "rwlock_option_recording_config")]
+    recording_config: Arc<RwLock<Option<RecordingConfig>>>,
+
+    /// the default width of the playback window
+    #[serde(
+        serialize_with = "atomic_u32_serialize",
+        deserialize_with = "atomic_u32_deserialize"
+    )]
+    width: Arc<AtomicU32>,
+
+    /// the default height of the playback window
+    #[serde(
+        serialize_with = "atomic_u32_serialize",
+        deserialize_with = "atomic_u32_deserialize"
+    )]
+    height: Arc<AtomicU32>,
+}
+
+impl Default for ScreenshareConfig {
+    fn default() -> Self {
+        Self {
+            capabilities: Default::default(),
+            recording_config: Default::default(),
+            width: Arc::new(AtomicU32::new(1280)),
+            height: Arc::new(AtomicU32::new(720)),
+        }
+    }
+}
+
+impl ScreenshareConfig {
+    // this function must be async to use spawn
+    pub async fn new(config_str: String) -> ScreenshareConfig {
+        let config: ScreenshareConfig = serde_json::from_str(&config_str).unwrap_or_default();
+
+        let capabilities_clone = Arc::clone(&config.capabilities);
+        spawn(async move {
+            let now = Instant::now();
+            let c = Capabilities::new().await;
+            *capabilities_clone.write().await = c;
+            info!("Capabilities loaded in {:?}", now.elapsed());
+        });
+
+        config
+    }
+
+    pub async fn capabilities(&self) -> Capabilities {
+        self.capabilities.read().await.clone()
+    }
+
+    pub async fn recording_config(&self) -> Option<RecordingConfig> {
+        self.recording_config.read().await.clone()
+    }
+
+    pub async fn update_recording_config(
+        &self,
+        encoder: String,
+        device: String,
+        bitrate: u32,
+        framerate: u32,
+        height: Option<u32>,
+    ) -> std::result::Result<(), DartError> {
+        let encoder = Encoder::from_str(&encoder).map_err(|_| ErrorKind::InvalidEncoder)?;
+
+        let recording_config = RecordingConfig {
+            encoder,
+            // TODO do something with the device names idk
+            device: screenshare::Device::DesktopDuplication,
+            bitrate,
+            framerate,
+            height,
+        };
+
+        if let Ok(status) = recording_config.test_config().await {
+            if status.success() {
+                *self.recording_config.write().await = Some(recording_config);
+                return Ok(());
+            }
+        }
+
+        Err("Invalid configuration".to_string().into())
+    }
+
+    #[frb(sync)]
+    pub fn to_string(&self) -> String {
+        serde_json::to_string(self).unwrap()
+    }
+}
+
+/// capabilities for ffmpeg and ffplay supported by this client
+#[derive(Default, Debug, Clone)]
+#[frb(opaque)]
+pub struct Capabilities {
+    pub(crate) available: bool,
+
+    pub(crate) encoders: Vec<Encoder>,
+
+    pub(crate) decoders: Vec<Decoder>,
+
+    pub(crate) devices: Vec<screenshare::Device>,
+}
+
+impl Capabilities {
+    #[frb(sync)]
+    pub fn encoders(&self) -> Vec<String> {
+        self.encoders.iter().map(|e| e.to_string()).collect()
+    }
+
+    #[frb(sync)]
+    pub fn devices(&self) -> Vec<String> {
+        self.devices.iter().map(|d| d.to_string()).collect()
+    }
+}
+
+/// recording config for screenshare
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[frb(opaque)]
+pub struct RecordingConfig {
+    pub(crate) encoder: Encoder,
+
+    pub(crate) device: screenshare::Device,
+
+    pub(crate) bitrate: u32,
+
+    pub(crate) framerate: u32,
+
+    /// the height for the video output
+    pub(crate) height: Option<u32>,
+}
+
+impl RecordingConfig {
+    #[frb(sync)]
+    pub fn encoder(&self) -> String {
+        let encoder_str: &str = self.encoder.into();
+        encoder_str.to_string()
+    }
+
+    #[frb(sync)]
+    pub fn device(&self) -> String {
+        self.device.to_string()
+    }
+
+    #[frb(sync)]
+    pub fn bitrate(&self) -> u32 {
+        self.bitrate
+    }
+
+    #[frb(sync)]
+    pub fn framerate(&self) -> u32 {
+        self.framerate
+    }
+
+    #[frb(sync)]
+    pub fn height(&self) -> Option<u32> {
+        self.height
+    }
+}
+
+mod rwlock_option_recording_config {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    use crate::api::audio_chat::RecordingConfig;
+
+    pub fn serialize<S>(
+        value: &Arc<RwLock<Option<RecordingConfig>>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let lock = value.blocking_read();
+        lock.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<Arc<RwLock<Option<RecordingConfig>>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let inner = Option::<RecordingConfig>::deserialize(deserializer)?;
+        Ok(Arc::new(RwLock::new(inner)))
+    }
+}
+
+fn atomic_u32_serialize<S>(
+    value: &Arc<AtomicU32>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let value = value.load(Relaxed);
+    serializer.serialize_u32(value)
+}
+
+fn atomic_u32_deserialize<'de, D>(deserializer: D) -> std::result::Result<Arc<AtomicU32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = u32::deserialize(deserializer)?;
+    Ok(Arc::new(AtomicU32::new(value)))
+}
+
+/// a shared notifier that can be passed to dart code
 #[frb(opaque)]
 pub struct DartNotify {
     inner: Arc<Notify>,
@@ -1790,27 +2176,48 @@ impl DartNotify {
     pub async fn notified(&self) {
         self.inner.notified().await;
     }
+
+    /// notifies one waiter
+    #[frb(sync)]
+    pub fn notify(&self) {
+        self.inner.notify_waiters();
+    }
 }
 
 pub struct ChatMessage {
     pub text: String,
 
-    sender: PeerId,
-
     receiver: PeerId,
 
     timestamp: DateTime<Local>,
+
+    pub(crate) attachments: Vec<Attachment>,
 }
 
 impl ChatMessage {
     #[frb(sync)]
     pub fn is_sender(&self, identity: String) -> bool {
-        self.sender.to_string() == identity
+        self.receiver.to_string() != identity
     }
 
     #[frb(sync)]
     pub fn time(&self) -> String {
         self.timestamp.format("%l:%M %p").to_string()
+    }
+
+    #[frb(sync)]
+    pub fn attachments(&self) -> Vec<(String, Vec<u8>)> {
+        self.attachments
+            .iter()
+            .map(|a| (a.name.clone(), a.data.clone()))
+            .collect()
+    }
+
+    #[frb(sync)]
+    pub fn clear_attachments(&mut self) {
+        for attachment in self.attachments.iter_mut() {
+            attachment.data.truncate(0);
+        }
     }
 }
 
@@ -1822,9 +2229,13 @@ async fn call_controller(
     receiving: AsyncReceiver<bool>,
     message_received: Arc<Mutex<dyn Fn(ChatMessage) -> DartFnFuture<()> + Send>>,
     call_state: Arc<Mutex<dyn Fn(bool) -> DartFnFuture<()> + Send>>,
+    start_screenshare: AsyncSender<StartScreenshare>,
     peer: PeerId,
     identity: PeerId,
 ) -> Result<String> {
+    // in case this value has been used in a previous call, reset to false
+    CONNECTED.store(false, Relaxed);
+
     // whether the session is currently receiving audio
     let mut is_receiving = false;
     // whether the remote peer is currently receiving audio
@@ -1851,8 +2262,6 @@ async fn call_controller(
         select! {
             // receives and handles messages from the callee
             result = read_message(transport) => {
-                info!("call controller read_message result: {:?}", result);
-
                 let message: Message = result?;
 
                 match message.message {
@@ -1863,20 +2272,20 @@ async fn call_controller(
                     Some(message::Message::Chat(message)) => {
                         (message_received.lock().await)(ChatMessage {
                             text: message.text,
-                            sender: peer,
                             receiver: identity,
                             timestamp: Local::now(),
+                            attachments: message.attachments,
                         }).await;
                     }
                     Some(message::Message::ConnectionInterrupted(_)) => {
-                        info!("received connection interrupted message r={} rr={}", is_receiving, remote_is_receiving);
+                        // info!("received connection interrupted message r={} rr={}", is_receiving, remote_is_receiving);
 
                         let receiving = is_receiving && remote_is_receiving;
                         remote_is_receiving = false;
                         state_sender.send(receiving).await?;
                     }
                     Some(message::Message::ConnectionRestored(_)) => {
-                        info!("received connection restored message r={} rr={}", is_receiving, remote_is_receiving);
+                        // info!("received connection restored message r={} rr={}", is_receiving, remote_is_receiving);
 
                         if remote_is_receiving {
                             warn!("received connection restored message while already receiving");
@@ -1886,7 +2295,20 @@ async fn call_controller(
                         remote_is_receiving = true;
                         state_sender.send(false).await?;
                     }
-                    _ => error!("received unexpected message: {:?}", message),
+                    Some(message::Message::ScreenshareHeader(header)) => {
+                        info!("received screenshare header {:?}", header);
+                        start_screenshare.send((peer, Some(header))).await?;
+                    }
+                    Some(message::Message::RoomWelcome(welcome)) => {
+                        warn!("received room welcome message {:?}", welcome);
+                    }
+                    Some(message::Message::RoomJoin(join)) => {
+                        warn!("received room join message {:?}", join);
+                    }
+                    Some(message::Message::RoomLeave(leave)) => {
+                        warn!("received room leave message {:?}", leave);
+                    }
+                    _ => error!("call controller unexpected message: {:?}", message),
                 }
             },
             // sends messages to the callee
@@ -1906,7 +2328,7 @@ async fn call_controller(
             },
             receiving = state_receiver.recv() => {
                 if receiving? {
-                    info!("state switched to not receiving r={} rr={}", is_receiving, remote_is_receiving);
+                    // info!("state switched to not receiving r={} rr={}", is_receiving, remote_is_receiving);
 
                     // the instant the disconnect began
                     disconnected_at = Instant::now();
@@ -1914,25 +2336,28 @@ async fn call_controller(
                     notify_ui = disconnected_at + disconnect_duration;
                 } else if is_receiving && remote_is_receiving {
                     let elapsed = disconnected_at.elapsed();
-                    info!("reconnected after {}ms interruption", elapsed.as_millis());
+                    // info!("reconnected after {}ms interruption", elapsed.as_millis());
 
-                    // update the call state in the UI
-                    (call_state.lock().await)(false).await;
                     // update the overlay to connected
-                    CONNECTED.store(true, Relaxed);
+                    if !CONNECTED.swap(true, Relaxed) {
+                        // update the call state in the UI
+                        (call_state.lock().await)(false).await;
+                    }
+
                     // record the disconnect
                     disconnect_durations.push_back((disconnected_at, elapsed));
                     // prevents any notification to the ui as audio is being received
                     notify_ui = Instant::now() + Duration::from_secs(86400 * 365 * 30);
-                } else if is_receiving ^ remote_is_receiving {
-                    info!("partial reconnect r={} rr={}", is_receiving, remote_is_receiving);
-                } else {
-                    info!("full disconnect r={} rr={}", is_receiving, remote_is_receiving)
                 }
+                // else if is_receiving ^ remote_is_receiving {
+                //     info!("partial reconnect r={} rr={}", is_receiving, remote_is_receiving);
+                // } else {
+                //     info!("full disconnect r={} rr={}", is_receiving, remote_is_receiving)
+                // }
             },
             // receives when the receiving state changes
             Ok(receiving) = receiving.recv() => {
-                info!("received receiving state: {} | r={} rr={}", receiving, is_receiving, remote_is_receiving);
+                // info!("received receiving state: {} | r={} rr={}", receiving, is_receiving, remote_is_receiving);
 
                 if receiving != is_receiving {
                     state_sender.send(is_receiving && remote_is_receiving).await?;
@@ -1987,10 +2412,10 @@ async fn call_controller(
 }
 
 /// Receives frames of audio data from the input processor and sends them to the socket
-async fn socket_input(
+async fn audio_input(
     input_receiver: AsyncReceiver<ProcessorMessage>,
     mut socket: SplitSink<Transport<TransportStream>, Bytes>,
-    stop: Arc<Notify>,
+    stop_io: Arc<Notify>,
     bandwidth: Arc<AtomicUsize>,
 ) -> Result<()> {
     // a static byte used as the silence signal
@@ -2016,8 +2441,9 @@ async fn socket_input(
     };
 
     select! {
+        // this future should never complete
         result = future => result,
-        _ = stop.notified() => {
+        _ = stop_io.notified() => {
             debug!("Input to socket ended");
             Ok(())
         },
@@ -2025,10 +2451,10 @@ async fn socket_input(
 }
 
 /// Receives audio data from the socket and sends it to the output processor
-async fn socket_output(
+async fn audio_output(
     sender: AsyncSender<ProcessorMessage>,
     mut socket: SplitStream<Transport<TransportStream>>,
-    notify: Arc<Notify>,
+    stop_io: Arc<Notify>,
     bandwidth: Arc<AtomicUsize>,
     receiving: AsyncSender<bool>,
 ) -> Result<()> {
@@ -2039,7 +2465,6 @@ async fn socket_output(
             match timeout(TIMEOUT_DURATION, socket.next()).await {
                 Ok(Some(Ok(message))) => {
                     if !is_receiving {
-                        info!("socket output started receiving when is_receiving was false");
                         is_receiving = true;
                         _ = receiving.send(is_receiving).await;
                     }
@@ -2064,25 +2489,22 @@ async fn socket_output(
                     break Err(error.into());
                 }
                 Ok(None) => {
-                    debug!("Socket output ended");
+                    debug!("Socket output ended with None");
                     break Ok(());
                 }
                 Err(_) if is_receiving => {
-                    info!("socket output timed out when is_receiving was true");
                     is_receiving = false;
                     _ = receiving.send(is_receiving).await;
                 }
-                Err(_) => {
-                    info!("socket output timed out when is_receiving was false");
-                }
+                Err(_) => (),
             }
         }
     };
 
     select! {
         result = future => result,
-        _ = notify.notified() => {
-            debug!("Socket output ended");
+        _ = stop_io.notified() => {
+            debug!("Socket output ended from stop_io");
             Ok(())
         },
     }
@@ -2298,7 +2720,7 @@ fn input_processor(
             )
         };
 
-        _ = sender.try_send(ProcessorMessage::slice(bytes)?);
+        _ = sender.try_send(ProcessorMessage::slice(bytes));
     }
 
     debug!("Input processor ended");
