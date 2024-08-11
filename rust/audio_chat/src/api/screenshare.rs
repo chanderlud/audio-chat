@@ -88,20 +88,20 @@ impl Device {
 
     #[cfg(target_os = "macos")]
     fn devices() -> Vec<Self> {
-        let devices_output = Command::new("ffmpeg")
-            .arg("-hide_banner")
-            .arg("-f")
-            .arg("avfoundation")
-            .arg("-list_devices")
-            .arg("true")
-            .arg("-i")
-            .arg("\"\"")
-            .output()
-            .await;
+        // let devices_output = Command::new("ffmpeg")
+        //     .arg("-hide_banner")
+        //     .arg("-f")
+        //     .arg("avfoundation")
+        //     .arg("-list_devices")
+        //     .arg("true")
+        //     .arg("-i")
+        //     .arg("\"\"")
+        //     .output()
+        //     .await;
 
         // TODO parse the output and use it for devices
 
-        vec![Self::AVFoundation]
+        vec![Self::AVFoundation(vec![])]
     }
 
     #[cfg(target_os = "linux")]
@@ -477,6 +477,7 @@ fn parse_codecs(output: Output, regex: &Regex) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use log::debug;
     use super::*;
 
     #[tokio::test]

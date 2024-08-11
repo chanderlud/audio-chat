@@ -57,7 +57,7 @@ async fn chat_room() -> Result<()> {
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(identity)
         .with_tokio()
         .with_tcp(
-            tcp::Config::default().port_reuse(true).nodelay(true),
+            tcp::Config::default().nodelay(true),
             noise::Config::new,
             yamux::Config::default,
         )
@@ -540,7 +540,7 @@ async fn simulated_client(i: usize) {
     let mut swarm = libp2p::SwarmBuilder::with_new_identity()
         .with_tokio()
         .with_tcp(
-            tcp::Config::default().port_reuse(true).nodelay(true),
+            tcp::Config::default().nodelay(true),
             noise::Config::new,
             yamux::Config::default,
         )

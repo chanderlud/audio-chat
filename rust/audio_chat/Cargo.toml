@@ -29,8 +29,8 @@ lazy_static = "1.4"
 uuid = { version = "1.8", features = ["v4"] }
 bytes = "1.6"
 async-throttle = "0.3"
-libp2p = { version = "0.53.2", features = ["tokio", "quic", "tcp", "ping", "dcutr", "identify", "macros", "noise", "yamux", "autonat", "relay"] }
-libp2p-stream = { version = "0.1.0-alpha.1" }
+libp2p = { version = "0.54", features = ["tokio", "quic", "tcp", "ping", "dcutr", "identify", "macros", "noise", "yamux", "autonat", "relay"] }
+libp2p-stream = { version = "0.2.0-alpha" }
 gag = "1.0"
 chrono = "*"
 regex = "1.10"
