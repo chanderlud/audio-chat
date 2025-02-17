@@ -51,6 +51,7 @@ use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
 use crate::api::screenshare;
 use crate::api::screenshare::{Decoder, Encoder};
 use crate::{Behaviour, BehaviourEvent};
+use crate::api::constants::*;
 use messages::{message, Attachment, AudioHeader, Message, ScreenshareHeader};
 
 type Result<T> = std::result::Result<T, Error>;
@@ -58,26 +59,6 @@ pub(crate) type DeviceName = Arc<Mutex<Option<String>>>;
 type TransportStream = Compat<Stream>;
 pub type Transport<T> = Framed<T, LengthDelimitedCodec>;
 type StartScreenshare = (PeerId, Option<ScreenshareHeader>);
-
-/// The number of bytes in a single network audio frame
-const TRANSFER_BUFFER_SIZE: usize = FRAME_SIZE * mem::size_of::<i16>();
-/// Parameters used for resampling throughout the application
-const RESAMPLER_PARAMETERS: SincInterpolationParameters = SincInterpolationParameters {
-    sinc_len: 256,
-    f_cutoff: 0.95,
-    interpolation: SincInterpolationType::Linear,
-    oversampling_factor: 256,
-    window: WindowFunction::BlackmanHarris2,
-};
-/// A timeout used when initializing the call
-const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
-/// A timeout used to detect temporary network issues
-const TIMEOUT_DURATION: Duration = Duration::from_millis(100);
-/// the number of frames to hold in a channel
-const CHANNEL_SIZE: usize = 2_400;
-/// the protocol identifier for audio chat
-const CHAT_PROTOCOL: StreamProtocol = StreamProtocol::new("/audio-chat/0.0.1");
-const ROOM_PROTOCOL: StreamProtocol = StreamProtocol::new("/audio-chat-room/0.0.1");
 
 #[frb(opaque)]
 #[derive(Clone)]

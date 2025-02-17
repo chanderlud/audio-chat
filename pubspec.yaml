@@ -13,12 +13,12 @@ dependencies:
   rust_builder:
     path: rust_builder
 
-  flutter_rust_bridge: 2.0.0
+  flutter_rust_bridge: 2.8.0
   flutter_secure_storage: ^9.0.0
 
   shared_preferences: ^2.2.2
   mutex: ^3.1.0
-  file_picker: ^8.0.6
+  file_picker: ^9.0.0
   uuid: ^4.3.3
   permission_handler: ^11.3.1
   flutter_colorpicker: ^1.1.0
@@ -32,7 +32,7 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
 
-  flutter_lints: ^4.0.0
+  flutter_lints: ^5.0.0
 
   integration_test:
     sdk: flutter

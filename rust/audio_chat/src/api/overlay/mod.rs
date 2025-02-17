@@ -8,9 +8,11 @@ use lazy_static::lazy_static;
 #[cfg(windows)]
 use widestring::error::ContainsNul;
 
+/// flutter_rust_bridge:ignore
 #[cfg(windows)]
 mod color;
 pub mod overlay;
+/// flutter_rust_bridge:ignore
 #[cfg(windows)]
 mod windows;
 

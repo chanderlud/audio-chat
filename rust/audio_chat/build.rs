@@ -1,5 +1,6 @@
 use std::io::Result;
 
+#[allow(unexpected_cfgs)]
 #[allow(dead_code)]
 fn add_lib(name: impl AsRef<str>, _static: bool) {
     #[cfg(not(feature = "test"))]

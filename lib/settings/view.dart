@@ -1124,7 +1124,7 @@ class OverlaySettingsState extends State<OverlaySettings> {
   @override
   void dispose() {
     if (!widget.stateController.isCallActive) {
-      widget.overlay.hide();
+      widget.overlay.hide_();
     }
 
     widget.controller.saveOverlayConfig();
@@ -1148,9 +1148,9 @@ class OverlaySettingsState extends State<OverlaySettings> {
                     !widget.controller.overlayConfig.enabled) {
                   return;
                 } else if (overlayVisible) {
-                  widget.overlay.hide();
+                  widget.overlay.hide_();
                 } else {
-                  widget.overlay.show();
+                  widget.overlay.show_();
                 }
 
                 setState(() {
@@ -1182,7 +1182,7 @@ class OverlaySettingsState extends State<OverlaySettings> {
 
                   if (widget.stateController.isCallActive) {
                     // if the call is active, the overlay should be shown
-                    widget.overlay.show();
+                    widget.overlay.show_();
 
                     setState(() {
                       overlayVisible = true;

@@ -97,7 +97,7 @@ impl SendToDartLogger {
 }
 
 impl LogAppender for SendToDartLogger {
-    fn do_logs(&self, records: &[FastLogRecord]) {
+    fn do_logs(&mut self, records: &[FastLogRecord]) {
         for record in records {
             let entry = Self::record_to_formatted(record);
             if let Some(sink) = &*SEND_TO_DART_LOGGER_STREAM_SINK.read() {

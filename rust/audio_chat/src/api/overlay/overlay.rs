@@ -223,6 +223,7 @@ impl Overlay {
     }
 
     /// show the overlay on windows
+    #[frb(ignore)]
     #[cfg(windows)]
     fn _show(&self) {
         let hwnd = self._window.load(Relaxed) as HWND;
@@ -233,6 +234,7 @@ impl Overlay {
     }
 
     /// non-windows platforms don't have an overlay
+    #[frb(ignore)]
     #[cfg(not(windows))]
     fn _show(&self) {}
 
@@ -248,6 +250,7 @@ impl Overlay {
     }
 
     /// hide the overlay on windows
+    #[frb(ignore)]
     #[cfg(windows)]
     fn _hide(&self) {
         let hwnd = self._window.load(Relaxed) as HWND;
@@ -258,6 +261,7 @@ impl Overlay {
     }
 
     /// non-windows platforms don't have an overlay
+    #[frb(ignore)]
     #[cfg(not(windows))]
     fn _hide(&self) {}
 

@@ -7,5 +7,5 @@ edition = "2021"
 
 [dependencies]
 futures = "0.3"
-tokio = { version = "1.38", features = ["full"] }
-libp2p = { version = "0.53.2", features = ["tokio", "quic", "tcp", "ping", "dcutr", "relay", "identify", "macros", "noise", "yamux", "autonat"] }
+tokio = { version = "1", features = ["full"] }
+libp2p = { version = "0.55", features = ["tokio", "quic", "tcp", "ping", "dcutr", "relay", "identify", "macros", "noise", "yamux", "autonat"] }
