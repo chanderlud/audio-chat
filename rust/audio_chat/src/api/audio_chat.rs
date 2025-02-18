@@ -2022,11 +2022,11 @@ impl ScreenshareConfig {
 #[derive(Default, Debug, Clone)]
 #[frb(opaque)]
 pub struct Capabilities {
-    pub(crate) available: bool,
+    pub(crate) _available: bool,
 
     pub(crate) encoders: Vec<Encoder>,
 
-    pub(crate) decoders: Vec<Decoder>,
+    pub(crate) _decoders: Vec<Decoder>,
 
     pub(crate) devices: Vec<screenshare::Device>,
 }

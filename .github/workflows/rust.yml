@@ -55,6 +55,7 @@ jobs:
         with:
           components: rustfmt, clippy
           target: ${{ matrix.info.target }}
+        working-directory: rust
 
       - name: Check formatting
         run: cd rust && cargo fmt -- --check

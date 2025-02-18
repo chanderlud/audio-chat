@@ -54,23 +54,24 @@ impl Capabilities {
                     .into_iter()
                     .filter_map(|codec| Encoder::from_str(&codec).ok())
                     .collect();
+
                 let decoders = parse_codecs(decoders_output, &codec_regex)
                     .into_iter()
                     .filter_map(|codec| Decoder::from_str(&codec).ok())
                     .collect();
 
                 Self {
-                    available: true,
+                    _available: true,
                     encoders,
                     // TODO verify decoders here
-                    decoders,
+                    _decoders: decoders,
                     devices: Device::devices(),
                 }
             }
             _ => Self {
-                available: false,
+                _available: false,
                 encoders: Vec::new(),
-                decoders: Vec::new(),
+                _decoders: Vec::new(),
                 devices: Device::devices(),
             },
         }
