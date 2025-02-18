@@ -38,12 +38,15 @@ impl Capabilities {
 
         let encoders_result = command.output().await;
 
-        let decoders_result = Command::new("ffplay")
-            .arg("-hide_banner")
-            .arg("-decoders")
-            .creation_flags(CREATION_FLAGS)
-            .output()
-            .await;
+        let mut command = Command::new("ffplay");
+        command.arg("-hide_banner").arg("-decoders");
+
+        #[cfg(target_os = "windows")]
+        {
+            command.creation_flags(CREATION_FLAGS);
+        }
+
+        let decoders_result = command.output().await;
 
         match (encoders_result, decoders_result) {
             (Ok(encoders_output), Ok(decoders_output)) => {
