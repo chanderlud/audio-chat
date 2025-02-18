@@ -1,7 +1,8 @@
 #[cfg(windows)]
-use std::mem;
+extern crate windows as other_windows;
+
 #[cfg(windows)]
-use std::ptr::{null, null_mut};
+use std::mem;
 #[cfg(windows)]
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::Relaxed;
@@ -10,31 +11,30 @@ use std::sync::Arc;
 #[cfg(windows)]
 use std::time::Duration;
 
+#[cfg(windows)]
+use crate::api::overlay::windows;
+use crate::api::overlay::{BACKGROUND_COLOR, FONT_COLOR, FONT_HEIGHT};
 use flutter_rust_bridge::frb;
 #[cfg(windows)]
 use kanal::OneshotSender;
 #[cfg(windows)]
 use log::error;
 #[cfg(windows)]
+use other_windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+#[cfg(windows)]
+use other_windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoA, InvalidateRect, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+};
+#[cfg(windows)]
+use other_windows::Win32::UI::WindowsAndMessaging::{
+    DispatchMessageW, GetMessageW, MoveWindow, SendMessageA, ShowWindow, TranslateMessage, SW_HIDE,
+    SW_SHOW, WM_CLOSE,
+};
+#[cfg(windows)]
 use tokio::select;
 use tokio::sync::Notify;
 #[cfg(windows)]
 use tokio::time::interval;
-#[cfg(windows)]
-use winapi::shared::minwindef::TRUE;
-#[cfg(windows)]
-use winapi::shared::windef::HWND;
-#[cfg(windows)]
-use winapi::um::winuser::{DispatchMessageW, TranslateMessage};
-#[cfg(windows)]
-use winapi::um::winuser::{
-    GetMessageW, GetMonitorInfoA, InvalidateRect, MonitorFromWindow, MoveWindow, SendMessageA,
-    ShowWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST, SW_HIDE, SW_SHOW, WM_CLOSE,
-};
-
-#[cfg(windows)]
-use crate::api::overlay::windows;
-use crate::api::overlay::{BACKGROUND_COLOR, FONT_COLOR, FONT_HEIGHT};
 
 #[frb(opaque)]
 #[derive(Clone)]
@@ -79,6 +79,7 @@ pub struct Overlay {
 
 impl Overlay {
     #[cfg(windows)]
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         enabled: bool,
         x: i32,
@@ -159,11 +160,11 @@ impl Overlay {
         std::thread::spawn(move || unsafe {
             match windows::build_window(width, height, x, y) {
                 Ok(hwnd) => {
-                    if rx.send(hwnd as usize).is_ok() {
+                    if rx.send(hwnd.0 as usize).is_ok() {
                         let mut msg = mem::zeroed();
 
-                        while GetMessageW(&mut msg, null_mut(), 0, 0) != 0 {
-                            TranslateMessage(&msg);
+                        while GetMessageW(&mut msg, None, 0, 0).into() {
+                            _ = TranslateMessage(&msg);
                             DispatchMessageW(&msg);
                         }
                     } else {
@@ -226,10 +227,10 @@ impl Overlay {
     #[frb(ignore)]
     #[cfg(windows)]
     fn _show(&self) {
-        let hwnd = self._window.load(Relaxed) as HWND;
+        let hwnd = HWND(self._window.load(Relaxed) as *mut _);
 
         unsafe {
-            ShowWindow(hwnd, SW_SHOW);
+            _ = ShowWindow(hwnd, SW_SHOW);
         }
     }
 
@@ -253,10 +254,10 @@ impl Overlay {
     #[frb(ignore)]
     #[cfg(windows)]
     fn _hide(&self) {
-        let hwnd = self._window.load(Relaxed) as HWND;
+        let hwnd = HWND(self._window.load(Relaxed) as *mut _);
 
         unsafe {
-            ShowWindow(hwnd, SW_HIDE);
+            _ = ShowWindow(hwnd, SW_HIDE);
         }
     }
 
@@ -281,16 +282,16 @@ impl Overlay {
     #[cfg(windows)]
     fn _move_overlay(&self) {
         // get the HWND of the overlay window
-        let hwnd = self._window.load(Relaxed) as HWND;
+        let hwnd = HWND(self._window.load(Relaxed) as *mut _);
 
         unsafe {
-            MoveWindow(
+            _ = MoveWindow(
                 hwnd,
                 self.x.load(Relaxed),
                 self.y.load(Relaxed),
                 self.width.load(Relaxed),
                 self.height.load(Relaxed),
-                TRUE,
+                true,
             );
         }
     }
@@ -336,11 +337,11 @@ impl Overlay {
     #[cfg(windows)]
     fn redraw(&self) {
         // get the HWND of the overlay window
-        let hwnd = self._window.load(Relaxed) as HWND;
+        let hwnd = HWND(self._window.load(Relaxed) as *mut _);
 
         // redraw the window
         unsafe {
-            InvalidateRect(hwnd, null(), TRUE);
+            _ = InvalidateRect(Some(hwnd), None, true);
         }
     }
 
@@ -389,10 +390,10 @@ impl Overlay {
     /// disables the overlay on windows
     #[cfg(windows)]
     fn _disable(&self) {
-        let hwnd = self._window.load(Relaxed) as HWND;
+        let hwnd = HWND(self._window.load(Relaxed) as *mut _);
 
         unsafe {
-            SendMessageA(hwnd, WM_CLOSE, 0, 0);
+            SendMessageA(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
         }
     }
 
@@ -404,7 +405,7 @@ impl Overlay {
     #[cfg(windows)]
     #[frb(sync)]
     pub fn screen_resolution(&self) -> (i32, i32) {
-        let hwnd = self._window.load(Relaxed) as HWND;
+        let hwnd = HWND(self._window.load(Relaxed) as *mut _);
 
         unsafe {
             let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
@@ -412,7 +413,7 @@ impl Overlay {
             let mut monitor_info: MONITORINFO = mem::zeroed::<MONITORINFO>();
             monitor_info.cbSize = mem::size_of::<MONITORINFO>() as u32;
 
-            GetMonitorInfoA(monitor, &mut monitor_info);
+            _ = GetMonitorInfoA(monitor, &mut monitor_info);
 
             let width = monitor_info.rcMonitor.right - monitor_info.rcMonitor.left;
             let height = monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top;

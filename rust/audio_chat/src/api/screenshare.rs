@@ -190,23 +190,23 @@ pub(crate) enum Encoder {
     Av1Vaapi,
 }
 
-impl Into<&'static str> for Encoder {
-    fn into(self) -> &'static str {
-        match self {
-            Self::Libx264 => "libx264",
-            Self::H264Nvenc => "h264_nvenc",
-            Self::H264Amf => "h264_amf",
-            Self::H264Qsv => "h264_qsv",
-            Self::H264Vaapi => "h264_vaapi",
-            Self::Libx265 => "libx265",
-            Self::HevcNvenc => "hevc_nvenc",
-            Self::HevcAmf => "hevc_amf",
-            Self::HevcQsv => "hevc_qsv",
-            Self::HevcVaapi => "hevc_vaapi",
-            Self::Av1Nvenc => "av1_nvenc",
-            Self::Av1Amf => "av1_amf",
-            Self::Av1Qsv => "av1_qsv",
-            Self::Av1Vaapi => "av1_vaapi",
+impl From<Encoder> for &'static str {
+    fn from(val: Encoder) -> Self {
+        match val {
+            Encoder::Libx264 => "libx264",
+            Encoder::H264Nvenc => "h264_nvenc",
+            Encoder::H264Amf => "h264_amf",
+            Encoder::H264Qsv => "h264_qsv",
+            Encoder::H264Vaapi => "h264_vaapi",
+            Encoder::Libx265 => "libx265",
+            Encoder::HevcNvenc => "hevc_nvenc",
+            Encoder::HevcAmf => "hevc_amf",
+            Encoder::HevcQsv => "hevc_qsv",
+            Encoder::HevcVaapi => "hevc_vaapi",
+            Encoder::Av1Nvenc => "av1_nvenc",
+            Encoder::Av1Amf => "av1_amf",
+            Encoder::Av1Qsv => "av1_qsv",
+            Encoder::Av1Vaapi => "av1_vaapi",
         }
     }
 }
@@ -270,17 +270,17 @@ pub(crate) enum Decoder {
     Av1Qsv,
 }
 
-impl Into<&'static str> for Decoder {
-    fn into(self) -> &'static str {
-        match self {
-            Self::H264 => "h264",
-            Self::H264Cuvid => "h264_cuvid",
-            Self::Hevc => "hevc",
-            Self::HevcCuvid => "hevc_cuvid",
-            Self::H264Qsv => "h264_qsv",
-            Self::HevcQsv => "hevc_qsv",
-            Self::Av1Cuvid => "av1_cuvid",
-            Self::Av1Qsv => "av1_qsv",
+impl From<Decoder> for &'static str {
+    fn from(val: Decoder) -> Self {
+        match val {
+            Decoder::H264 => "h264",
+            Decoder::H264Cuvid => "h264_cuvid",
+            Decoder::Hevc => "hevc",
+            Decoder::HevcCuvid => "hevc_cuvid",
+            Decoder::H264Qsv => "h264_qsv",
+            Decoder::HevcQsv => "hevc_qsv",
+            Decoder::Av1Cuvid => "av1_cuvid",
+            Decoder::Av1Qsv => "av1_qsv",
         }
     }
 }
@@ -318,7 +318,7 @@ impl RecordingConfig {
             command.arg("1");
         }
 
-        command.args(&[
+        command.args([
             "-c:v",
             self.encoder.into(),
             "-delay",
@@ -361,7 +361,7 @@ impl PlaybackConfig {
     fn make_command(&self) -> Command {
         let mut command = Command::new("ffplay");
 
-        command.args(&["-vcodec", self.decoder.into(), "-f", "mpegts", "-i", "-"]);
+        command.args(["-vcodec", self.decoder.into(), "-f", "mpegts", "-i", "-"]);
 
         command
     }
@@ -438,7 +438,7 @@ pub(crate) async fn playback(
     let mut command = config.make_command();
 
     command
-        .args(&[
+        .args([
             "-x",
             &width.to_string(),
             "-y",

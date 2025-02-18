@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::mem;
 use std::net::Ipv4Addr;
@@ -664,28 +666,26 @@ impl AudioChat {
                                 spawn(screenshare::playback(stream, stop, state.download_bandwidth.clone(), header.encoder, width, height));
                                 (self.screenshare_started.lock().await)(dart_stop, false).await;
                             }
-                        } else {
-                            if let Some(config) = self.screenshare_config.recording_config.read().await.clone() {
-                                let message = Message::screenshare(config.encoder.into());
+                        } else if let Some(config) = self.screenshare_config.recording_config.read().await.clone() {
+                            let message = Message::screenshare(config.encoder.into());
 
-                                state
-                                    .message_sender
-                                    .send(message)
-                                    .await
-                                    .map_err(Error::from)?;
+                            state
+                                .message_sender
+                                .send(message)
+                                .await
+                                .map_err(Error::from)?;
 
-                                state.wants_stream.store(true, Relaxed);
+                            state.wants_stream.store(true, Relaxed);
 
-                                if let Ok(stream) = state.stream_receiver.recv().await {
-                                    spawn(screenshare::record(stream, stop, state.upload_bandwidth.clone(), config));
-                                }
-
-                                state.wants_stream.store(false, Relaxed);
-                                (self.screenshare_started.lock().await)(dart_stop, true).await;
-                            } else {
-                                // TODO this should be blocked from occurring via the frontend i think
-                                warn!("screenshare started without recording configuration");
+                            if let Ok(stream) = state.stream_receiver.recv().await {
+                                spawn(screenshare::record(stream, stop, state.upload_bandwidth.clone(), config));
                             }
+
+                            state.wants_stream.store(false, Relaxed);
+                            (self.screenshare_started.lock().await)(dart_stop, true).await;
+                        } else {
+                            // TODO this should be blocked from occurring via the frontend i think
+                            warn!("screenshare started without recording configuration");
                         }
                     } else {
                         warn!("screenshare started for a peer without a session: {}", peer_id);
@@ -2211,6 +2211,7 @@ impl ChatMessage {
 }
 
 /// the call controller
+#[allow(clippy::too_many_arguments)]
 async fn call_controller(
     transport: &mut Transport<TransportStream>,
     receiver: AsyncReceiver<Message>,
@@ -2581,6 +2582,7 @@ async fn statistics_collector(
 }
 
 /// Processes the audio input and sends it to the sending socket
+#[allow(clippy::too_many_arguments)]
 fn input_processor(
     receiver: Receiver<f32>,
     sender: Sender<ProcessorMessage>,

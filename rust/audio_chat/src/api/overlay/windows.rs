@@ -1,33 +1,34 @@
 use std::mem;
-use std::ptr::{null, null_mut};
+use std::ptr::null_mut;
 use std::sync::atomic::Ordering::Relaxed;
 
+use crate::api::overlay::color::{percent_to_color, BAD_COLOR};
+use crate::api::overlay::{
+    Result, BACKGROUND_COLOR, CONNECTED, FONT_COLOR, FONT_HEIGHT, LATENCY, LOSS,
+};
 use log::info;
 use widestring::U16CString;
-use winapi::shared::minwindef::{BYTE, HINSTANCE, LPARAM, LRESULT, UINT, WPARAM};
-use winapi::shared::windef::{HWND, POINT, RECT, SIZE};
-use winapi::um::libloaderapi::GetModuleHandleA;
-use winapi::um::wingdi::{CreateCompatibleDC, DeleteDC, AC_SRC_ALPHA, AC_SRC_OVER, BLENDFUNCTION};
-use winapi::um::wingdi::{DeleteObject, SelectObject};
-use winapi::um::winuser::{
-    BeginPaint, CreateWindowExW, DefWindowProcW, DestroyWindow, EndPaint, GetClientRect, GetDC,
-    PostQuitMessage, RegisterClassW, ReleaseDC, SetWindowPos, ShowWindow, UpdateLayeredWindow,
-    UpdateWindow, CS_HREDRAW, CS_VREDRAW, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE, ULW_ALPHA,
-    WNDCLASSW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
+use windows::core::PCWSTR;
+use windows::Win32::Foundation::{
+    BOOL, COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM,
 };
-use winapi::um::winuser::{WM_CLOSE, WM_CREATE, WM_DESTROY, WM_PAINT};
-
-use gdiplus_sys2::{
+use windows::Win32::Graphics::Gdi::{
+    BeginPaint, CreateCompatibleDC, DeleteDC, DeleteObject, EndPaint, GetDC, ReleaseDC,
+    SelectObject, UpdateWindow, AC_SRC_ALPHA, AC_SRC_OVER, BLENDFUNCTION, HBRUSH, HGDIOBJ,
+};
+use windows::Win32::Graphics::GdiPlus::{
     GdipCreateBitmapFromScan0, GdipCreateFont, GdipCreateFontFamilyFromName,
     GdipCreateHBITMAPFromBitmap, GdipCreateSolidFill, GdipDrawString, GdipFillRectangle,
     GdipGetImageGraphicsContext, GdipMeasureString, GdipSetTextRenderingHint,
     GdipStringFormatGetGenericDefault, GdiplusStartup, GdiplusStartupInput, GpFont, GpGraphics,
-    GpStringFormat, RectF, REAL,
+    GpStringFormat, RectF, TextRenderingHint, Unit,
 };
-
-use crate::api::overlay::color::{percent_to_color, BAD_COLOR};
-use crate::api::overlay::{
-    ErrorKind, Result, BACKGROUND_COLOR, CONNECTED, FONT_COLOR, FONT_HEIGHT, LATENCY, LOSS,
+use windows::Win32::System::LibraryLoader::GetModuleHandleA;
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, PostQuitMessage, RegisterClassW,
+    SetWindowPos, ShowWindow, UpdateLayeredWindow, CS_HREDRAW, CS_VREDRAW, HCURSOR, HICON,
+    HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE, ULW_ALPHA, WNDCLASSW, WS_EX_LAYERED,
+    WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
 };
 
 pub(crate) const CLASS_NAME: &str = "audio_chat_overlay";
@@ -36,18 +37,19 @@ pub(crate) unsafe fn build_window(width: i32, height: i32, x: i32, y: i32) -> Re
     let input: GdiplusStartupInput = GdiplusStartupInput {
         GdiplusVersion: 1,
         DebugEventCallback: mem::zeroed(),
-        SuppressBackgroundThread: 0,
-        SuppressExternalCodecs: 0,
+        SuppressBackgroundThread: BOOL(0),
+        SuppressExternalCodecs: BOOL(0),
     };
 
     let mut token = 0;
     let status = GdiplusStartup(&mut token, &input, null_mut());
-    info!("GdiplusStartup status: {}", status);
+    info!("GdiplusStartup status: {:?}", status);
 
     let class_name = U16CString::from_str(CLASS_NAME)?;
     let window_name = U16CString::from_str("Overlay")?;
 
-    let h_instance: HINSTANCE = GetModuleHandleA(null());
+    let h_module = GetModuleHandleA(None)?;
+    let h_instance = HINSTANCE::from(h_module);
 
     let wc = WNDCLASSW {
         style: CS_HREDRAW | CS_VREDRAW,
@@ -55,99 +57,96 @@ pub(crate) unsafe fn build_window(width: i32, height: i32, x: i32, y: i32) -> Re
         cbClsExtra: 0,
         cbWndExtra: 0,
         hInstance: h_instance,
-        hIcon: null_mut(),
-        hCursor: null_mut(),
-        hbrBackground: null_mut(),
-        lpszMenuName: null_mut(),
-        lpszClassName: class_name.as_ptr(),
+        hIcon: HICON::default(),
+        hCursor: HCURSOR::default(),
+        hbrBackground: HBRUSH::default(),
+        lpszMenuName: PCWSTR::null(),
+        lpszClassName: PCWSTR::from_raw(class_name.as_ptr()),
     };
 
     RegisterClassW(&wc);
 
-    let hwnd: HWND = CreateWindowExW(
+    let hwnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW,
-        class_name.as_ptr(),
-        window_name.as_ptr(),
+        Some(&PCWSTR::from_raw(class_name.as_ptr())),
+        Some(&PCWSTR::from_raw(window_name.as_ptr())),
         WS_POPUP | WS_VISIBLE,
         x,
         y,
         width,
         height,
-        null_mut(),
-        null_mut(),
-        h_instance,
-        null_mut(),
-    );
-
-    if hwnd.is_null() {
-        return Err(ErrorKind::CreateWindow.into());
-    }
+        None,
+        None,
+        Some(h_instance),
+        None,
+    )?;
 
     SetWindowPos(
         hwnd,
-        HWND_TOPMOST,
+        Some(HWND_TOPMOST),
         x,
         y,
         width,
         height,
         SWP_NOMOVE | SWP_NOSIZE,
-    );
+    )?;
 
-    ShowWindow(hwnd, SW_HIDE);
-    UpdateWindow(hwnd);
+    _ = ShowWindow(hwnd, SW_HIDE);
+    _ = UpdateWindow(hwnd);
 
     Ok(hwnd)
 }
 
 unsafe extern "system" fn window_proc(
     hwnd: HWND,
-    msg: UINT,
+    msg: u32,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
-        WM_CREATE => 0,
-        WM_PAINT => {
+        1 => LRESULT(0),
+        15 => {
             let mut info = mem::zeroed();
             let _hdc = BeginPaint(hwnd, &mut info);
 
             draw_overlay(hwnd);
 
-            EndPaint(hwnd, &info);
-            0
+            _ = EndPaint(hwnd, &info);
+            LRESULT(0)
         }
-        WM_CLOSE => {
-            DestroyWindow(hwnd);
-            0
+        16 => {
+            _ = DestroyWindow(hwnd);
+            LRESULT(0)
         }
-        WM_DESTROY => {
+        2 => {
             PostQuitMessage(0);
-            0
+            LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }
 
+// TODO pretty sure this leaks memory too
 // TODO pre measure text to determine the necessary width
 unsafe fn draw_overlay(hwnd: HWND) {
-    let hdc_screen = GetDC(null_mut());
-    let hdc_mem = CreateCompatibleDC(hdc_screen);
+    let hdc_screen = GetDC(None);
+    let hdc_mem = CreateCompatibleDC(Some(hdc_screen));
 
     let mut rect: RECT = mem::zeroed();
     // get the client area
-    GetClientRect(hwnd, &mut rect);
+    _ = GetClientRect(hwnd, &mut rect);
 
     let width = rect.right - rect.left;
     let height = rect.bottom - rect.top;
 
     let mut bitmap = mem::zeroed();
-    GdipCreateBitmapFromScan0(width, height, 0, 925707, null_mut::<BYTE>(), &mut bitmap);
+    GdipCreateBitmapFromScan0(width, height, 0, 925707, None, &mut bitmap);
 
     let mut graphics = mem::zeroed();
     GdipGetImageGraphicsContext(bitmap.cast(), &mut graphics);
 
     // set the font rendering to smooth
-    GdipSetTextRenderingHint(graphics, 4);
+    GdipSetTextRenderingHint(graphics, TextRenderingHint(4));
 
     let mut background_brush = mem::zeroed();
     GdipCreateSolidFill(BACKGROUND_COLOR.load(Relaxed), &mut background_brush);
@@ -164,14 +163,18 @@ unsafe fn draw_overlay(hwnd: HWND) {
     let font_name = U16CString::from_str("Inconsolata").unwrap();
 
     let mut font_family = mem::zeroed();
-    GdipCreateFontFamilyFromName(font_name.as_ptr(), null_mut(), &mut font_family);
+    GdipCreateFontFamilyFromName(
+        Some(&PCWSTR::from_raw(font_name.as_ptr())),
+        null_mut(),
+        &mut font_family,
+    );
 
     let mut font = mem::zeroed();
     GdipCreateFont(
         font_family,
-        FONT_HEIGHT.load(Relaxed) as REAL,
+        FONT_HEIGHT.load(Relaxed) as f32,
         0,
-        0,
+        Unit(0),
         &mut font,
     );
 
@@ -234,37 +237,37 @@ unsafe fn draw_overlay(hwnd: HWND) {
     let mut h_bitmap = mem::zeroed();
     GdipCreateHBITMAPFromBitmap(bitmap, &mut h_bitmap, 0);
 
-    let old_bitmap = SelectObject(hdc_mem, h_bitmap.cast());
+    let old_bitmap = SelectObject(hdc_mem, h_bitmap.into());
 
-    let mut point_source = POINT { x: 0, y: 0 };
-    let mut size = SIZE {
+    let point_source = POINT { x: 0, y: 0 };
+    let size = SIZE {
         cx: width,
         cy: height,
     };
 
-    let mut blend = BLENDFUNCTION {
-        BlendOp: AC_SRC_OVER,
+    let blend = BLENDFUNCTION {
+        BlendOp: AC_SRC_OVER as u8,
         BlendFlags: 0,
         SourceConstantAlpha: 255,
-        AlphaFormat: AC_SRC_ALPHA,
+        AlphaFormat: AC_SRC_ALPHA as u8,
     };
 
-    UpdateLayeredWindow(
+    _ = UpdateLayeredWindow(
         hwnd,
-        hdc_screen,
-        null_mut(),
-        &mut size,
-        hdc_mem,
-        &mut point_source,
-        0,
-        &mut blend,
+        Some(hdc_screen),
+        None,
+        Some(&size),
+        Some(hdc_mem),
+        Some(&point_source),
+        COLORREF(0),
+        Some(&blend),
         ULW_ALPHA,
     );
 
     SelectObject(hdc_mem, old_bitmap);
-    DeleteObject(h_bitmap as *mut _);
-    DeleteDC(hdc_mem);
-    ReleaseDC(null_mut(), hdc_screen);
+    _ = DeleteObject(HGDIOBJ::from(h_bitmap));
+    _ = DeleteDC(hdc_mem);
+    ReleaseDC(None, hdc_screen);
 }
 
 unsafe fn draw_text(
@@ -290,7 +293,7 @@ unsafe fn draw_text(
     let mut bounding_box = mem::zeroed();
     GdipMeasureString(
         graphics,
-        message.as_ptr(),
+        Some(&PCWSTR::from_raw(message.as_ptr())),
         -1,
         font,
         &point_f,
@@ -302,7 +305,7 @@ unsafe fn draw_text(
 
     GdipDrawString(
         graphics,
-        message.as_ptr(),
+        Some(&PCWSTR::from_raw(message.as_ptr())),
         -1,
         font,
         &point_f,

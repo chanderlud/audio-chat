@@ -52,7 +52,7 @@ async fn chat_room() -> Result<()> {
     let subscribers: Subscribers = Default::default();
 
     let identity = generate_ed25519(15);
-    println!("identity: {}", identity.public().to_peer_id().to_string());
+    println!("identity: {}", identity.public().to_peer_id());
 
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(identity)
         .with_tokio()
@@ -215,11 +215,7 @@ async fn chat_room() -> Result<()> {
 
     println!("listening on 40142");
     loop {
-        match swarm.select_next_some().await {
-            _event => {
-                // println!("{:?}", event);
-            }
-        }
+        let _event = swarm.select_next_some().await;
     }
 }
 

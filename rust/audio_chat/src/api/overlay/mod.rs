@@ -3,6 +3,9 @@ use std::fmt::Display;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize};
 use std::sync::Arc;
 
+#[cfg(windows)]
+extern crate windows as other_windows;
+
 use atomic_float::AtomicF64;
 use lazy_static::lazy_static;
 #[cfg(windows)]
@@ -11,6 +14,7 @@ use widestring::error::ContainsNul;
 /// flutter_rust_bridge:ignore
 #[cfg(windows)]
 mod color;
+#[allow(clippy::module_inception)]
 pub mod overlay;
 /// flutter_rust_bridge:ignore
 #[cfg(windows)]
@@ -37,7 +41,7 @@ struct Error {
 #[cfg(windows)]
 #[derive(Debug)]
 enum ErrorKind {
-    CreateWindow,
+    Windows(other_windows::core::Error),
     ContainsNul,
 }
 
@@ -45,7 +49,7 @@ enum ErrorKind {
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self._kind {
-            ErrorKind::CreateWindow => write!(f, "failed to create window"),
+            ErrorKind::Windows(error) => write!(f, "windows error: {:?}", error),
             ErrorKind::ContainsNul => write!(f, "string contains nul byte"),
         }
     }
@@ -61,9 +65,11 @@ impl From<ContainsNul<u16>> for Error {
 }
 
 #[cfg(windows)]
-impl From<ErrorKind> for Error {
-    fn from(kind: ErrorKind) -> Self {
-        Error { _kind: kind }
+impl From<other_windows::core::Error> for Error {
+    fn from(error: other_windows::core::Error) -> Self {
+        Error {
+            _kind: ErrorKind::Windows(error),
+        }
     }
 }
 

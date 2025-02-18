@@ -2,7 +2,6 @@
 members = [
     "relay_server",
     "audio_chat",
-    "gdiplus-sys",
     "chat_room",
     "messages",
 ]
