@@ -24,6 +24,7 @@ const BUFFER_SIZE: usize = 512;
 #[cfg(target_os = "windows")]
 const CREATION_FLAGS: u32 = 0x08000000;
 
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 impl Capabilities {
     pub(crate) async fn new() -> Self {
         let codec_regex = Regex::new("V....[D.] ([^= ]+)\\s+(.+)").unwrap();
@@ -114,11 +115,6 @@ impl Device {
     #[cfg(target_os = "linux")]
     fn devices() -> Vec<Self> {
         vec![Self::X11Grab]
-    }
-
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    fn devices() -> Vec<Self> {
-        Vec::new()
     }
 
     fn to_args(&self, encoder: Encoder) -> Vec<&str> {
@@ -334,6 +330,7 @@ impl RecordingConfig {
         command
     }
 
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     pub(crate) async fn test_config(&self) -> Result<ExitStatus> {
         let mut command = self.make_command(true);
         command
@@ -491,6 +488,7 @@ pub(crate) async fn playback(
     Ok(())
 }
 
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 fn parse_codecs(output: Output, regex: &Regex) -> Vec<String> {
     let output_str = String::from_utf8_lossy(&output.stdout);
 

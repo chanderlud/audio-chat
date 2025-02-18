@@ -55,6 +55,10 @@ jobs:
           ndk-version: r26d
           link-to-sdk: true
 
+      - name: test
+        if: matrix.info.target == 'aarch64-linux-android'
+        run: ls $(ANDROID_HOME)
+
       #      - uses: subosito/flutter-action@v2
 #        with:
 #          cache: true

@@ -204,7 +204,7 @@ class SettingsPageState extends State<SettingsPage>
             child: Container(
               width: 200,
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
+                color: Theme.of(context).colorScheme.surfaceDim,
                 borderRadius: const BorderRadius.only(
                   topRight: Radius.circular(8),
                   bottomRight: Radius.circular(8),
@@ -350,7 +350,7 @@ class SettingsPageState extends State<SettingsPage>
     } else if (target == route) {
       return Theme.of(context).colorScheme.primary;
     } else {
-      return Theme.of(context).colorScheme.surface;
+      return Theme.of(context).colorScheme.surfaceDim;
     }
   }
 }

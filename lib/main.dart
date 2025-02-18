@@ -284,15 +284,17 @@ class AudioChatApp extends StatelessWidget {
           showValueIndicator: ShowValueIndicator.always,
           overlayColor: Colors.transparent,
           trackShape: CustomTrackShape(),
+          inactiveTrackColor: const Color(0xFF121212),
           activeTrackColor: const Color(0xFFdb5c5c),
         ),
         colorScheme: const ColorScheme.dark(
           primary: Color(0xFFFD6D6D),
           secondary: Color(0xFFdb5c5c),
           brightness: Brightness.dark,
-          background: Color(0xFF222425),
+          surface: Color(0xFF222425),
           secondaryContainer: Color(0xFF191919),
           tertiaryContainer: Color(0xFF27292A),
+          surfaceDim: Color(0xFF121212),
         ),
         switchTheme: SwitchThemeData(
           trackOutlineWidth: WidgetStateProperty.all(0),
@@ -2002,7 +2004,7 @@ class TextInput extends StatelessWidget {
       decoration: InputDecoration(
         labelText: labelText,
         hintText: hintText,
-        hintStyle: const TextStyle(fontSize: 13, fontStyle: FontStyle.normal),
+        hintStyle: const TextStyle(fontSize: 13, fontStyle: FontStyle.normal, color: Color(0xFFa9a9aa), fontWeight: FontWeight.w600),
         fillColor: Theme.of(context).colorScheme.tertiaryContainer,
         filled: true,
         error: error,
