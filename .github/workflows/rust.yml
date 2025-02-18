@@ -48,6 +48,13 @@ jobs:
         if: matrix.info.target == 'aarch64-linux-android'
         uses: android-actions/setup-android@v3
 
+      - uses: nttld/setup-ndk@v1
+        if: matrix.info.target == 'aarch64-linux-android'
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+          link-to-sdk: true
+
       #      - uses: subosito/flutter-action@v2
 #        with:
 #          cache: true

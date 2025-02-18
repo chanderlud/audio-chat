@@ -116,6 +116,11 @@ impl Device {
         vec![Self::X11Grab]
     }
 
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    fn devices() -> Vec<Self> {
+        Vec::new()
+    }
+
     fn to_args(&self, encoder: Encoder) -> Vec<&str> {
         // TODO figure out a way to only add the video size for encoders if needed
         match self {
