@@ -44,7 +44,7 @@ android {
         applicationId "com.audio_chat.frontend"
         // You can update the following values to match your application needs.
         // For more information, see: https://docs.flutter.dev/deployment/android#reviewing-the-gradle-build-configuration.
-        minSdkVersion flutter.minSdkVersion
+        minSdkVersion localProperties.getProperty('flutter.minSdkVersion').toInteger()
         targetSdkVersion flutter.targetSdkVersion
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
@@ -63,4 +63,6 @@ flutter {
     source '../..'
 }
 
-dependencies {}
+dependencies {
+    classpath 'com.android.tools.build:gradle:7.3.1'
+}

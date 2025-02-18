@@ -57,7 +57,9 @@ jobs:
 
       - name: test
         if: matrix.info.target == 'aarch64-linux-android'
-        run: ls ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          mkdir ~/.NDK
+          ${{ steps.setup-ndk.outputs.ndk-path }}/build/tools/make_standalone_toolchain.py --api 26 --arch arm64 --install-dir ~/.NDK/arm64
 
       #      - uses: subosito/flutter-action@v2
 #        with:
