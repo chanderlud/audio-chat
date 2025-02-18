@@ -44,6 +44,7 @@ use tokio_util::bytes::Bytes;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tokio_util::compat::{Compat, FuturesAsyncReadCompatExt};
 
+use crate::api::constants::*;
 use crate::api::contact::Contact;
 use crate::api::error::{DartError, Error, ErrorKind};
 use crate::api::overlay::overlay::Overlay;
@@ -51,7 +52,6 @@ use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
 use crate::api::screenshare;
 use crate::api::screenshare::{Decoder, Encoder};
 use crate::{Behaviour, BehaviourEvent};
-use crate::api::constants::*;
 use messages::{message, Attachment, AudioHeader, Message, ScreenshareHeader};
 
 type Result<T> = std::result::Result<T, Error>;
@@ -996,30 +996,25 @@ impl AudioChat {
         spawn(async move {
             let stop_io = Arc::new(Notify::new());
 
-            let result = self_clone.call(
-                Some(audio_stream),
-                Some(&mut control_transport),
-                Some(message_receiver),
-                Some(&state_clone),
-                Some(peer),
-                &stop_io,
-            ).await;
+            let result = self_clone
+                .call(
+                    Some(audio_stream),
+                    Some(&mut control_transport),
+                    Some(message_receiver),
+                    Some(&state_clone),
+                    Some(peer),
+                    &stop_io,
+                )
+                .await;
 
             warn!("chat room call ended: {:?}", result);
 
             stop_io.notify_waiters();
 
             // cleanup
-            self_clone
-                .session_states
-                .write()
-                .await
-                .remove(&peer);
+            self_clone.session_states.write().await.remove(&peer);
 
-            (self_clone.session_status.lock().await)(
-                peer.to_string(),
-                "Inactive".to_string(),
-            )
+            (self_clone.session_status.lock().await)(peer.to_string(), "Inactive".to_string())
                 .await;
 
             info!("chat room {} cleaned up", peer);
@@ -1785,9 +1780,7 @@ struct SessionState {
 }
 
 impl SessionState {
-    fn new(
-        message_sender: &AsyncSender<Message>,
-    ) -> Self {
+    fn new(message_sender: &AsyncSender<Message>) -> Self {
         let stream_channel = unbounded_async();
 
         Self {

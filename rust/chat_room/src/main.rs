@@ -16,18 +16,18 @@ use libp2p::futures::stream::{SplitSink, SplitStream};
 use libp2p::futures::{Sink, SinkExt, StreamExt};
 use libp2p::identity::Keypair;
 use libp2p::multiaddr::Protocol;
+use libp2p::swarm::SwarmEvent;
 use libp2p::{
     autonat, dcutr, identify, noise, ping, tcp, yamux, Multiaddr, PeerId, Stream, StreamProtocol,
 };
-use libp2p::swarm::SwarmEvent;
 use messages::{AudioHeader, Message};
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelIterator;
 use tokio::fs::File;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::{join, select};
 use tokio::sync::RwLock;
 use tokio::time::{interval, sleep};
+use tokio::{join, select};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tokio_util::compat::{Compat, FuturesAsyncReadCompatExt};
 
@@ -100,7 +100,8 @@ async fn chat_room() -> Result<()> {
     swarm.listen_on(listen_addr_quic)?;
 
     let socket_address = SocketAddr::from_str("5.78.76.47:40142").unwrap();
-    let relay_identity = PeerId::from_str("12D3KooWMpeKAbMK4BTPsQY3rG7XwtdstseHGcq7kffY8LToYYKK").unwrap();
+    let relay_identity =
+        PeerId::from_str("12D3KooWMpeKAbMK4BTPsQY3rG7XwtdstseHGcq7kffY8LToYYKK").unwrap();
 
     let relay_address_udp = Multiaddr::empty()
         .with(Protocol::from(socket_address.ip()))
@@ -140,16 +141,14 @@ async fn chat_room() -> Result<()> {
             SwarmEvent::Behaviour(BehaviourEvent::Ping(_)) => (),
             SwarmEvent::NewExternalAddrCandidate { .. } => (),
             SwarmEvent::NewExternalAddrOfPeer { .. } => (),
-            SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Sent {
-                                                               ..
-                                                           })) => {
+            SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Sent { .. })) => {
                 println!("Told relay its public address");
                 told_relay_observed_addr = true;
             }
             SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received {
-                                                               info: identify::Info { .. },
-                                                               ..
-                                                           })) => {
+                info: identify::Info { .. },
+                ..
+            })) => {
                 println!("Relay told us our observed address");
                 learned_observed_addr = true;
             }
@@ -427,10 +426,13 @@ async fn message_receiver(
                         _ = message_sender.send((identity, message)).await;
                         break;
                     }
-                    Some(messages::message::Message::ConnectionRestored(_) | messages::message::Message::ConnectionInterrupted(_)) => {
+                    Some(
+                        messages::message::Message::ConnectionRestored(_)
+                        | messages::message::Message::ConnectionInterrupted(_),
+                    ) => {
                         continue;
                     }
-                    _ => ()
+                    _ => (),
                 }
 
                 if message_sender.send((identity, message)).await.is_err() {

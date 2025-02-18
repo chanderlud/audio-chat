@@ -477,8 +477,8 @@ fn parse_codecs(output: Output, regex: &Regex) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use log::debug;
     use super::*;
+    use log::debug;
 
     #[tokio::test]
     async fn test_capabilities() {

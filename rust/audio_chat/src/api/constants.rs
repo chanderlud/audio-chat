@@ -1,8 +1,8 @@
-use std::mem;
-use std::time::Duration;
 use libp2p::StreamProtocol;
 use nnnoiseless::FRAME_SIZE;
 use rubato::{SincInterpolationParameters, SincInterpolationType, WindowFunction};
+use std::mem;
+use std::time::Duration;
 
 /// The number of bytes in a single network audio frame
 pub(crate) const TRANSFER_BUFFER_SIZE: usize = FRAME_SIZE * mem::size_of::<i16>();
