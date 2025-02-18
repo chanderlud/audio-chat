@@ -1,14 +1,19 @@
 use std::fmt::Display;
-use std::process::{ExitStatus, Output, Stdio};
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+use std::process::{ExitStatus, Output};
+use std::process::Stdio;
 use std::str::FromStr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
 
-use crate::api::audio_chat::{Capabilities, RecordingConfig};
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+use crate::api::audio_chat::Capabilities;
+use crate::api::audio_chat::RecordingConfig;
 use libp2p::futures::{AsyncReadExt as ReadExt, AsyncWriteExt as WriteExt};
 use libp2p::Stream;
 use log::{error, info, warn};
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
