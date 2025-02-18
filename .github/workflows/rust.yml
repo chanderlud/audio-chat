@@ -20,8 +20,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust: [stable]
-
         info:
           - image: windows-2019
             target: x86_64-pc-windows-msvc
@@ -39,6 +37,8 @@ jobs:
 
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Linux Prerequisites
         if: runner.os == 'Linux'
@@ -51,10 +51,8 @@ jobs:
 #          architecture: x64
 
       - name: Setup Rust
-        uses: actions-rs/toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: ${{ matrix.rust }}
-          override: true
           components: rustfmt, clippy
           target: ${{ matrix.info.target }}
 
