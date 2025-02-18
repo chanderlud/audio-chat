@@ -12,6 +12,8 @@ fn add_lib(name: impl AsRef<str>, _static: bool) {
 }
 
 fn main() -> Result<()> {
+    println!("cargo::rustc-check-cfg=cfg(frb_expand)");
+
     let target = std::env::var("TARGET").expect("ERR: Could not check the target for the build.");
 
     if target.contains("android") {
