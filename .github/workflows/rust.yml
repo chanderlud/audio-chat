@@ -57,7 +57,7 @@ jobs:
 
       - name: test
         if: matrix.info.target == 'aarch64-linux-android'
-        run: ls $ANDROID_HOME
+        run: ls $ANDROID_HOME/ndk
 
       #      - uses: subosito/flutter-action@v2
 #        with:
