@@ -45,7 +45,9 @@ use crate::api::contact::Contact;
 use crate::api::error::{DartError, Error, ErrorKind};
 use crate::api::overlay::overlay::Overlay;
 use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use crate::api::screenshare;
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use crate::api::screenshare::{Decoder, Encoder};
 use crate::{Behaviour, BehaviourEvent};
 use messages::{message, Attachment, AudioHeader, Message, ScreenshareHeader};
@@ -1961,7 +1963,8 @@ impl Default for ScreenshareConfig {
 
 impl ScreenshareConfig {
     // this function must be async to use spawn
-    pub async fn new(config_str: String) -> ScreenshareConfig {
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+    pub async fn new(config_str: String) -> Self {
         let config: ScreenshareConfig = serde_json::from_str(&config_str).unwrap_or_default();
 
         let capabilities_clone = Arc::clone(&config.capabilities);
@@ -1975,6 +1978,11 @@ impl ScreenshareConfig {
         config
     }
 
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    pub async fn new(_config_str: String) -> Self {
+        Self::default()
+    }
+
     pub async fn capabilities(&self) -> Capabilities {
         self.capabilities.read().await.clone()
     }
@@ -1983,6 +1991,7 @@ impl ScreenshareConfig {
         self.recording_config.read().await.clone()
     }
 
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     pub async fn update_recording_config(
         &self,
         encoder: String,
@@ -2010,6 +2019,18 @@ impl ScreenshareConfig {
         }
 
         Err("Invalid configuration".to_string().into())
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    pub async fn update_recording_config(
+        &self,
+        _encoder: String,
+        _device: String,
+        _bitrate: u32,
+        _framerate: u32,
+        _height: Option<u32>,
+    ) -> std::result::Result<(), DartError> {
+        Ok(())
     }
 
     #[frb(sync)]
