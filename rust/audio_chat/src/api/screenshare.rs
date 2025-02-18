@@ -1,7 +1,7 @@
 use std::fmt::Display;
+use std::process::Stdio;
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use std::process::{ExitStatus, Output};
-use std::process::Stdio;
 use std::str::FromStr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::Relaxed;
