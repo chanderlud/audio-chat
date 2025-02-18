@@ -130,6 +130,7 @@ impl Overlay {
 
     /// non-windows platforms don't have an overlay
     #[cfg(not(windows))]
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         _enabled: bool,
         _x: i32,

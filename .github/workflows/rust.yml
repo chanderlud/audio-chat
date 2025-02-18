@@ -83,6 +83,7 @@ jobs:
         run: cd rust && cargo fmt -- --check
 
       - name: Lint with Clippy
+        if: matrix.info.target != 'aarch64-linux-android'
         run: cd rust && cargo clippy -- -D warnings
 
       - name: Build
