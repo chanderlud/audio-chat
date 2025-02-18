@@ -216,7 +216,7 @@ async fn chat_room() -> Result<()> {
     println!("listening on 40142");
     loop {
         match swarm.select_next_some().await {
-            event => {
+            _event => {
                 // println!("{:?}", event);
             }
         }

@@ -23,17 +23,13 @@ use libp2p::futures::StreamExt;
 use libp2p::identity::Keypair;
 use libp2p::multiaddr::Protocol;
 use libp2p::swarm::{ConnectionId, SwarmEvent};
-use libp2p::{
-    autonat, dcutr, identify, noise, ping, tcp, yamux, Multiaddr, PeerId, Stream, StreamProtocol,
-};
+use libp2p::{autonat, dcutr, identify, noise, ping, tcp, yamux, Multiaddr, PeerId, Stream};
 use libp2p_stream::Control;
 use log::{debug, error, info, warn};
 use nnnoiseless::{DenoiseState, RnnModel, FRAME_SIZE};
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelRefMutIterator;
-use rubato::{
-    Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
-};
+use rubato::{Resampler, SincFixedIn};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::lookup_host;
@@ -1990,7 +1986,7 @@ impl ScreenshareConfig {
     pub async fn update_recording_config(
         &self,
         encoder: String,
-        device: String,
+        _device: String,
         bitrate: u32,
         framerate: u32,
         height: Option<u32>,

@@ -21,19 +21,22 @@ use crate::api::error::{Error, ErrorKind};
 type Result<T> = std::result::Result<T, Error>;
 
 const BUFFER_SIZE: usize = 512;
-// TODO this is windows only i think
+#[cfg(target_os = "windows")]
 const CREATION_FLAGS: u32 = 0x08000000;
 
 impl Capabilities {
     pub(crate) async fn new() -> Self {
         let codec_regex = Regex::new("V....[D.] ([^= ]+)\\s+(.+)").unwrap();
 
-        let encoders_result = Command::new("ffmpeg")
-            .arg("-hide_banner")
-            .arg("-encoders")
-            .creation_flags(CREATION_FLAGS)
-            .output()
-            .await;
+        let mut command = Command::new("ffmpeg");
+        command.arg("-hide_banner").arg("-encoders");
+
+        #[cfg(target_os = "windows")]
+        {
+            command.creation_flags(CREATION_FLAGS);
+        }
+
+        let encoders_result = command.output().await;
 
         let decoders_result = Command::new("ffplay")
             .arg("-hide_banner")
@@ -323,14 +326,18 @@ impl RecordingConfig {
     }
 
     pub(crate) async fn test_config(&self) -> Result<ExitStatus> {
-        let mut child = self
-            .make_command(true)
+        let mut command = self.make_command(true);
+        command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(CREATION_FLAGS)
-            .spawn()?;
+            .stderr(Stdio::null());
 
+        #[cfg(target_os = "windows")]
+        {
+            command.creation_flags(CREATION_FLAGS);
+        }
+
+        let mut child = command.spawn()?;
         child.wait().await.map_err(Into::into)
     }
 }
@@ -357,12 +364,16 @@ pub(crate) async fn record(
 ) -> Result<()> {
     warn!("Starting screen recording with config: {:?}", config);
 
-    let mut child = config
-        .make_command(false)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .creation_flags(CREATION_FLAGS)
-        .spawn()?;
+    let mut command = config.make_command(false);
+
+    command.stdout(Stdio::piped()).stderr(Stdio::null());
+
+    #[cfg(target_os = "windows")]
+    {
+        command.creation_flags(CREATION_FLAGS);
+    }
+
+    let mut child = command.spawn()?;
 
     let mut stdout = child.stdout.take().expect("Failed to capture stdout");
 
@@ -413,8 +424,9 @@ pub(crate) async fn playback(
         decoder: decoders.into_iter().next().unwrap(),
     };
 
-    let mut child = config
-        .make_command()
+    let mut command = config.make_command();
+
+    command
         .args(&[
             "-x",
             &width.to_string(),
@@ -430,9 +442,14 @@ pub(crate) async fn playback(
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(CREATION_FLAGS)
-        .spawn()?;
+        .stderr(Stdio::null());
+
+    #[cfg(target_os = "windows")]
+    {
+        command.creation_flags(CREATION_FLAGS);
+    }
+
+    let mut child = command.spawn()?;
 
     let mut stdin = child.stdin.take().expect("Failed to capture stdin");
 
