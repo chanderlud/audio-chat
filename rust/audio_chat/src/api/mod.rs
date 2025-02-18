@@ -8,5 +8,4 @@ pub mod logger;
 pub mod overlay;
 pub mod player;
 /// flutter_rust_bridge:ignore
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 mod screenshare;

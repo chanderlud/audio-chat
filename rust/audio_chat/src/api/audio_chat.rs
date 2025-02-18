@@ -45,9 +45,7 @@ use crate::api::contact::Contact;
 use crate::api::error::{DartError, Error, ErrorKind};
 use crate::api::overlay::overlay::Overlay;
 use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use crate::api::screenshare;
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use crate::api::screenshare::{Decoder, Encoder};
 use crate::{Behaviour, BehaviourEvent};
 use messages::{message, Attachment, AudioHeader, Message, ScreenshareHeader};
