@@ -42,6 +42,7 @@ use tokio_util::bytes::Bytes;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tokio_util::compat::{Compat, FuturesAsyncReadCompatExt};
 
+use crate::api::codec::{decoder, encoder};
 use crate::api::constants::*;
 use crate::api::contact::Contact;
 use crate::api::error::{DartError, Error, ErrorKind};
@@ -1369,6 +1370,8 @@ impl AudioChat {
         peer: Option<PeerId>,
         stop_io: &Arc<Notify>,
     ) -> Result<()> {
+        let codec_enabled = true; // TODO make this legit
+
         // if any of the values required for a normal call is missing, the call is an audio test
         let audio_test = transport.is_none()
             || stream.is_none()
@@ -1382,15 +1385,27 @@ impl AudioChat {
         // the number of frames to hold in a channel
         let framed_size = CHANNEL_SIZE / FRAME_SIZE;
 
-        // sends messages from the input processor to the sending socket
+        // input stream -> input processor
+        let (input_sender, input_receiver) = bounded::<f32>(CHANNEL_SIZE);
+
+        // input processor -> encoder or sending socket
         let (processed_input_sender, processed_input_receiver) =
             bounded_async::<ProcessorMessage>(framed_size);
-        // sends raw data from the receiving socket to the output processor
-        let (output_sender, output_receiver) = bounded_async::<ProcessorMessage>(framed_size);
-        // sends samples from the output processor to the output stream
-        let (processed_output_sender, processed_output_receiver) = bounded::<f32>(CHANNEL_SIZE);
-        // sends samples from the input to the input processor
-        let (input_sender, input_receiver) = bounded::<f32>(CHANNEL_SIZE);
+
+        // encoder -> sending socket
+        let (encoded_input_sender, encoded_input_receiver) =
+            bounded_async::<ProcessorMessage>(framed_size);
+
+        // receiving socket -> output processor or decoder
+        let (network_output_sender, network_output_receiver) =
+            bounded_async::<ProcessorMessage>(framed_size);
+
+        // decoder -> output processor
+        let (decoded_output_sender, decoded_output_receiver) =
+            bounded_async::<ProcessorMessage>(2_400);
+
+        // output processor -> output stream
+        let (output_sender, output_receiver) = bounded::<f32>(CHANNEL_SIZE);
 
         // channels used for moving values to the statistics collector
         let (input_rms_sender, input_rms_receiver) = unbounded_async::<f32>();
@@ -1475,6 +1490,7 @@ impl AudioChat {
                 muted,
                 denoiser,
                 input_rms_sender.to_sync(),
+                codec_enabled,
             )
         });
 
@@ -1482,17 +1498,44 @@ impl AudioChat {
         let ratio = output_config.sample_rate().0 as f64 / remote_input_config.sample_rate as f64;
         // get a reference to output volume for the processor
         let output_volume = Arc::clone(&self.output_volume);
+        // do this outside the output processor thread
+        let output_processor_receiver = if codec_enabled {
+            decoded_output_receiver.to_sync()
+        } else {
+            network_output_receiver.clone_sync()
+        };
 
         // spawn the output processor thread
         std::thread::spawn(move || {
             output_processor(
-                output_receiver.to_sync(),
-                processed_output_sender,
+                output_processor_receiver,
+                output_sender,
                 ratio,
                 output_volume,
                 output_rms_sender.to_sync(),
             )
         });
+
+        // if using codec, spawn extra encoder and decoder threads
+        if codec_enabled {
+            let encoder_receiver = processed_input_receiver.clone_sync();
+            let encoder_sender = encoded_input_sender.clone_sync();
+
+            std::thread::spawn(move || {
+                encoder(
+                    encoder_receiver,
+                    encoder_sender,
+                    if denoise { 48_000 } else { sample_rate as u32 },
+                );
+            });
+
+            let decoder_receiver = network_output_receiver.to_sync();
+            let decoder_sender = decoded_output_sender.clone_sync();
+
+            std::thread::spawn(move || {
+                decoder(decoder_receiver, decoder_sender);
+            });
+        }
 
         let input_channels = input_config.channels() as usize;
         let end_call = Arc::clone(&self.end_call);
@@ -1530,7 +1573,7 @@ impl AudioChat {
                     }
 
                     for frame in output.chunks_mut(output_channels) {
-                        let sample = processed_output_receiver.recv().unwrap_or(0_f32);
+                        let sample = output_receiver.recv().unwrap_or(0_f32);
 
                         // write the sample to all the channels
                         for channel in frame.iter_mut() {
@@ -1562,8 +1605,12 @@ impl AudioChat {
 
         if audio_test {
             spawn(loopback(
-                processed_input_receiver,
-                output_sender,
+                if codec_enabled {
+                    encoded_input_receiver
+                } else {
+                    processed_input_receiver
+                },
+                network_output_sender,
                 Arc::clone(stop_io),
             ));
 
@@ -1584,14 +1631,18 @@ impl AudioChat {
         let (write, read) = audio_transport.unwrap().split();
 
         spawn(audio_input(
-            processed_input_receiver,
+            if codec_enabled {
+                encoded_input_receiver
+            } else {
+                processed_input_receiver
+            },
             write,
             Arc::clone(stop_io),
             upload_bandwidth,
         ));
 
         spawn(audio_output(
-            output_sender,
+            network_output_sender,
             read,
             Arc::clone(stop_io),
             download_bandwidth,
@@ -1722,7 +1773,7 @@ pub(crate) struct SendStream {
 unsafe impl Send for SendStream {}
 
 /// a message containing either a frame of audio or silence
-enum ProcessorMessage {
+pub(crate) enum ProcessorMessage {
     Data(Bytes),
     Silence,
 }
@@ -2463,15 +2514,13 @@ async fn audio_output(
                     bandwidth.fetch_add(len, Relaxed);
 
                     match len {
-                        TRANSFER_BUFFER_SIZE => {
-                            _ = sender.try_send(ProcessorMessage::bytes(message.freeze()));
-                        }
                         1 => match message[0] {
-                            0 => _ = sender.try_send(ProcessorMessage::silence()), // silence
+                            0 => _ = sender.try_send(ProcessorMessage::silence())?, // silence
                             _ => error!("received unknown control signal {}", message[0]),
                         },
-                        // this should be impossible
-                        len => error!("received {} < {} data", len, TRANSFER_BUFFER_SIZE),
+                        _ => {
+                            sender.try_send(ProcessorMessage::bytes(message.freeze()))?;
+                        }
                     }
                 }
                 Ok(Some(Err(error))) => {
@@ -2508,7 +2557,9 @@ async fn loopback(
 ) {
     let loopback_future = async {
         while let Ok(message) = input_receiver.recv().await {
-            _ = output_sender.try_send(message);
+            if output_sender.try_send(message).is_err() {
+                break;
+            }
         }
     };
 
@@ -2581,6 +2632,7 @@ async fn statistics_collector(
     Ok(())
 }
 
+// TODO try and get it so SILENCE_FRAME and codec_enabled are not needed for the input processor
 /// Processes the audio input and sends it to the sending socket
 #[allow(clippy::too_many_arguments)]
 fn input_processor(
@@ -2592,6 +2644,7 @@ fn input_processor(
     muted: Arc<AtomicBool>,
     mut denoiser: Option<Box<DenoiseState>>,
     rms_sender: Sender<f32>,
+    codec_enabled: bool,
 ) -> Result<()> {
     // the maximum and minimum values for i16 as f32
     let max_i16_f32 = i16::MAX as f32;
@@ -2637,7 +2690,12 @@ fn input_processor(
         if muted.load() {
             if position > FRAME_SIZE {
                 position = 0;
-                _ = sender.try_send(ProcessorMessage::silence());
+
+                sender.try_send(if codec_enabled {
+                    ProcessorMessage::slice(SILENT_FRAME)
+                } else {
+                    ProcessorMessage::silence()
+                })?;
             } else {
                 position += 1;
             }
@@ -2693,7 +2751,12 @@ fn input_processor(
             if silence_length < 80 {
                 silence_length += 1; // short silences are ignored
             } else {
-                _ = sender.try_send(ProcessorMessage::silence());
+                sender.try_send(if codec_enabled {
+                    ProcessorMessage::slice(SILENT_FRAME)
+                } else {
+                    ProcessorMessage::silence()
+                })?;
+
                 continue;
             }
         } else {
@@ -2711,7 +2774,7 @@ fn input_processor(
             )
         };
 
-        _ = sender.try_send(ProcessorMessage::slice(bytes));
+        sender.try_send(ProcessorMessage::slice(bytes))?;
     }
 
     debug!("Input processor ended");

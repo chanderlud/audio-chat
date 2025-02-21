@@ -2,7 +2,7 @@
 
 - [Flutter](https://flutter.dev/) UI with Windows, Linux, macOS, iOS, and Android support
 - [libp2p](https://libp2p.io/) networking and cryptography
-- Lossless 16-bit DVD quality audio
+- Lossless *raw* audio and [SEA codec](https://github.com/Daninet/sea-codec) options
 - [nnnoiseless](https://github.com/jneem/nnnoiseless) noise suppression
 - Built in text chat with attachments
 - Low CPU and memory utilization
@@ -11,7 +11,8 @@
 
 ## Planned
 - Web support
-- Audio compression options
+- Lossless audio codec support
+- Use SEA codec for audio assets & custom ringtones
 - Chat rooms (group calls)
 
 ##
