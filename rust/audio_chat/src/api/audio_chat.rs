@@ -325,7 +325,6 @@ impl AudioChat {
         let result = self
             .call(None, None, None, None, None, &stop_io)
             .await
-            .map_err(Error::from)
             .map_err(Into::into);
 
         stop_io.notify_waiters();
