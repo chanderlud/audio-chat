@@ -72,6 +72,9 @@ class SettingsController with ChangeNotifier {
   /// the overlay configuration
   late OverlayConfig overlayConfig;
 
+  /// the codec configuration
+  late CodecConfig codecConfig;
+
   /// the name of a denoise model
   late String? denoiseModel;
 
@@ -140,6 +143,7 @@ class SettingsController with ChangeNotifier {
     networkConfig = loadNetworkConfig();
     screenshareConfig = await loadScreenshareConfig();
     overlayConfig = loadOverlayConfig();
+    codecConfig = loadCodecConfig();
 
     notifyListeners();
   }
@@ -367,7 +371,22 @@ class SettingsController with ChangeNotifier {
   }
 
   Future<void> saveScreenshareConfig() async {
-    await options.setString("screenshareConfig", screenshareConfig.toString());
+    await options.setString('screenshareConfig', screenshareConfig.toString());
+  }
+
+  CodecConfig loadCodecConfig() {
+    return CodecConfig(
+      enabled: options.getBool('codecEnabled') ?? true,
+      vbr: options.getBool('codecVbr') ?? true,
+      residualBits: options.getDouble('codecResidualBits') ?? 5.0,
+    );
+  }
+
+  Future<void> saveCodecConfig() async {
+    (bool, bool, double) values = codecConfig.toValues();
+    await options.setBool('codecEnabled', values.$1);
+    await options.setBool('codecVbr', values.$2);
+    await options.setDouble('codecResidualBits', values.$3);
   }
 
   OverlayConfig loadOverlayConfig() {

@@ -63,8 +63,8 @@ Future<void> main() async {
     width: settingsController.overlayConfig.width.round(),
     height: settingsController.overlayConfig.height.round(),
     fontHeight: settingsController.overlayConfig.fontHeight,
-    backgroundColor: argb(settingsController.overlayConfig.backgroundColor),
-    fontColor: argb(settingsController.overlayConfig.fontColor),
+    backgroundColor: settingsController.overlayConfig.backgroundColor.toARGB32(),
+    fontColor: settingsController.overlayConfig.fontColor.toARGB32(),
   );
 
   final soundPlayer = SoundPlayer(outputVolume: settingsController.soundVolume);
@@ -81,6 +81,7 @@ Future<void> main() async {
       networkConfig: settingsController.networkConfig,
       screenshareConfig: settingsController.screenshareConfig,
       overlay: overlay,
+      codecConfig: settingsController.codecConfig,
       // called when there is an incoming call
       acceptCall: (String id, Uint8List? ringtone, DartNotify cancel) async {
         Contact? contact = settingsController.getContact(id);

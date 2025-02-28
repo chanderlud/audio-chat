@@ -18,6 +18,9 @@ impl From<&[u8]> for AudioHeader {
             channels: u16::from_le_bytes([value[22], value[23]]) as u32,
             sample_rate: u32::from_le_bytes([value[24], value[25], value[26], value[27]]),
             sample_format: String::from(sample_format),
+            codec_enabled: false,
+            vbr: false,
+            residual_bits: 0_f64,
         }
     }
 }

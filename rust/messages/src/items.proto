@@ -7,6 +7,9 @@ message AudioHeader {
   required uint32 channels = 1;
   required uint32 sample_rate = 2;
   required string sample_format = 3;
+  required bool codec_enabled = 4;
+  required bool vbr = 5;
+  required double residual_bits = 6;
 }
 
 // Signals that one client wants to start a call

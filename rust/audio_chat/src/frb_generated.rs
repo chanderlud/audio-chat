@@ -41,7 +41,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.8.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1871111311;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 964519520;
 
 // Section: executor
 
@@ -359,6 +359,7 @@ let api_host = <Arc < Host >>::sse_decode(&mut deserializer);
 let api_network_config = <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<NetworkConfig>>>::sse_decode(&mut deserializer);
 let api_screenshare_config = <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<ScreenshareConfig>>>::sse_decode(&mut deserializer);
 let api_overlay = <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Overlay>>>::sse_decode(&mut deserializer);
+let api_codec_config = <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CodecConfig>>>::sse_decode(&mut deserializer);
 let api_accept_call = decode_DartFn_Inputs_String_opt_list_prim_u_8_strict_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartNotify_Output_bool_AnyhowException(<flutter_rust_bridge::DartOpaque>::sse_decode(&mut deserializer));
 let api_call_ended = decode_DartFn_Inputs_String_bool_Output_unit_AnyhowException(<flutter_rust_bridge::DartOpaque>::sse_decode(&mut deserializer));
 let api_get_contact = decode_DartFn_Inputs_list_prim_u_8_strict_Output_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerContact_AnyhowException(<flutter_rust_bridge::DartOpaque>::sse_decode(&mut deserializer));
@@ -374,19 +375,22 @@ let api_screenshare_started = decode_DartFn_Inputs_Auto_Owned_RustOpaque_flutter
                         let mut api_network_config_guard = None;
 let mut api_screenshare_config_guard = None;
 let mut api_overlay_guard = None;
-let decode_indices_ = flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(&api_network_config, 0, false), flutter_rust_bridge::for_generated::LockableOrderInfo::new(&api_screenshare_config, 1, false), flutter_rust_bridge::for_generated::LockableOrderInfo::new(&api_overlay, 2, false)]);
+let mut api_codec_config_guard = None;
+let decode_indices_ = flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(&api_network_config, 0, false), flutter_rust_bridge::for_generated::LockableOrderInfo::new(&api_screenshare_config, 1, false), flutter_rust_bridge::for_generated::LockableOrderInfo::new(&api_overlay, 2, false), flutter_rust_bridge::for_generated::LockableOrderInfo::new(&api_codec_config, 3, false)]);
         for i in decode_indices_ {
             match i {
                 0 => api_network_config_guard = Some(api_network_config.lockable_decode_async_ref().await),
 1 => api_screenshare_config_guard = Some(api_screenshare_config.lockable_decode_async_ref().await),
 2 => api_overlay_guard = Some(api_overlay.lockable_decode_async_ref().await),
+3 => api_codec_config_guard = Some(api_codec_config.lockable_decode_async_ref().await),
                 _ => unreachable!(),
             }
         }
         let api_network_config_guard = api_network_config_guard.unwrap();
 let api_screenshare_config_guard = api_screenshare_config_guard.unwrap();
 let api_overlay_guard = api_overlay_guard.unwrap();
- let output_ok = Result::<_,()>::Ok(crate::api::audio_chat::AudioChat::new(api_identity, api_host, &*api_network_config_guard, &*api_screenshare_config_guard, &*api_overlay_guard, api_accept_call, api_call_ended, api_get_contact, api_call_state, api_session_status, api_start_sessions, api_load_ringtone, api_statistics, api_message_received, api_manager_active, api_screenshare_started).await)?;   Ok(output_ok)
+let api_codec_config_guard = api_codec_config_guard.unwrap();
+ let output_ok = Result::<_,()>::Ok(crate::api::audio_chat::AudioChat::new(api_identity, api_host, &*api_network_config_guard, &*api_screenshare_config_guard, &*api_overlay_guard, &*api_codec_config_guard, api_accept_call, api_call_ended, api_get_contact, api_call_state, api_session_status, api_start_sessions, api_load_ringtone, api_statistics, api_message_received, api_manager_active, api_screenshare_started).await)?;   Ok(output_ok)
                     })().await)
                 } })
 }
@@ -1839,6 +1843,240 @@ fn wire__crate__api__audio_chat__ChatMessage_time_impl(
                 let output_ok = Result::<_, ()>::Ok(crate::api::audio_chat::ChatMessage::time(
                     &*api_that_guard,
                 ))?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__audio_chat__CodecConfig_new_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "CodecConfig_new",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_enabled = <bool>::sse_decode(&mut deserializer);
+            let api_vbr = <bool>::sse_decode(&mut deserializer);
+            let api_residual_bits = <f32>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok(crate::api::audio_chat::CodecConfig::new(
+                    api_enabled,
+                    api_vbr,
+                    api_residual_bits,
+                ))?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__audio_chat__CodecConfig_set_enabled_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "CodecConfig_set_enabled",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CodecConfig>,
+            >>::sse_decode(&mut deserializer);
+            let api_enabled = <bool>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_that_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_that, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_that_guard = api_that_guard.unwrap();
+                let output_ok = Result::<_, ()>::Ok({
+                    crate::api::audio_chat::CodecConfig::set_enabled(&*api_that_guard, api_enabled);
+                })?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__audio_chat__CodecConfig_set_residual_bits_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "CodecConfig_set_residual_bits",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CodecConfig>,
+            >>::sse_decode(&mut deserializer);
+            let api_residual_bits = <f32>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_that_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_that, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_that_guard = api_that_guard.unwrap();
+                let output_ok = Result::<_, ()>::Ok({
+                    crate::api::audio_chat::CodecConfig::set_residual_bits(
+                        &*api_that_guard,
+                        api_residual_bits,
+                    );
+                })?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__audio_chat__CodecConfig_set_vbr_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "CodecConfig_set_vbr",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CodecConfig>,
+            >>::sse_decode(&mut deserializer);
+            let api_vbr = <bool>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_that_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_that, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_that_guard = api_that_guard.unwrap();
+                let output_ok = Result::<_, ()>::Ok({
+                    crate::api::audio_chat::CodecConfig::set_vbr(&*api_that_guard, api_vbr);
+                })?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__audio_chat__CodecConfig_to_values_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "CodecConfig_to_values",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CodecConfig>,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_that_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_that, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_that_guard = api_that_guard.unwrap();
+                let output_ok = Result::<_, ()>::Ok(
+                    crate::api::audio_chat::CodecConfig::to_values(&*api_that_guard),
+                )?;
                 Ok(output_ok)
             })())
         },
@@ -3614,7 +3852,7 @@ fn wire__crate__api__audio_chat__ScreenshareConfig_update_recording_config_impl(
                 flutter_rust_bridge::for_generated::RustAutoOpaqueInner<ScreenshareConfig>,
             >>::sse_decode(&mut deserializer);
             let api_encoder = <String>::sse_decode(&mut deserializer);
-            let api_device = <String>::sse_decode(&mut deserializer);
+            let api__device = <String>::sse_decode(&mut deserializer);
             let api_bitrate = <u32>::sse_decode(&mut deserializer);
             let api_framerate = <u32>::sse_decode(&mut deserializer);
             let api_height = <Option<u32>>::sse_decode(&mut deserializer);
@@ -3643,7 +3881,7 @@ fn wire__crate__api__audio_chat__ScreenshareConfig_update_recording_config_impl(
                             crate::api::audio_chat::ScreenshareConfig::update_recording_config(
                                 &*api_that_guard,
                                 api_encoder,
-                                api_device,
+                                api__device,
                                 api_bitrate,
                                 api_framerate,
                                 api_height,
@@ -4555,6 +4793,9 @@ flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
     flutter_rust_bridge::for_generated::RustAutoOpaqueInner<ChatMessage>
 );
 flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
+    flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CodecConfig>
+);
+flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
     flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Contact>
 );
 flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
@@ -4624,6 +4865,16 @@ impl SseDecode for ChatMessage {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut inner = <RustOpaqueMoi<
             flutter_rust_bridge::for_generated::RustAutoOpaqueInner<ChatMessage>,
+        >>::sse_decode(deserializer);
+        return flutter_rust_bridge::for_generated::rust_auto_opaque_decode_owned(inner);
+    }
+}
+
+impl SseDecode for CodecConfig {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <RustOpaqueMoi<
+            flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CodecConfig>,
         >>::sse_decode(deserializer);
         return flutter_rust_bridge::for_generated::rust_auto_opaque_decode_owned(inner);
     }
@@ -4749,6 +5000,16 @@ impl SseDecode
 
 impl SseDecode
     for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<ChatMessage>>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <usize>::sse_decode(deserializer);
+        return decode_rust_opaque_moi(inner);
+    }
+}
+
+impl SseDecode
+    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CodecConfig>>
 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -4985,6 +5246,16 @@ impl SseDecode for Option<Vec<u8>> {
     }
 }
 
+impl SseDecode for (bool, bool, f32) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_field0 = <bool>::sse_decode(deserializer);
+        let mut var_field1 = <bool>::sse_decode(deserializer);
+        let mut var_field2 = <f32>::sse_decode(deserializer);
+        return (var_field0, var_field1, var_field2);
+    }
+}
+
 impl SseDecode for (i32, i32) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -5159,126 +5430,126 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        41 => wire__crate__api__audio_chat__DartNotify_notified_impl(
+        46 => wire__crate__api__audio_chat__DartNotify_notified_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        43 => wire__crate__api__audio_chat__NetworkConfig_get_relay_address_impl(
+        48 => wire__crate__api__audio_chat__NetworkConfig_get_relay_address_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        44 => wire__crate__api__audio_chat__NetworkConfig_get_relay_id_impl(
+        49 => wire__crate__api__audio_chat__NetworkConfig_get_relay_id_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        46 => wire__crate__api__audio_chat__NetworkConfig_set_relay_address_impl(
+        51 => wire__crate__api__audio_chat__NetworkConfig_set_relay_address_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        47 => wire__crate__api__audio_chat__NetworkConfig_set_relay_id_impl(
+        52 => wire__crate__api__audio_chat__NetworkConfig_set_relay_id_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        48 => wire__crate__api__overlay__overlay__Overlay_disable_impl(
+        53 => wire__crate__api__overlay__overlay__Overlay_disable_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        49 => wire__crate__api__overlay__overlay__Overlay_enable_impl(
+        54 => wire__crate__api__overlay__overlay__Overlay_enable_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        50 => {
+        55 => {
             wire__crate__api__overlay__overlay__Overlay_hide_impl(port, ptr, rust_vec_len, data_len)
         }
-        51 => wire__crate__api__overlay__overlay__Overlay_move_overlay_impl(
-            port,
-            ptr,
-            rust_vec_len,
-            data_len,
-        ),
-        52 => {
-            wire__crate__api__overlay__overlay__Overlay_new_impl(port, ptr, rust_vec_len, data_len)
-        }
-        54 => wire__crate__api__overlay__overlay__Overlay_set_background_color_impl(
-            port,
-            ptr,
-            rust_vec_len,
-            data_len,
-        ),
-        55 => wire__crate__api__overlay__overlay__Overlay_set_font_color_impl(
-            port,
-            ptr,
-            rust_vec_len,
-            data_len,
-        ),
-        56 => wire__crate__api__overlay__overlay__Overlay_set_font_height_impl(
+        56 => wire__crate__api__overlay__overlay__Overlay_move_overlay_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
         57 => {
+            wire__crate__api__overlay__overlay__Overlay_new_impl(port, ptr, rust_vec_len, data_len)
+        }
+        59 => wire__crate__api__overlay__overlay__Overlay_set_background_color_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        60 => wire__crate__api__overlay__overlay__Overlay_set_font_color_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        61 => wire__crate__api__overlay__overlay__Overlay_set_font_height_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        62 => {
             wire__crate__api__overlay__overlay__Overlay_show_impl(port, ptr, rust_vec_len, data_len)
         }
-        63 => wire__crate__api__audio_chat__ScreenshareConfig_capabilities_impl(
+        68 => wire__crate__api__audio_chat__ScreenshareConfig_capabilities_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        64 => wire__crate__api__audio_chat__ScreenshareConfig_default_impl(
+        69 => wire__crate__api__audio_chat__ScreenshareConfig_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        65 => wire__crate__api__audio_chat__ScreenshareConfig_new_impl(
+        70 => wire__crate__api__audio_chat__ScreenshareConfig_new_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        66 => wire__crate__api__audio_chat__ScreenshareConfig_recording_config_impl(
+        71 => wire__crate__api__audio_chat__ScreenshareConfig_recording_config_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        68 => wire__crate__api__audio_chat__ScreenshareConfig_update_recording_config_impl(
+        73 => wire__crate__api__audio_chat__ScreenshareConfig_update_recording_config_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        72 => wire__crate__api__player__SoundPlayer_play_impl(port, ptr, rust_vec_len, data_len),
-        73 => wire__crate__api__player__SoundPlayer_update_output_device_impl(
+        77 => wire__crate__api__player__SoundPlayer_play_impl(port, ptr, rust_vec_len, data_len),
+        78 => wire__crate__api__player__SoundPlayer_update_output_device_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        77 => wire__crate__api__logger__init_logger_impl(port, ptr, rust_vec_len, data_len),
-        79 => wire__crate__api__logger__send_to_dart_logger_set_stream_sink_impl(
+        82 => wire__crate__api__logger__init_logger_impl(port, ptr, rust_vec_len, data_len),
+        84 => wire__crate__api__logger__send_to_dart_logger_set_stream_sink_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        80 => {
+        85 => {
             wire__crate__api__audio_chat__statistics_default_impl(port, ptr, rust_vec_len, data_len)
         }
         _ => unreachable!(),
@@ -5342,54 +5613,65 @@ fn pde_ffi_dispatcher_sync_impl(
         ),
         31 => wire__crate__api__audio_chat__ChatMessage_is_sender_impl(ptr, rust_vec_len, data_len),
         32 => wire__crate__api__audio_chat__ChatMessage_time_impl(ptr, rust_vec_len, data_len),
-        33 => wire__crate__api__contact__Contact_from_parts_impl(ptr, rust_vec_len, data_len),
-        34 => wire__crate__api__contact__Contact_id_impl(ptr, rust_vec_len, data_len),
-        35 => wire__crate__api__contact__Contact_id_eq_impl(ptr, rust_vec_len, data_len),
-        36 => wire__crate__api__contact__Contact_new_impl(ptr, rust_vec_len, data_len),
-        37 => wire__crate__api__contact__Contact_nickname_impl(ptr, rust_vec_len, data_len),
-        38 => wire__crate__api__contact__Contact_peer_id_impl(ptr, rust_vec_len, data_len),
-        39 => wire__crate__api__contact__Contact_pub_clone_impl(ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__contact__Contact_set_nickname_impl(ptr, rust_vec_len, data_len),
-        42 => wire__crate__api__audio_chat__DartNotify_notify_impl(ptr, rust_vec_len, data_len),
-        45 => wire__crate__api__audio_chat__NetworkConfig_new_impl(ptr, rust_vec_len, data_len),
-        53 => wire__crate__api__overlay__overlay__Overlay_screen_resolution_impl(
+        33 => wire__crate__api__audio_chat__CodecConfig_new_impl(ptr, rust_vec_len, data_len),
+        34 => {
+            wire__crate__api__audio_chat__CodecConfig_set_enabled_impl(ptr, rust_vec_len, data_len)
+        }
+        35 => wire__crate__api__audio_chat__CodecConfig_set_residual_bits_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        58 => {
+        36 => wire__crate__api__audio_chat__CodecConfig_set_vbr_impl(ptr, rust_vec_len, data_len),
+        37 => wire__crate__api__audio_chat__CodecConfig_to_values_impl(ptr, rust_vec_len, data_len),
+        38 => wire__crate__api__contact__Contact_from_parts_impl(ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__contact__Contact_id_impl(ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__contact__Contact_id_eq_impl(ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__contact__Contact_new_impl(ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__contact__Contact_nickname_impl(ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__contact__Contact_peer_id_impl(ptr, rust_vec_len, data_len),
+        44 => wire__crate__api__contact__Contact_pub_clone_impl(ptr, rust_vec_len, data_len),
+        45 => wire__crate__api__contact__Contact_set_nickname_impl(ptr, rust_vec_len, data_len),
+        47 => wire__crate__api__audio_chat__DartNotify_notify_impl(ptr, rust_vec_len, data_len),
+        50 => wire__crate__api__audio_chat__NetworkConfig_new_impl(ptr, rust_vec_len, data_len),
+        58 => wire__crate__api__overlay__overlay__Overlay_screen_resolution_impl(
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        63 => {
             wire__crate__api__audio_chat__RecordingConfig_bitrate_impl(ptr, rust_vec_len, data_len)
         }
-        59 => {
+        64 => {
             wire__crate__api__audio_chat__RecordingConfig_device_impl(ptr, rust_vec_len, data_len)
         }
-        60 => {
+        65 => {
             wire__crate__api__audio_chat__RecordingConfig_encoder_impl(ptr, rust_vec_len, data_len)
         }
-        61 => wire__crate__api__audio_chat__RecordingConfig_framerate_impl(
+        66 => wire__crate__api__audio_chat__RecordingConfig_framerate_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        62 => {
+        67 => {
             wire__crate__api__audio_chat__RecordingConfig_height_impl(ptr, rust_vec_len, data_len)
         }
-        67 => wire__crate__api__audio_chat__ScreenshareConfig_to_string_impl(
+        72 => wire__crate__api__audio_chat__ScreenshareConfig_to_string_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        69 => wire__crate__api__player__SoundHandle_cancel_impl(ptr, rust_vec_len, data_len),
-        70 => wire__crate__api__player__SoundPlayer_host_impl(ptr, rust_vec_len, data_len),
-        71 => wire__crate__api__player__SoundPlayer_new_impl(ptr, rust_vec_len, data_len),
-        74 => wire__crate__api__player__SoundPlayer_update_output_volume_impl(
+        74 => wire__crate__api__player__SoundHandle_cancel_impl(ptr, rust_vec_len, data_len),
+        75 => wire__crate__api__player__SoundPlayer_host_impl(ptr, rust_vec_len, data_len),
+        76 => wire__crate__api__player__SoundPlayer_new_impl(ptr, rust_vec_len, data_len),
+        79 => wire__crate__api__player__SoundPlayer_update_output_volume_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        75 => wire__crate__api__logger__create_log_stream_impl(ptr, rust_vec_len, data_len),
-        76 => wire__crate__api__crypto__generate_keys_impl(ptr, rust_vec_len, data_len),
-        78 => wire__crate__api__logger__rust_set_up_impl(ptr, rust_vec_len, data_len),
+        80 => wire__crate__api__logger__create_log_stream_impl(ptr, rust_vec_len, data_len),
+        81 => wire__crate__api__crypto__generate_keys_impl(ptr, rust_vec_len, data_len),
+        83 => wire__crate__api__logger__rust_set_up_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -5452,6 +5734,21 @@ impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<
 
 impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<ChatMessage>> for ChatMessage {
     fn into_into_dart(self) -> FrbWrapper<ChatMessage> {
+        self.into()
+    }
+}
+
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for FrbWrapper<CodecConfig> {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self.0)
+            .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<CodecConfig> {}
+
+impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<CodecConfig>> for CodecConfig {
+    fn into_into_dart(self) -> FrbWrapper<CodecConfig> {
         self.into()
     }
 }
@@ -5668,6 +5965,13 @@ impl SseEncode for ChatMessage {
     }
 }
 
+impl SseEncode for CodecConfig {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CodecConfig>>>::sse_encode(flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self), serializer);
+    }
+}
+
 impl SseEncode for Contact {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -5766,6 +6070,17 @@ impl SseEncode
 
 impl SseEncode
     for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<ChatMessage>>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        let (ptr, size) = self.sse_encode_raw();
+        <usize>::sse_encode(ptr, serializer);
+        <i32>::sse_encode(size, serializer);
+    }
+}
+
+impl SseEncode
+    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CodecConfig>>
 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -5998,6 +6313,15 @@ impl SseEncode for Option<Vec<u8>> {
     }
 }
 
+impl SseEncode for (bool, bool, f32) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.0, serializer);
+        <bool>::sse_encode(self.1, serializer);
+        <f32>::sse_encode(self.2, serializer);
+    }
+}
+
 impl SseEncode for (i32, i32) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -6144,6 +6468,20 @@ mod io {
         ptr: *const std::ffi::c_void,
     ) {
         MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<ChatMessage>>::decrement_strong_count(ptr as _);
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn frbgen_audio_chat_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCodecConfig(
+        ptr: *const std::ffi::c_void,
+    ) {
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CodecConfig>>::increment_strong_count(ptr as _);
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn frbgen_audio_chat_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCodecConfig(
+        ptr: *const std::ffi::c_void,
+    ) {
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CodecConfig>>::decrement_strong_count(ptr as _);
     }
 
     #[unsafe(no_mangle)]
@@ -6340,6 +6678,20 @@ mod web {
         ptr: *const std::ffi::c_void,
     ) {
         MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<ChatMessage>>::decrement_strong_count(ptr as _);
+    }
+
+    #[wasm_bindgen]
+    pub fn rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCodecConfig(
+        ptr: *const std::ffi::c_void,
+    ) {
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CodecConfig>>::increment_strong_count(ptr as _);
+    }
+
+    #[wasm_bindgen]
+    pub fn rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCodecConfig(
+        ptr: *const std::ffi::c_void,
+    ) {
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CodecConfig>>::decrement_strong_count(ptr as _);
     }
 
     #[wasm_bindgen]

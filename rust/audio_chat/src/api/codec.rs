@@ -58,6 +58,8 @@ pub(crate) fn encoder(
     receiver: Receiver<ProcessorMessage>,
     sender: Sender<ProcessorMessage>,
     sample_rate: u32,
+    vbr: bool,
+    residual_bits: f32,
 ) {
     let reader = ChannelReader {
         receiver,
@@ -70,8 +72,8 @@ pub(crate) fn encoder(
     let settings = EncoderSettings {
         frames_per_chunk: 480,
         scale_factor_frames: 20,
-        residual_bits: 5.0,
-        vbr: true,
+        residual_bits,
+        vbr,
         ..Default::default()
     };
 

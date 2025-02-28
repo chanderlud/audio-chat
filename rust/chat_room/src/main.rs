@@ -190,6 +190,9 @@ async fn chat_room() -> Result<()> {
                         channels: 1,
                         sample_rate: 48_000,
                         sample_format: "f32".to_string(),
+                        codec_enabled: false,
+                        vbr: false,
+                        residual_bits: 0_f64,
                     };
 
                     // TODO i do not like blocking this loop to do this here
@@ -638,6 +641,9 @@ async fn simulated_client(i: usize) {
         channels: 1,
         sample_rate: 48_000,
         sample_format: "f32".to_string(),
+        codec_enabled: false,
+        vbr: false,
+        residual_bits: 0_f64,
     };
 
     write_message(&mut write, audio_header).await.unwrap();

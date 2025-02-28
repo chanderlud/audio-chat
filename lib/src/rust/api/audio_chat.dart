@@ -11,7 +11,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `_join_room`, `_start_session`, `atomic_u32_deserialize`, `atomic_u32_serialize`, `audio_input`, `audio_output`, `bytes`, `calculate_rms`, `call_controller`, `call`, `db_to_multiplier`, `get_input_device`, `get_output_device`, `handshake`, `input_processor`, `latencies_missing`, `level_from_window`, `load`, `load`, `loopback`, `mul`, `new`, `new`, `new`, `new`, `new`, `open_stream`, `output_processor`, `read_message`, `relayed_only`, `resampler_factory`, `session_manager`, `session`, `silence`, `slice`, `statistics_collector`, `write_message`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `CachedAtomicFlag`, `CachedAtomicFloat`, `ConnectionState`, `PeerState`, `ProcessorMessage`, `SendStream`, `SessionState`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < Host >>>
 abstract class ArcHost implements RustOpaqueInterface {}
@@ -42,6 +42,7 @@ abstract class AudioChat implements RustOpaqueInterface {
           required NetworkConfig networkConfig,
           required ScreenshareConfig screenshareConfig,
           required Overlay overlay,
+          required CodecConfig codecConfig,
           required FutureOr<bool> Function(String, Uint8List?, DartNotify)
               acceptCall,
           required FutureOr<void> Function(String, bool) callEnded,
@@ -61,6 +62,7 @@ abstract class AudioChat implements RustOpaqueInterface {
           networkConfig: networkConfig,
           screenshareConfig: screenshareConfig,
           overlay: overlay,
+          codecConfig: codecConfig,
           acceptCall: acceptCall,
           callEnded: callEnded,
           getContact: getContact,
@@ -138,6 +140,24 @@ abstract class ChatMessage implements RustOpaqueInterface {
   bool isSender({required String identity});
 
   String time();
+}
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CodecConfig>>
+abstract class CodecConfig implements RustOpaqueInterface {
+  factory CodecConfig(
+          {required bool enabled,
+          required bool vbr,
+          required double residualBits}) =>
+      RustLib.instance.api.crateApiAudioChatCodecConfigNew(
+          enabled: enabled, vbr: vbr, residualBits: residualBits);
+
+  void setEnabled({required bool enabled});
+
+  void setResidualBits({required double residualBits});
+
+  void setVbr({required bool vbr});
+
+  (bool, bool, double) toValues();
 }
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<DartNotify>>

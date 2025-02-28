@@ -125,6 +125,8 @@ pub struct AudioChat {
     /// A reference to the object that controls the call overlay
     overlay: Overlay,
 
+    codec_config: CodecConfig,
+
     /// A list of PeerIds which are chat rooms
     chat_rooms: Arc<RwLock<HashSet<PeerId>>>,
 
@@ -172,6 +174,7 @@ impl AudioChat {
         network_config: &NetworkConfig,
         screenshare_config: &ScreenshareConfig,
         overlay: &Overlay,
+        codec_config: &CodecConfig,
         accept_call: impl Fn(String, Option<Vec<u8>>, DartNotify) -> DartFnFuture<bool> + Send + 'static,
         call_ended: impl Fn(String, bool) -> DartFnFuture<()> + Send + 'static,
         get_contact: impl Fn(Vec<u8>) -> DartFnFuture<Option<Contact>> + Send + 'static,
@@ -211,6 +214,7 @@ impl AudioChat {
             network_config: network_config.clone(),
             screenshare_config: screenshare_config.clone(),
             overlay: overlay.clone(),
+            codec_config: codec_config.clone(),
             chat_rooms: Default::default(),
             accept_call: Arc::new(Mutex::new(accept_call)),
             call_ended: Arc::new(Mutex::new(call_ended)),
@@ -1369,8 +1373,6 @@ impl AudioChat {
         peer: Option<PeerId>,
         stop_io: &Arc<Notify>,
     ) -> Result<()> {
-        let codec_enabled = true; // TODO make this legit
-
         // if any of the values required for a normal call is missing, the call is an audio test
         let audio_test = transport.is_none()
             || stream.is_none()
@@ -1433,10 +1435,18 @@ impl AudioChat {
         let input_config = input_device.default_input_config()?;
         info!("input_device: {:?}", input_device.name());
 
+        // load the shared codec config values
+        let config_codec_enabled = self.codec_config.enabled.load(Relaxed);
+        let config_vbr = self.codec_config.vbr.load(Relaxed);
+        let config_residual_bits = self.codec_config.residual_bits.load(Relaxed);
+
         let mut audio_header = AudioHeader {
             channels: input_config.channels() as u32,
             sample_rate: input_config.sample_rate().0,
             sample_format: input_config.sample_format().to_string(),
+            codec_enabled: config_codec_enabled,
+            vbr: config_vbr,
+            residual_bits: config_residual_bits as f64,
         };
 
         // rnnoise requires a 48kHz sample rate
@@ -1460,6 +1470,11 @@ impl AudioChat {
             write_message(transport, audio_header).await?;
             read_message(transport).await?
         };
+
+        // the two clients agree on these codec options
+        let codec_enabled = remote_input_config.codec_enabled || config_codec_enabled;
+        let vbr = remote_input_config.vbr || config_vbr;
+        let residual_bits = (remote_input_config.residual_bits as f32).min(config_residual_bits);
 
         info!("exchanged audio headers");
 
@@ -1525,6 +1540,8 @@ impl AudioChat {
                     encoder_receiver,
                     encoder_sender,
                     if denoise { 48_000 } else { sample_rate as u32 },
+                    vbr,
+                    residual_bits,
                 );
             });
 
@@ -2153,6 +2170,54 @@ impl RecordingConfig {
     #[frb(sync)]
     pub fn height(&self) -> Option<u32> {
         self.height
+    }
+}
+
+#[frb(opaque)]
+#[derive(Clone)]
+pub struct CodecConfig {
+    /// whether to use the codec
+    enabled: Arc<AtomicBool>,
+
+    /// whether to use variable bitrate
+    vbr: Arc<AtomicBool>,
+
+    /// the compression level
+    residual_bits: Arc<AtomicF32>,
+}
+
+impl CodecConfig {
+    #[frb(sync)]
+    pub fn new(enabled: bool, vbr: bool, residual_bits: f32) -> Self {
+        Self {
+            enabled: Arc::new(AtomicBool::new(enabled)),
+            vbr: Arc::new(AtomicBool::new(vbr)),
+            residual_bits: Arc::new(AtomicF32::new(residual_bits)),
+        }
+    }
+
+    #[frb(sync)]
+    pub fn set_enabled(&self, enabled: bool) {
+        self.enabled.store(enabled, Relaxed);
+    }
+
+    #[frb(sync)]
+    pub fn set_vbr(&self, vbr: bool) {
+        self.vbr.store(vbr, Relaxed);
+    }
+
+    #[frb(sync)]
+    pub fn set_residual_bits(&self, residual_bits: f32) {
+        self.residual_bits.store(residual_bits, Relaxed);
+    }
+
+    #[frb(sync)]
+    pub fn to_values(&self) -> (bool, bool, f32) {
+        (
+            self.enabled.load(Relaxed),
+            self.vbr.load(Relaxed),
+            self.residual_bits.load(Relaxed),
+        )
     }
 }
 
