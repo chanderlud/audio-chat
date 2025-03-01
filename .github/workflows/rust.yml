@@ -118,7 +118,7 @@ jobs:
 
       - name: Reinstall toolchain
         if: matrix.info.target == 'ios'
-        run: rustup toolchain uninstall aarch64-apple-ios && rustup toolchain install aarch64-apple-ios
+        run: rustup toolchain uninstall stable && rustup toolchain install stable
 
       - name: Linux Prerequisites
         if: runner.os == 'Linux'
