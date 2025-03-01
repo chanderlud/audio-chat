@@ -116,17 +116,9 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Cleanup ~/.rustup
+      - name: Reinstall toolchain
         if: matrix.info.target == 'ios'
-        run: rm -rf ~/.rustup
-
-      - name: Update rustup
-        if: matrix.info.target == 'ios'
-        run: rustup --version && rustup update
-
-      - name: Setup Rust
-        if: matrix.info.target == 'ios'
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        run: rustup toolchain uninstall aarch64-apple-ios && rustup toolchain install aarch64-apple-ios
 
       - name: Linux Prerequisites
         if: runner.os == 'Linux'
