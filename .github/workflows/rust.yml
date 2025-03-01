@@ -120,6 +120,17 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install clang cmake git ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libasound2-dev libsecret-1-dev
 
+      - name: Set up Java 11
+        if: matrix.info.target == 'android'
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+
+      - name: Verify Java Version
+        if: matrix.info.target == 'android'
+        run: java -version
+
       - name: Setup Flutter SDK
         uses: flutter-actions/setup-flutter@v4
         with:
