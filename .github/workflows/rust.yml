@@ -103,7 +103,7 @@ jobs:
             target: macos
           - image: ubuntu-latest
             target: linux
-          - image: ubuntu-latest
+          - image: windows-2019
             target: apk
           - image: macos-13
             target: ios
