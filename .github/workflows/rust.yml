@@ -125,19 +125,11 @@ jobs:
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '17'
 
       - name: Verify Java Version
         if: matrix.info.target == 'apk'
         run: java -version
-
-      - name: Disable macOS code signing
-        if: matrix.info.target == 'macos'
-        run: |
-          xcodebuild -project macos/Runner.xcodeproj \
-            -scheme Runner \
-            -configuration Release \
-            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
 
       - name: Setup Flutter SDK
         uses: flutter-actions/setup-flutter@v4
