@@ -120,6 +120,10 @@ jobs:
         if: matrix.info.target == 'ios'
         run: rm -rf ~/.rustup
 
+      - name: Update rustup
+        if: matrix.info.target == 'ios'
+        run: rustup --version && rustup update
+
       - name: Setup Rust
         if: matrix.info.target == 'ios'
         uses: actions-rust-lang/setup-rust-toolchain@v1
