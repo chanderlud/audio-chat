@@ -116,9 +116,9 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Delete rustup
+      - name: Reinstall rustup
         if: matrix.info.target == 'ios'
-        run: rm -rf ~/.rustup && brew uninstall rustup
+        run: rm -rf ~/.rustup && brew uninstall rustup && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
       - name: Linux Prerequisites
         if: runner.os == 'Linux'
