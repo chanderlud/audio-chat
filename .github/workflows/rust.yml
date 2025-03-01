@@ -116,16 +116,9 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Rust
+      - name: Delete rustup
         if: matrix.info.target == 'ios'
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          target: aarch64-apple-ios
-          cache: false
-
-      - name: Reinstall toolchain
-        if: matrix.info.target == 'ios'
-        run: rustup toolchain uninstall stable && rustup toolchain install stable
+        run: rm -rf ~/.rustup && rustup self uninstall
 
       - name: Linux Prerequisites
         if: runner.os == 'Linux'
