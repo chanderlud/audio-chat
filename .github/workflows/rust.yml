@@ -120,16 +120,24 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install clang cmake git ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libasound2-dev libsecret-1-dev
 
-      - name: Set up Java 11
+      - name: Set up Java 21
         if: matrix.info.target == 'apk'
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
-          java-version: '11'
+          java-version: '21'
 
       - name: Verify Java Version
         if: matrix.info.target == 'apk'
         run: java -version
+
+      - name: Disable macOS code signing
+        if: matrix.info.target == 'macos'
+        run: |
+          xcodebuild -project macos/Runner.xcodeproj \
+            -scheme Runner \
+            -configuration Release \
+            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
 
       - name: Setup Flutter SDK
         uses: flutter-actions/setup-flutter@v4
@@ -142,4 +150,4 @@ jobs:
 
       - name: Build Flutter
         run: |
-          flutter build ${{ matrix.info.target }} ${{ (matrix.info.target == 'ios' || matrix.info.target == 'macos') && '--no-codesign' || '' }}
+          flutter build ${{ matrix.info.target }} ${{ matrix.info.target == 'ios' && '--no-codesign' || '' }}
