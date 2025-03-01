@@ -895,7 +895,7 @@ class ProfileSettingsState extends State<ProfileSettings> {
                                     });
                               },
                               icon: SvgPicture.asset(
-                                'assets/icons/trash.svg',
+                                'assets/icons/Trash.svg',
                                 semanticsLabel: 'Delete Profile',
                                 width: 26,
                               ),
