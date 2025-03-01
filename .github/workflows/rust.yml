@@ -118,7 +118,7 @@ jobs:
 
       - name: Reinstall rustup
         if: matrix.info.target == 'ios'
-        run: rm -rf ~/.rustup && brew uninstall rustup && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -y
+        run: rm -rf ~/.rustup && brew uninstall rustup && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
       - name: Linux Prerequisites
         if: runner.os == 'Linux'
