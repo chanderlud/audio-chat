@@ -118,7 +118,7 @@ jobs:
 
       - name: Delete rustup
         if: matrix.info.target == 'ios'
-        run: rm -rf ~/.rustup && rustup self uninstall
+        run: rm -rf ~/.rustup && brew uninstall rustup
 
       - name: Linux Prerequisites
         if: runner.os == 'Linux'
