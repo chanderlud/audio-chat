@@ -19,7 +19,7 @@ if (flutterVersionCode == null) {
 
 def flutterVersionName = localProperties.getProperty('flutter.versionName')
 if (flutterVersionName == null) {
-    flutterVersionName = '1.0'
+    flutterVersionName = '2.4.0'
 }
 
 android {
@@ -64,6 +64,5 @@ flutter {
 }
 
 dependencies {
-    // classpath 'com.android.tools.build:gradle:7.3.1'
     implementation 'com.android.support:multidex:1.0.3'
 }
