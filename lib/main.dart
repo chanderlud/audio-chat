@@ -104,7 +104,9 @@ Future<void> main() async {
         SoundHandle handle = await soundPlayer.play(bytes: bytes);
 
         if (navigatorKey.currentState == null ||
-            !navigatorKey.currentState!.mounted) return false;
+            !navigatorKey.currentState!.mounted) {
+          return false;
+        }
 
         Future acceptedFuture =
             acceptCallPrompt(navigatorKey.currentState!.context, contact);
@@ -1308,9 +1310,9 @@ class ChatWidgetState extends State<ChatWidget> {
 
     _focusNode.addListener(() {
       if (_focusNode.hasFocus) {
-        RawKeyboard.instance.addListener(_onKeyEvent);
+        HardwareKeyboard.instance.addHandler(_onKeyEvent);
       } else {
-        RawKeyboard.instance.removeListener(_onKeyEvent);
+        HardwareKeyboard.instance.removeHandler(_onKeyEvent);
       }
     });
   }
@@ -1373,19 +1375,21 @@ class ChatWidgetState extends State<ChatWidget> {
     }
   }
 
-  Future<void> _onKeyEvent(RawKeyEvent event) async {
-    if (event is RawKeyDownEvent) {
-      if (event.isControlPressed && event.logicalKey == LogicalKeyboardKey.keyV) {
+  bool _onKeyEvent(KeyEvent event) {
+    if (event is KeyDownEvent) {
+      if (HardwareKeyboard.instance.isControlPressed && event.logicalKey == LogicalKeyboardKey.keyV) {
         final clipboard = SystemClipboard.instance;
 
         if (clipboard != null) {
-          final reader = await clipboard.read();
-          _handlePaste(reader);
+          clipboard.read().then((reader) => _handlePaste(reader));
+          return true;
         } else {
           DebugConsole.debug('Clipboard is null');
         }
       }
     }
+
+    return false;
   }
 
   Future<void> _handlePaste(ClipboardReader reader) async {

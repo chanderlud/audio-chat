@@ -430,10 +430,10 @@ class SettingsController with ChangeNotifier {
     await options.setDouble('overlayWidth', overlayConfig.width);
     await options.setDouble('overlayHeight', overlayConfig.height);
     await options.setString('overlayFontFamily', overlayConfig.fontFamily);
-    await options.setInt('overlayFontColor', overlayConfig.fontColor.value);
+    await options.setInt('overlayFontColor', overlayConfig.fontColor.toARGB32());
     await options.setInt('overlayFontHeight', overlayConfig.fontHeight);
     await options.setInt(
-        'overlayBackgroundColor', overlayConfig.backgroundColor.value);
+        'overlayBackgroundColor', overlayConfig.backgroundColor.toARGB32());
   }
 }
 
@@ -475,11 +475,4 @@ class Profile {
     required this.keypair,
     required this.contacts,
   });
-}
-
-int argb(Color color) {
-  return (color.alpha << 24) |
-      (color.red << 16) |
-      (color.green << 8) |
-      color.blue;
 }
