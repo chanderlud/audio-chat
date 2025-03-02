@@ -63,7 +63,8 @@ Future<void> main() async {
     width: settingsController.overlayConfig.width.round(),
     height: settingsController.overlayConfig.height.round(),
     fontHeight: settingsController.overlayConfig.fontHeight,
-    backgroundColor: settingsController.overlayConfig.backgroundColor.toARGB32(),
+    backgroundColor:
+        settingsController.overlayConfig.backgroundColor.toARGB32(),
     fontColor: settingsController.overlayConfig.fontColor.toARGB32(),
   );
 
@@ -235,7 +236,7 @@ Future<void> main() async {
   if (settingsController.denoiseModel != null) {
     updateDenoiseModel(settingsController.denoiseModel!, audioChat);
   }
-  
+
   // Future.microtask(() {
   //   sleep(const Duration(seconds: 1));
   //   audioChat.joinRoom(contact: Contact(nickname: 'test room', peerId: '12D3KooWRVJCFqFBrasjtcGHnRuuut9fQLsfcUNLfWFFqjMm2p4n'));
@@ -556,7 +557,8 @@ class HomeTabViewState extends State<HomeTabView>
               Container(
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.secondaryContainer,
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(10.0)),
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(10.0)),
                 ),
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 child: TabBar(
@@ -1332,8 +1334,10 @@ class ChatWidgetState extends State<ChatWidget> {
     Contact contact = widget.stateController.activeContact!;
 
     try {
-      ChatMessage message = widget.audioChat
-          .buildChat(contact: contact, text: text, attachments: widget.chatStateController.attachments);
+      ChatMessage message = widget.audioChat.buildChat(
+          contact: contact,
+          text: text,
+          attachments: widget.chatStateController.attachments);
       await widget.audioChat.sendChat(message: message);
 
       message.clearAttachments();
@@ -1346,7 +1350,8 @@ class ChatWidgetState extends State<ChatWidget> {
   }
 
   void _onStateControllerChange() {
-    if (widget.stateController.isCallActive == widget.chatStateController.active) {
+    if (widget.stateController.isCallActive ==
+        widget.chatStateController.active) {
       return;
     } else if (!widget.stateController.isCallActive &&
         widget.chatStateController.active) {
@@ -1377,7 +1382,8 @@ class ChatWidgetState extends State<ChatWidget> {
 
   bool _onKeyEvent(KeyEvent event) {
     if (event is KeyDownEvent) {
-      if (HardwareKeyboard.instance.isControlPressed && event.logicalKey == LogicalKeyboardKey.keyV) {
+      if (HardwareKeyboard.instance.isControlPressed &&
+          event.logicalKey == LogicalKeyboardKey.keyV) {
         final clipboard = SystemClipboard.instance;
 
         if (clipboard != null) {
@@ -1405,7 +1411,8 @@ class ChatWidgetState extends State<ChatWidget> {
             break;
           case Formats.png || Formats.jpeg:
             final image = await reader.readFile(format as FileFormat);
-            widget.chatStateController.addAttachmentMemory(suggestedName!, image!);
+            widget.chatStateController
+                .addAttachmentMemory(suggestedName!, image!);
         }
       }
     }
@@ -1424,7 +1431,8 @@ class ChatWidgetState extends State<ChatWidget> {
                 return ListView.builder(
                     itemCount: widget.chatStateController.messages.length,
                     itemBuilder: (BuildContext context, int index) {
-                      ChatMessage message = widget.chatStateController.messages[index];
+                      ChatMessage message =
+                          widget.chatStateController.messages[index];
                       bool sender = message.isSender(
                           identity: widget.settingsController.peerId);
 
@@ -1432,7 +1440,8 @@ class ChatWidgetState extends State<ChatWidget> {
                           message.attachments();
 
                       List<Widget> widgets = attachments.map((attachment) {
-                        (File?, Image?)? file = widget.chatStateController.files[attachment.$1];
+                        (File?, Image?)? file =
+                            widget.chatStateController.files[attachment.$1];
 
                         if (file == null) {
                           DebugConsole.debug('Attachment file is null');
@@ -1448,7 +1457,8 @@ class ChatWidgetState extends State<ChatWidget> {
                                   showImagePreview(file.$2!);
                                 },
                                 onSecondaryTapDown: (details) {
-                                  showAttachmentMenu(details.globalPosition, file.$1);
+                                  showAttachmentMenu(
+                                      details.globalPosition, file.$1);
                                 },
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(5.0),
@@ -1460,7 +1470,8 @@ class ChatWidgetState extends State<ChatWidget> {
                             // TODO make this a proper attachment widget
                             return InkWell(
                               onSecondaryTapDown: (details) {
-                                showAttachmentMenu(details.globalPosition, file.$1);
+                                showAttachmentMenu(
+                                    details.globalPosition, file.$1);
                               },
                               child: Text('Attachment: ${attachment.$1}'),
                             );
@@ -1479,25 +1490,26 @@ class ChatWidgetState extends State<ChatWidget> {
                                   color: sender
                                       ? Theme.of(context).colorScheme.secondary
                                       : Theme.of(context)
-                                      .colorScheme
-                                      .tertiaryContainer,
+                                          .colorScheme
+                                          .tertiaryContainer,
                                   borderRadius: BorderRadius.only(
                                       topLeft: const Radius.circular(10.0),
                                       topRight: const Radius.circular(10.0),
                                       bottomLeft:
-                                      Radius.circular(sender ? 10.0 : 0),
+                                          Radius.circular(sender ? 10.0 : 0),
                                       bottomRight:
-                                      Radius.circular(sender ? 0 : 10.0))),
+                                          Radius.circular(sender ? 0 : 10.0))),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 crossAxisAlignment: CrossAxisAlignment.end,
                                 children: [
                                   Theme(
                                     data: ThemeData(
-                                        textSelectionTheme: TextSelectionThemeData(
-                                          selectionColor: sender ? Colors.blue : null,
-                                        )
-                                    ),
+                                        textSelectionTheme:
+                                            TextSelectionThemeData(
+                                      selectionColor:
+                                          sender ? Colors.blue : null,
+                                    )),
                                     child: SelectableText(
                                       message.text,
                                     ),
@@ -1533,64 +1545,80 @@ class ChatWidgetState extends State<ChatWidget> {
             builder: (BuildContext context, Widget? child) {
               const noBorder = OutlineInputBorder(
                   borderSide: BorderSide(
-                    color: Colors.transparent,
-                  )
-              );
+                color: Colors.transparent,
+              ));
 
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ListenableBuilder(listenable: widget.chatStateController, builder: (BuildContext context, Widget? child) {
-                    List<Widget> attachments = widget.chatStateController.attachments.map((attachment) {
-                      return InkWell(
-                        mouseCursor: SystemMouseCursors.basic,
-                        onTap: () {},
-                        onHover: (hovered) {
-                          setState(() {
-                            _attachmentHovered[attachment.$1] = hovered;
-                          });
-                        },
-                        child: Stack(
-                          children: [
-                            Container(
-                                decoration: BoxDecoration(
-                                  color: Theme.of(context).colorScheme.tertiaryContainer,
-                                  borderRadius: BorderRadius.circular(10.0),
-                                  border: Border.all(color: Colors.grey.shade400),
-                                ),
-                                margin: const EdgeInsets.only(top: 5, right: 5),
-                                child: Padding(padding: const EdgeInsets.only(left: 4, right: 4, top: 2, bottom: 4), child: Text(attachment.$1)),
-                            ),
-                            if (_attachmentHovered[attachment.$1] ?? false)
-                              Positioned(
-                                right: 0,
-                                child: InkWell(
-                                  onTap: () {
-                                    widget.chatStateController.removeAttachment(attachment.$1);
-                                  },
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      color: Theme.of(context).colorScheme.tertiaryContainer,
-                                      borderRadius: BorderRadius.circular(10.0),
-                                    ),
-                                    child: SvgPicture.asset(
-                                      'assets/icons/Trash.svg',
-                                      semanticsLabel: 'Close attachment icon',
-                                      colorFilter: const ColorFilter.mode(Color(0xFFdc2626), BlendMode.srcIn),
-                                      width: 20,
-                                    ),
+                  ListenableBuilder(
+                      listenable: widget.chatStateController,
+                      builder: (BuildContext context, Widget? child) {
+                        List<Widget> attachments = widget
+                            .chatStateController.attachments
+                            .map((attachment) {
+                          return InkWell(
+                            mouseCursor: SystemMouseCursors.basic,
+                            onTap: () {},
+                            onHover: (hovered) {
+                              setState(() {
+                                _attachmentHovered[attachment.$1] = hovered;
+                              });
+                            },
+                            child: Stack(
+                              children: [
+                                Container(
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .tertiaryContainer,
+                                    borderRadius: BorderRadius.circular(10.0),
+                                    border:
+                                        Border.all(color: Colors.grey.shade400),
                                   ),
-                                )
-                              ),
-                          ],
-                        ),
-                      );
-                    }).toList();
+                                  margin:
+                                      const EdgeInsets.only(top: 5, right: 5),
+                                  child: Padding(
+                                      padding: const EdgeInsets.only(
+                                          left: 4, right: 4, top: 2, bottom: 4),
+                                      child: Text(attachment.$1)),
+                                ),
+                                if (_attachmentHovered[attachment.$1] ?? false)
+                                  Positioned(
+                                      right: 0,
+                                      child: InkWell(
+                                        onTap: () {
+                                          widget.chatStateController
+                                              .removeAttachment(attachment.$1);
+                                        },
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .tertiaryContainer,
+                                            borderRadius:
+                                                BorderRadius.circular(10.0),
+                                          ),
+                                          child: SvgPicture.asset(
+                                            'assets/icons/Trash.svg',
+                                            semanticsLabel:
+                                                'Close attachment icon',
+                                            colorFilter: const ColorFilter.mode(
+                                                Color(0xFFdc2626),
+                                                BlendMode.srcIn),
+                                            width: 20,
+                                          ),
+                                        ),
+                                      )),
+                              ],
+                            ),
+                          );
+                        }).toList();
 
-                    return Wrap(
-                      children: attachments,
-                    );
-                  }),
+                        return Wrap(
+                          children: attachments,
+                        );
+                      }),
                   const SizedBox(height: 7),
                   SizedBox(
                     height: 50,
@@ -1598,9 +1626,14 @@ class ChatWidgetState extends State<ChatWidget> {
                       decoration: BoxDecoration(
                         color: Theme.of(context).colorScheme.tertiaryContainer,
                         borderRadius: BorderRadius.circular(10.0),
-                        border: Border.all(color: widget.chatStateController.active ? Colors.grey.shade400 : Colors.grey.shade600),
+                        border: Border.all(
+                            color: widget.chatStateController.active
+                                ? Colors.grey.shade400
+                                : Colors.grey.shade600),
                       ),
-                      padding: EdgeInsets.symmetric(horizontal: widget.chatStateController.active ? 4 : 12),
+                      padding: EdgeInsets.symmetric(
+                          horizontal:
+                              widget.chatStateController.active ? 4 : 12),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
@@ -1619,7 +1652,8 @@ class ChatWidgetState extends State<ChatWidget> {
                               fit: FlexFit.loose,
                               child: TextField(
                                 focusNode: _focusNode,
-                                controller: widget.chatStateController.messageInput,
+                                controller:
+                                    widget.chatStateController.messageInput,
                                 enabled: widget.chatStateController.active,
                                 onSubmitted: (message) {
                                   sendMessage(message);
@@ -1628,18 +1662,21 @@ class ChatWidgetState extends State<ChatWidget> {
                                   labelText: widget.chatStateController.active
                                       ? 'Message'
                                       : 'Chat disabled',
-                                  floatingLabelBehavior: FloatingLabelBehavior.never,
+                                  floatingLabelBehavior:
+                                      FloatingLabelBehavior.never,
                                   disabledBorder: noBorder,
                                   border: noBorder,
                                   focusedBorder: noBorder,
                                   enabledBorder: noBorder,
-                                  contentPadding: const EdgeInsets.symmetric(horizontal: 2),
+                                  contentPadding:
+                                      const EdgeInsets.symmetric(horizontal: 2),
                                 ),
                               )),
                           if (widget.chatStateController.active)
                             IconButton(
                               onPressed: () {
-                                String message = widget.chatStateController.messageInput.text;
+                                String message = widget
+                                    .chatStateController.messageInput.text;
                                 sendMessage(message);
                               },
                               icon: SvgPicture.asset(
@@ -1665,32 +1702,31 @@ class ChatWidgetState extends State<ChatWidget> {
       context: context,
       barrierColor: Colors.transparent,
       builder: (BuildContext context) {
-        return CustomPositionedDialog(
-          position: position,
-          file: file
-        );
+        return CustomPositionedDialog(position: position, file: file);
       },
     );
   }
 
   void showImagePreview(Image image) {
-    showDialog(context: context, builder: (BuildContext context) {
-      return GestureDetector(
-        onTap: () {
-          Navigator.of(context).pop();
-        },
-        child: Stack(
-          children: [
-            Center(
-              child: InkWell(
-                onTap: () {},
-                child: image,
-              ),
+    showDialog(
+        context: context,
+        builder: (BuildContext context) {
+          return GestureDetector(
+            onTap: () {
+              Navigator.of(context).pop();
+            },
+            child: Stack(
+              children: [
+                Center(
+                  child: InkWell(
+                    onTap: () {},
+                    child: image,
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
-      );
-    });
+          );
+        });
   }
 }
 
@@ -1830,7 +1866,8 @@ class CustomPositionedDialog extends StatelessWidget {
   final Offset position;
   final File? file;
 
-  const CustomPositionedDialog({super.key, required this.position, required this.file});
+  const CustomPositionedDialog(
+      {super.key, required this.position, required this.file});
 
   @override
   Widget build(BuildContext context) {
@@ -1861,7 +1898,8 @@ class CustomPositionedDialog extends StatelessWidget {
                       final clipboard = SystemClipboard.instance;
 
                       if (clipboard == null) {
-                        DebugConsole.warn('Clipboard not supported on this platform');
+                        DebugConsole.warn(
+                            'Clipboard not supported on this platform');
                       } else {
                         final item = DataWriterItem();
 
@@ -1885,7 +1923,10 @@ class CustomPositionedDialog extends StatelessWidget {
                   ),
                   // TODO need some kind of divider here
                   const SizedBox(height: 5),
-                  if ((Platform.isMacOS || Platform.isLinux || Platform.isWindows) && file != null)
+                  if ((Platform.isMacOS ||
+                          Platform.isLinux ||
+                          Platform.isWindows) &&
+                      file != null)
                     InkWell(
                       onTap: () {
                         // init shell
@@ -1893,11 +1934,13 @@ class CustomPositionedDialog extends StatelessWidget {
 
                         // TODO work on cross platform support
                         if (Platform.isWindows) {
-                          shell.run('explorer.exe /select,${file!.path.replaceAll("/", "\\")}');
+                          shell.run(
+                              'explorer.exe /select,${file!.path.replaceAll("/", "\\")}');
                         } else if (Platform.isMacOS) {
                           shell.run('open -R "${file!.path}"');
                         } else {
-                          DebugConsole.warn('Opening file in folder not supported on this platform');
+                          DebugConsole.warn(
+                              'Opening file in folder not supported on this platform');
                         }
 
                         Navigator.of(context).pop();
@@ -2009,7 +2052,11 @@ class TextInput extends StatelessWidget {
       decoration: InputDecoration(
         labelText: labelText,
         hintText: hintText,
-        hintStyle: const TextStyle(fontSize: 13, fontStyle: FontStyle.normal, color: Color(0xFFa9a9aa), fontWeight: FontWeight.w600),
+        hintStyle: const TextStyle(
+            fontSize: 13,
+            fontStyle: FontStyle.normal,
+            color: Color(0xFFa9a9aa),
+            fontWeight: FontWeight.w600),
         fillColor: Theme.of(context).colorScheme.tertiaryContainer,
         filled: true,
         error: error,
@@ -2286,7 +2333,8 @@ class ChatStateController extends ChangeNotifier {
   void addAttachmentFile(String name, File file) async {
     final fileNameWithoutExtension = name.substring(0, name.lastIndexOf('.'));
     final fileExtension = name.substring(name.lastIndexOf('.'));
-    String newName = '$fileNameWithoutExtension-${DateTime.now().millisecondsSinceEpoch}$fileExtension';
+    String newName =
+        '$fileNameWithoutExtension-${DateTime.now().millisecondsSinceEpoch}$fileExtension';
 
     Uint8List bytes = await file.readAsBytes();
     attachments.add((newName, bytes));
@@ -2298,7 +2346,8 @@ class ChatStateController extends ChangeNotifier {
   void addAttachmentMemory(String name, Uint8List data) {
     final fileNameWithoutExtension = name.substring(0, name.lastIndexOf('.'));
     final fileExtension = name.substring(name.lastIndexOf('.'));
-    String newName = '$fileNameWithoutExtension-${DateTime.now().millisecondsSinceEpoch}$fileExtension';
+    String newName =
+        '$fileNameWithoutExtension-${DateTime.now().millisecondsSinceEpoch}$fileExtension';
 
     attachments.add((newName, data));
     _addFile(newName, null, data);

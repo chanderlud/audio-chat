@@ -1227,8 +1227,8 @@ class OverlaySettingsState extends State<OverlaySettings> {
                     text: 'Change',
                     onPressed: () {
                       colorPicker(context, (Color color) {
-                        widget.overlay
-                            .setBackgroundColor(backgroundColor: color.toARGB32());
+                        widget.overlay.setBackgroundColor(
+                            backgroundColor: color.toARGB32());
                         widget.controller.overlayConfig.backgroundColor = color;
                         widget.controller.saveOverlayConfig();
                         setState(() {});
@@ -1247,7 +1247,8 @@ class OverlaySettingsState extends State<OverlaySettings> {
                     text: 'Change',
                     onPressed: () {
                       colorPicker(context, (Color color) {
-                        widget.overlay.setFontColor(fontColor: color.toARGB32());
+                        widget.overlay
+                            .setFontColor(fontColor: color.toARGB32());
                         widget.controller.overlayConfig.fontColor = color;
                         widget.controller.saveOverlayConfig();
                         setState(() {});

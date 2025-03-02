@@ -430,7 +430,8 @@ class SettingsController with ChangeNotifier {
     await options.setDouble('overlayWidth', overlayConfig.width);
     await options.setDouble('overlayHeight', overlayConfig.height);
     await options.setString('overlayFontFamily', overlayConfig.fontFamily);
-    await options.setInt('overlayFontColor', overlayConfig.fontColor.toARGB32());
+    await options.setInt(
+        'overlayFontColor', overlayConfig.fontColor.toARGB32());
     await options.setInt('overlayFontHeight', overlayConfig.fontHeight);
     await options.setInt(
         'overlayBackgroundColor', overlayConfig.backgroundColor.toARGB32());
