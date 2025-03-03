@@ -606,7 +606,7 @@
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.audio-chat.frontend";
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = "Github actions mac";
+				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = "build_pp";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Profile;
@@ -750,7 +750,7 @@
 				MACOSX_DEPLOYMENT_TARGET = "$(RECOMMENDED_MACOSX_DEPLOYMENT_TARGET)";
 				PRODUCT_BUNDLE_IDENTIFIER = "com.audio-chat.frontend";
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = "Github actions mac";
+				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = "build_pp";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
 			};
@@ -779,7 +779,7 @@
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.audio-chat.frontend";
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = "Github actions mac";
+				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = "build_pp";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;

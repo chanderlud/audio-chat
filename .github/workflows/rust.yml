@@ -162,7 +162,6 @@ jobs:
           # apply provisioning profile
           mkdir -p ~/Library/Developer/Xcode/UserData/Provisioning\ Profiles/
           cp $PP_PATH ~/Library/Developer/Xcode/UserData/Provisioning\ Profiles/
-          ls ~/Library/Developer/Xcode/UserData/Provisioning\ Profiles/
 
       - name: Setup Flutter SDK
         uses: flutter-actions/setup-flutter@v4
