@@ -46,6 +46,8 @@ use crate::api::codec::{decoder, encoder};
 use crate::api::constants::*;
 use crate::api::contact::Contact;
 use crate::api::error::{DartError, Error, ErrorKind};
+#[cfg(target_os = "ios")]
+use crate::api::ios::{configure_audio_session, deactivate_audio_session};
 use crate::api::overlay::overlay::Overlay;
 use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
 use crate::api::screenshare;
@@ -1373,6 +1375,10 @@ impl AudioChat {
         peer: Option<PeerId>,
         stop_io: &Arc<Notify>,
     ) -> Result<()> {
+        // on ios the audio session must be configured
+        #[cfg(target_os = "ios")]
+        configure_audio_session();
+
         // if any of the values required for a normal call is missing, the call is an audio test
         let audio_test = transport.is_none()
             || stream.is_none()
@@ -1630,17 +1636,12 @@ impl AudioChat {
                 Arc::clone(stop_io),
             ));
 
-            // select! {
-            //     _ = loopback_handle => (),
-            //     // this unwrap is safe because the processor thread will not panic
-            //     // result = output_processor_future => result?.unwrap()?,
-            //     // this unwrap is safe because the processor thread will not panic
-            //     // result = input_processor_future => result?.unwrap()?,
-            //     _ = self.end_call.notified() => (),
-            //     // result = statistics_handle => result??,
-            // }
-
             self.end_call.notified().await;
+
+            // on ios the audio session must be deactivated
+            #[cfg(target_os = "ios")]
+            deactivate_audio_session();
+
             return Ok(());
         }
 
@@ -1697,6 +1698,11 @@ impl AudioChat {
 
         stop_io.notify_waiters();
         info!("call controller returned and was handled, call returning");
+
+        // on ios the audio session must be deactivated
+        #[cfg(target_os = "ios")]
+        deactivate_audio_session();
+
         Ok(())
     }
 
