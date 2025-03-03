@@ -108,193 +108,196 @@ class SettingsPageState extends State<SettingsPage>
       showMenu = false;
     }
 
-    return Stack(
-      children: [
-        Align(
-          alignment: Alignment.topCenter,
-          child: Padding(
-              padding:
-                  EdgeInsets.only(left: constraints.maxWidth < 600 ? 0 : 200),
-              child: SingleChildScrollView(
-                child: Column(
-                  children: [
-                    Padding(
-                      padding: EdgeInsets.only(
-                          left: 20,
-                          right: 20,
-                          top: constraints.maxWidth < 600
-                              ? route == 0
-                                  ? 55
-                                  : 70
-                              : route == 0
-                                  ? 10
-                                  : 30),
-                      child: SizedBox(
-                        width: width,
-                        child: LayoutBuilder(builder:
-                            (BuildContext context, BoxConstraints constraints) {
-                          if (route == 0) {
-                            return AVSettings(
-                              controller: widget.controller,
-                              audioChat: widget.audioChat,
-                              stateController: widget.stateController,
-                              player: widget.player,
-                              statisticsController: widget.statisticsController,
-                              constraints: constraints,
-                              audioDevices: widget.audioDevices,
-                            );
-                          } else if (route == 1) {
-                            return ProfileSettings(
-                                controller: widget.controller,
-                                audioChat: widget.audioChat,
-                                stateController: widget.stateController);
-                          } else if (route == 2) {
-                            return NetworkSettings(
-                                key: _key,
-                                controller: widget.controller,
-                                audioChat: widget.audioChat,
-                                stateController: widget.stateController,
-                                constraints: constraints);
-                          } else if (route == 4) {
-                            String? filter = _searchController.text.isEmpty
-                                ? null
-                                : _searchController.text;
-                            List<Log> logs = console.getLogs(filter);
+    return SafeArea(
+        bottom: false,
+        child: Stack(
+          children: [
+            Align(
+              alignment: Alignment.topCenter,
+              child: Padding(
+                  padding: EdgeInsets.only(
+                      left: constraints.maxWidth < 600 ? 0 : 200),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      children: [
+                        Padding(
+                          padding: EdgeInsets.only(
+                              left: 20,
+                              right: 20,
+                              top: constraints.maxWidth < 600
+                                  ? route == 0
+                                      ? 55
+                                      : 70
+                                  : route == 0
+                                      ? 10
+                                      : 30),
+                          child: SizedBox(
+                            width: width,
+                            child: LayoutBuilder(builder: (BuildContext context,
+                                BoxConstraints constraints) {
+                              if (route == 0) {
+                                return AVSettings(
+                                  controller: widget.controller,
+                                  audioChat: widget.audioChat,
+                                  stateController: widget.stateController,
+                                  player: widget.player,
+                                  statisticsController:
+                                      widget.statisticsController,
+                                  constraints: constraints,
+                                  audioDevices: widget.audioDevices,
+                                );
+                              } else if (route == 1) {
+                                return ProfileSettings(
+                                    controller: widget.controller,
+                                    audioChat: widget.audioChat,
+                                    stateController: widget.stateController);
+                              } else if (route == 2) {
+                                return NetworkSettings(
+                                    key: _key,
+                                    controller: widget.controller,
+                                    audioChat: widget.audioChat,
+                                    stateController: widget.stateController,
+                                    constraints: constraints);
+                              } else if (route == 4) {
+                                String? filter = _searchController.text.isEmpty
+                                    ? null
+                                    : _searchController.text;
+                                List<Log> logs = console.getLogs(filter);
 
-                            return Column(
-                              children: [
-                                TextField(
-                                  controller: _searchController,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Search',
-                                  ),
-                                  onChanged: (String value) {
-                                    setState(() {});
-                                  },
-                                ),
-                                const SizedBox(height: 20),
-                                ListView.builder(
-                                    itemCount: logs.length,
-                                    shrinkWrap: true,
-                                    itemBuilder: (context, index) {
-                                      Log log = logs[index];
-                                      return SelectableText(
-                                          '${log.time} - ${log.type}: ${log.message}');
-                                    }),
-                              ],
-                            );
-                          } else if (route == 5) {
-                            return OverlaySettings(
-                                overlay: widget.overlay,
-                                controller: widget.controller,
-                                stateController: widget.stateController);
-                          } else {
-                            return const SizedBox();
-                          }
-                        }),
-                      ),
-                    )
-                  ],
-                ),
-              )),
-        ),
-        if (constraints.maxWidth > 600 || (showMenu ?? true))
-          SlideTransition(
-            position: _menuSlideAnimation,
-            child: Container(
-              width: 200,
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceDim,
-                borderRadius: const BorderRadius.only(
-                  topRight: Radius.circular(8),
-                  bottomRight: Radius.circular(8),
-                ),
-              ),
-              padding: const EdgeInsets.only(top: 60),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.start,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildMenuItem(0, 'Audio & Video'),
-                  const SizedBox(height: 12),
-                  _buildMenuItem(1, 'Profiles'),
-                  const SizedBox(height: 12),
-                  _buildMenuItem(2, 'Networking'),
-                  const SizedBox(height: 12),
-                  _buildMenuItem(3, 'Interface'),
-                  const SizedBox(height: 12),
-                  _buildMenuItem(4, 'View Log'),
-                  if (Platform.isWindows) const SizedBox(height: 12),
-                  if (Platform.isWindows) _buildMenuItem(5, 'Overlay'),
-                ],
-              ),
+                                return Column(
+                                  children: [
+                                    TextField(
+                                      controller: _searchController,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Search',
+                                      ),
+                                      onChanged: (String value) {
+                                        setState(() {});
+                                      },
+                                    ),
+                                    const SizedBox(height: 20),
+                                    ListView.builder(
+                                        itemCount: logs.length,
+                                        shrinkWrap: true,
+                                        itemBuilder: (context, index) {
+                                          Log log = logs[index];
+                                          return SelectableText(
+                                              '${log.time} - ${log.type}: ${log.message}');
+                                        }),
+                                  ],
+                                );
+                              } else if (route == 5) {
+                                return OverlaySettings(
+                                    overlay: widget.overlay,
+                                    controller: widget.controller,
+                                    stateController: widget.stateController);
+                              } else {
+                                return const SizedBox();
+                              }
+                            }),
+                          ),
+                        )
+                      ],
+                    ),
+                  )),
             ),
-          ),
-        Align(
-          alignment: Alignment.topLeft,
-          child: Container(
-              padding: const EdgeInsets.only(left: 5, top: 5, bottom: 5),
-              decoration: BoxDecoration(
-                color: (showMenu ?? true)
-                    ? null
-                    : Theme.of(context).colorScheme.tertiaryContainer,
-                borderRadius: const BorderRadius.only(
-                  bottomLeft: Radius.circular(8),
-                  bottomRight: Radius.circular(8),
+            if (constraints.maxWidth > 600 || (showMenu ?? true))
+              SlideTransition(
+                position: _menuSlideAnimation,
+                child: Container(
+                  width: 200,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceDim,
+                    borderRadius: const BorderRadius.only(
+                      topRight: Radius.circular(8),
+                      bottomRight: Radius.circular(8),
+                    ),
+                  ),
+                  padding: const EdgeInsets.only(top: 60),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildMenuItem(0, 'Audio & Video'),
+                      const SizedBox(height: 12),
+                      _buildMenuItem(1, 'Profiles'),
+                      const SizedBox(height: 12),
+                      _buildMenuItem(2, 'Networking'),
+                      const SizedBox(height: 12),
+                      _buildMenuItem(3, 'Interface'),
+                      const SizedBox(height: 12),
+                      _buildMenuItem(4, 'View Log'),
+                      if (Platform.isWindows) const SizedBox(height: 12),
+                      if (Platform.isWindows) _buildMenuItem(5, 'Overlay'),
+                    ],
+                  ),
                 ),
               ),
-              child: Row(
-                children: [
-                  IconButton(
-                    visualDensity: VisualDensity.comfortable,
-                    icon: SvgPicture.asset(
-                      'assets/icons/Back.svg',
-                      semanticsLabel: 'Close Settings',
-                      width: 30,
+            Align(
+              alignment: Alignment.topLeft,
+              child: Container(
+                  padding: const EdgeInsets.only(left: 5, top: 5, bottom: 5),
+                  decoration: BoxDecoration(
+                    color: (showMenu ?? true)
+                        ? null
+                        : Theme.of(context).colorScheme.tertiaryContainer,
+                    borderRadius: const BorderRadius.only(
+                      bottomLeft: Radius.circular(8),
+                      bottomRight: Radius.circular(8),
                     ),
-                    onPressed: () async {
-                      if (route == 2 &&
-                          (_key.currentState?.unsavedChanges ?? false)) {
-                        bool leave = await unsavedConfirmation(context);
-
-                        if (!leave) {
-                          return;
-                        }
-                      }
-
-                      if (context.mounted) {
-                        Navigator.of(context).pop();
-                      }
-                    },
                   ),
-                  const SizedBox(width: 3),
-                  if (constraints.maxWidth < 600)
-                    IconButton(
-                      visualDensity: VisualDensity.comfortable,
-                      icon: SvgPicture.asset(
-                        showMenu ?? true
-                            ? 'assets/icons/HamburgerOpened.svg'
-                            : 'assets/icons/HamburgerClosed.svg',
-                        semanticsLabel: 'Menu',
-                        width: 30,
-                      ),
-                      onPressed: () {
-                        setState(() {
-                          if (showMenu ?? true) {
-                            _animationController.forward();
-                          } else {
-                            _animationController.reverse();
+                  child: Row(
+                    children: [
+                      IconButton(
+                        visualDensity: VisualDensity.comfortable,
+                        icon: SvgPicture.asset(
+                          'assets/icons/Back.svg',
+                          semanticsLabel: 'Close Settings',
+                          width: 30,
+                        ),
+                        onPressed: () async {
+                          if (route == 2 &&
+                              (_key.currentState?.unsavedChanges ?? false)) {
+                            bool leave = await unsavedConfirmation(context);
+
+                            if (!leave) {
+                              return;
+                            }
                           }
 
-                          showMenu = !(showMenu ?? true);
-                        });
-                      },
-                    ),
-                ],
-              )),
-        ),
-      ],
-    );
+                          if (context.mounted) {
+                            Navigator.of(context).pop();
+                          }
+                        },
+                      ),
+                      const SizedBox(width: 3),
+                      if (constraints.maxWidth < 600)
+                        IconButton(
+                          visualDensity: VisualDensity.comfortable,
+                          icon: SvgPicture.asset(
+                            showMenu ?? true
+                                ? 'assets/icons/HamburgerOpened.svg'
+                                : 'assets/icons/HamburgerClosed.svg',
+                            semanticsLabel: 'Menu',
+                            width: 30,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              if (showMenu ?? true) {
+                                _animationController.forward();
+                              } else {
+                                _animationController.reverse();
+                              }
+
+                              showMenu = !(showMenu ?? true);
+                            });
+                          },
+                        ),
+                    ],
+                  )),
+            ),
+          ],
+        ));
   }
 
   Widget _buildMenuItem(int target, String text) {

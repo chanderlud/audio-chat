@@ -387,111 +387,119 @@ class HomePage extends StatelessWidget {
     return Scaffold(
       body: Padding(
           padding: const EdgeInsets.all(20.0),
-          child: LayoutBuilder(
-              builder: (BuildContext context, BoxConstraints constraints) {
-            ListenableBuilder contactsList = ListenableBuilder(
-                listenable: settingsController,
-                builder: (BuildContext context, Widget? child) {
-                  return ListenableBuilder(
-                      listenable: stateController,
-                      builder: (BuildContext context, Widget? child) {
-                        List<Contact> contacts =
-                            settingsController.contacts.values.toList();
+          child: SafeArea(
+              bottom: false,
+              child: LayoutBuilder(
+                  builder: (BuildContext context, BoxConstraints constraints) {
+                ListenableBuilder contactsList = ListenableBuilder(
+                    listenable: settingsController,
+                    builder: (BuildContext context, Widget? child) {
+                      return ListenableBuilder(
+                          listenable: stateController,
+                          builder: (BuildContext context, Widget? child) {
+                            List<Contact> contacts =
+                                settingsController.contacts.values.toList();
 
-                        // sort contacts by session status then nickname
-                        contacts.sort((a, b) {
-                          String aStatus = stateController.sessionStatus(a);
-                          String bStatus = stateController.sessionStatus(b);
+                            // sort contacts by session status then nickname
+                            contacts.sort((a, b) {
+                              String aStatus = stateController.sessionStatus(a);
+                              String bStatus = stateController.sessionStatus(b);
 
-                          if (aStatus == bStatus) {
-                            return a.nickname().compareTo(b.nickname());
-                          } else if (aStatus == 'Connected') {
-                            return -1;
-                          } else if (bStatus == 'Connected') {
-                            return 1;
-                          } else if (aStatus == 'Connecting') {
-                            return -1;
-                          } else if (bStatus == 'Connecting') {
-                            return 1;
-                          } else {
-                            return 0;
-                          }
-                        });
+                              if (aStatus == bStatus) {
+                                return a.nickname().compareTo(b.nickname());
+                              } else if (aStatus == 'Connected') {
+                                return -1;
+                              } else if (bStatus == 'Connected') {
+                                return 1;
+                              } else if (aStatus == 'Connecting') {
+                                return -1;
+                              } else if (bStatus == 'Connecting') {
+                                return 1;
+                              } else {
+                                return 0;
+                              }
+                            });
 
-                        return ContactsList(
-                          audioChat: audioChat,
-                          contacts: contacts,
-                          stateController: stateController,
-                          settingsController: settingsController,
-                          player: player,
-                          maxWidth: constraints.maxWidth,
-                        );
-                      });
-                });
-            if (constraints.maxWidth > 600) {
-              return Column(
-                children: [
-                  Container(
-                    constraints: const BoxConstraints(maxHeight: 250),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            return ContactsList(
+                              audioChat: audioChat,
+                              contacts: contacts,
+                              stateController: stateController,
+                              settingsController: settingsController,
+                              player: player,
+                              maxWidth: constraints.maxWidth,
+                            );
+                          });
+                    });
+                if (constraints.maxWidth > 600) {
+                  return Column(
+                    children: [
                       Container(
-                        constraints: const BoxConstraints(maxWidth: 300),
-                        child: contactForm,
+                        constraints: const BoxConstraints(maxHeight: 250),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          Container(
+                            constraints: const BoxConstraints(maxWidth: 300),
+                            child: contactForm,
+                          ),
+                          const SizedBox(width: 20),
+                          Flexible(fit: FlexFit.loose, child: contactsList)
+                        ]),
                       ),
-                      const SizedBox(width: 20),
-                      Flexible(fit: FlexFit.loose, child: contactsList)
-                    ]),
-                  ),
-                  const SizedBox(height: 20),
-                  Flexible(
-                      fit: FlexFit.loose,
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        Container(
-                            constraints: const BoxConstraints(maxWidth: 260),
-                            decoration: BoxDecoration(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .tertiaryContainer,
-                              borderRadius: BorderRadius.circular(10.0),
-                            ),
-                            child: callControls),
-                        const SizedBox(width: 20),
-                        Flexible(
-                            fit: FlexFit.loose,
-                            child: Container(
+                      const SizedBox(height: 20),
+                      Flexible(
+                          fit: FlexFit.loose,
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            Container(
+                                constraints:
+                                    const BoxConstraints(maxWidth: 260),
                                 decoration: BoxDecoration(
                                   color: Theme.of(context)
                                       .colorScheme
-                                      .secondaryContainer,
+                                      .tertiaryContainer,
                                   borderRadius: BorderRadius.circular(10.0),
                                 ),
-                                padding: const EdgeInsets.only(
-                                    left: 10, right: 10, top: 5, bottom: 10),
-                                child: chatWidget))
-                      ])),
-                ],
-              );
-            } else {
-              return Column(children: [
-                Container(
-                  constraints: BoxConstraints(
-                      maxHeight: 250, maxWidth: constraints.maxWidth),
-                  child: contactsList,
-                ),
-                const SizedBox(height: 20),
-                HomeTabView(
-                    widgetOne: callControls,
-                    widgetTwo: Padding(
-                        padding: const EdgeInsets.only(
-                            left: 10, right: 10, top: 5, bottom: 10),
-                        child: chatWidget),
-                    colorOne: Theme.of(context).colorScheme.tertiaryContainer,
-                    colorTwo: Theme.of(context).colorScheme.secondaryContainer,
-                    iconOne: const Icon(Icons.call),
-                    iconTwo: const Icon(Icons.chat))
-              ]);
-            }
-          })),
+                                child: callControls),
+                            const SizedBox(width: 20),
+                            Flexible(
+                                fit: FlexFit.loose,
+                                child: Container(
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .secondaryContainer,
+                                      borderRadius: BorderRadius.circular(10.0),
+                                    ),
+                                    padding: const EdgeInsets.only(
+                                        left: 10,
+                                        right: 10,
+                                        top: 5,
+                                        bottom: 10),
+                                    child: chatWidget))
+                          ])),
+                    ],
+                  );
+                } else {
+                  return Column(children: [
+                    Container(
+                      constraints: BoxConstraints(
+                          maxHeight: 250, maxWidth: constraints.maxWidth),
+                      child: contactsList,
+                    ),
+                    const SizedBox(height: 20),
+                    HomeTabView(
+                        widgetOne: callControls,
+                        widgetTwo: Padding(
+                            padding: const EdgeInsets.only(
+                                left: 10, right: 10, top: 5, bottom: 10),
+                            child: chatWidget),
+                        colorOne:
+                            Theme.of(context).colorScheme.tertiaryContainer,
+                        colorTwo:
+                            Theme.of(context).colorScheme.secondaryContainer,
+                        iconOne: const Icon(Icons.call),
+                        iconTwo: const Icon(Icons.chat))
+                  ]);
+                }
+              }))),
     );
   }
 }
