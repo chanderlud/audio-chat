@@ -177,7 +177,7 @@ jobs:
 
       - name: Build Flutter
         run: |
-          flutter build ${{ matrix.info.target }} ${{ startsWith(github.ref, 'refs/tags/') && '--release' || '--debug' }} ${{ matrix.info.target == 'ios' && '--no-codesign' || '' }}
+          flutter build ${{ matrix.info.target }} ${{ startsWith(github.ref, 'refs/tags/') && '--release' || '--debug' }}
 
       - name: Rename APK
         if: matrix.info.target == 'apk' && startsWith(github.ref, 'refs/tags/')
