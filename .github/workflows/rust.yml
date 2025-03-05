@@ -184,6 +184,16 @@ jobs:
         run: |
           flutter build ${{ matrix.info.target }} ${{ startsWith(github.ref, 'refs/tags/') && '--release' || '--debug' }}
 
+      - name: Compile Windows Installer
+        if: matrix.info.target == 'windows' && startsWith(github.ref, 'refs/tags/')
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+        with:
+          path: windows/installer.iss
+
+      - name: Move Windows Installer
+        if: matrix.info.target == 'windows' && startsWith(github.ref, 'refs/tags/')
+        run: mv windows/Output/audio_chat_installer.exe audio_chat_installer.exe
+
       - name: Move APK
         if: matrix.info.target == 'apk'
         run: mv build/app/outputs/flutter-apk/${{ startsWith(github.ref, 'refs/tags/') && 'app-release.apk' || 'app-debug.apk' }} audio_chat.apk
@@ -205,8 +215,8 @@ jobs:
         with:
           name: audio_chat_${{ matrix.info.target }}
           path: |
-            audio_chat.exe
             audio_chat.apk
             audio_chat
             audio_chat.app
+            audio_chat_installer.exe
           if-no-files-found: ignore
