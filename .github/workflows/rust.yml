@@ -192,13 +192,13 @@ jobs:
         if: matrix.info.target == 'ios'
         run: mv build/ios/iphoneos/Runner.app audio_chat.app
 
-      - name: Move Linux Binary
+      - name: Move Linux Bundle
         if: matrix.info.target == 'linux'
-        run: mv build/linux/x64/${{ startsWith(github.ref, 'refs/tags/') && 'release' || 'debug' }}/bundle/audio_chat audio_chat
+        run: mv build/linux/x64/${{ startsWith(github.ref, 'refs/tags/') && 'release' || 'debug' }}/bundle audio_chat
 
-      - name: Move Windows Binary
+      - name: Move Windows Bundle
         if: matrix.info.target == 'windows'
-        run: mv build/windows/x64/runner/${{ startsWith(github.ref, 'refs/tags/') && 'Release' || 'Debug' }}/audio_chat.exe audio_chat.exe
+        run: mv build/windows/x64/runner/${{ startsWith(github.ref, 'refs/tags/') && 'Release' || 'Debug' }} audio_chat
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
