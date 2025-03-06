@@ -9,6 +9,8 @@ priority: optional
 
 section: x11
 
+installed_size: 42308
+
 dependencies:
   - libsecret-1-0
   - libjsoncpp1
