@@ -1,0 +1,27 @@
+display_name: API Dash
+icon: windows/runner/resources/app_icon.ico
+summary: A cross platform p2p chat application
+group: Applications/Development Tools
+vendor: Chander Luderman Miller
+packager: Chander Luderman Miller
+packagerEmail: me@chanchan.dev
+license: MIT
+url: https://github.com/chanderlud/audio-chat
+
+build_arch: x64
+
+requires:
+  - libsecret-1-0
+  - libjsoncpp1
+
+keywords:
+  - Audio Chat
+  - p2p
+
+generic_name: Audio Chat
+
+categories:
+  - Development
+  - Utility
+
+startup_notify: true

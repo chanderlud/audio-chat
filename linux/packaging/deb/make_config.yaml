@@ -1,0 +1,33 @@
+display_name: Audio Chat
+package_name: audio_chat
+
+maintainer:
+  name: Chander Luderman Miller
+  email: me@chanchan.dev
+
+priority: optional
+
+section: x11
+
+dependencies:
+  - libsecret-1-0
+  - libjsoncpp1
+
+essential: false
+
+icon: linux/assets/apidash.png
+
+postuninstall_scripts:
+  - echo "Sorry to see you go."
+
+keywords:
+  - Audio Chat
+  - p2p
+
+generic_name: Audio Chat
+
+categories:
+  - Development
+  - Utility
+
+startup_notify: true
