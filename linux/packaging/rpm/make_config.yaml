@@ -8,7 +8,7 @@ packagerEmail: me@chanchan.dev
 license: MIT
 url: https://github.com/chanderlud/audio-chat
 
-build_arch: x64
+build_arch: amd64
 
 requires:
   - libsecret-1-0
