@@ -17,7 +17,7 @@ dependencies:
 
 essential: false
 
-icon: linux/assets/apidash.png
+icon: windows/runner/resources/app_icon.ico
 
 postuninstall_scripts:
   - echo "Sorry to see you go."

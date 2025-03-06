@@ -184,13 +184,16 @@ jobs:
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
 
-      - name: Build Flutter
+      - name: Build and Package
         run: |
-          flutter build ${{ matrix.info.target }} ${{ startsWith(github.ref, 'refs/tags/') && '--release' || '--debug' }}
+          if [[ "${{ matrix.info.target }}" != "linux" || ! "${{ startsWith(github.ref, 'refs/tags/') }}" ]]; then
+            flutter build ${{ matrix.info.target }} ${{ startsWith(github.ref, 'refs/tags/') && '--release' || '--debug' }}
+          fi
 
-      - name: Package Deb
-        if: matrix.info.target == 'linux' && startsWith(github.ref, 'refs/tags/')
-        run: flutter_distributor release --name=distribution --jobs=release-distribution-linux-deb,release-distribution-linux-rpm && mv dist/*/audio_chat-*-linux.deb audio_chat.deb
+          if [[ "${{ matrix.info.target }}" == "linux" && "${{ startsWith(github.ref, 'refs/tags/') }}" == "true" ]]; then
+            flutter_distributor release --name=distribution --jobs=release-distribution-linux-deb,release-distribution-linux-rpm
+            mv dist/*/audio_chat-*-linux.deb audio_chat.deb
+          fi
 
       - name: Compile Windows Installer
         if: matrix.info.target == 'windows' && startsWith(github.ref, 'refs/tags/')
