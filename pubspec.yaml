@@ -1,5 +1,5 @@
 name: audio_chat
-description: "The Audio Chat Flutter application."
+description: "A cross platform p2p chat application"
 publish_to: 'none'
 version: 2.4.0
 
