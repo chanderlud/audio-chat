@@ -14,7 +14,7 @@ pub(crate) fn configure_audio_session() {
 
         let success: Bool = msg_send![av_audio_session, setCategory: category,
             mode: mode,
-            options: 0,
+            options: 0_u64,
             error: &error];
 
         if success == Bool::NO {
@@ -22,7 +22,7 @@ pub(crate) fn configure_audio_session() {
         }
 
         let override_output: *mut AnyObject = msg_send![class!(AVAudioSession), sharedInstance];
-        let _: Bool = msg_send![override_output, overrideOutputAudioPort: 1, error: &error];
+        let _: Bool = msg_send![override_output, overrideOutputAudioPort: 1_u64, error: &error];
 
         // Activate the audio session
         let success: Bool = msg_send![av_audio_session, setActive: Bool::YES, error: &error];
