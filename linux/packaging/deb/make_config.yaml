@@ -16,7 +16,7 @@ dependencies:
 
 essential: false
 
-icon: windows/runner/resources/app_icon.ico
+icon: linux/icon.png
 
 postuninstall_scripts:
   - echo "Sorry to see you go."
