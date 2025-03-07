@@ -13,7 +13,6 @@ installed_size: 42308
 
 dependencies:
   - libsecret-1-0
-  - libjsoncpp1
 
 essential: false
 

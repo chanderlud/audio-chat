@@ -12,7 +12,6 @@ build_arch: x86_64
 
 requires:
   - libsecret-1-0
-  - libjsoncpp1
 
 keywords:
   - Audio Chat
