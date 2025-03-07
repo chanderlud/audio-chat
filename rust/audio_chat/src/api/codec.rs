@@ -1,10 +1,10 @@
 use crate::api::audio_chat::ProcessorMessage;
 use bytes::Bytes;
 use kanal::{Receiver, Sender};
+use log::info;
 use sea_codec::decoder::SeaDecoder;
 use sea_codec::encoder::{EncoderSettings, SeaEncoder};
 use std::io::{Read, Result, Write};
-use log::info;
 
 struct ChannelReader {
     receiver: Receiver<ProcessorMessage>,

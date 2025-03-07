@@ -1,17 +1,20 @@
 display_name: Audio Chat
 icon: linux/icon.png
-summary: A cross platform p2p chat application
-group: Applications/Development Tools
+summary: A cross-platform P2P chat application
+group: Applications/Multimedia
 vendor: Chander Luderman Miller
 packager: Chander Luderman Miller
 packagerEmail: me@chanchan.dev
 license: MIT
 url: https://github.com/chanderlud/audio-chat
 
-build_arch: x86_64
+build_arch:
+  - x86_64
+  - aarch64
 
 requires:
   - libsecret
+  - gtk3
 
 keywords:
   - Audio Chat
@@ -24,3 +27,8 @@ categories:
   - Utility
 
 startup_notify: true
+
+description: A peer-to-peer cross-platform audio chat application.
+
+postinstall_scripts:
+  - echo "Thank you for installing Audio Chat!"

@@ -7,12 +7,19 @@ maintainer:
 
 priority: optional
 
-section: x11
+section: sound
+
+architectures:
+  - amd64
+  - arm64
+
+description: "A peer-to-peer audio chat application."
 
 installed_size: 42308
 
 dependencies:
   - libsecret-1-0
+  - libgtk-3-0
 
 essential: false
 
