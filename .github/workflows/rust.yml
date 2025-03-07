@@ -270,7 +270,7 @@ jobs:
               ubuntu*|jessie|stretch|buster|bullseye)
                 apt-get update -q -y
                 apt-get install -q -y protobuf-compiler clang cmake git ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libasound2-dev libsecret-1-dev rpm patchelf gcc-aarch64-linux-gnu g++-aarch64-linux-gnu dpkg-cross curl
-                curl https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.29.0-stable.tar.xz > flutter.tar.xz
+                curl -o flutter.tar.xz https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.29.0-stable.tar.xz
                 tar xf ~/flutter.tar.xz
                 export PATH="$PATH:`pwd`/flutter/bin"
                 flutter --version
