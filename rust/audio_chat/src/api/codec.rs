@@ -4,6 +4,7 @@ use kanal::{Receiver, Sender};
 use sea_codec::decoder::SeaDecoder;
 use sea_codec::encoder::{EncoderSettings, SeaEncoder};
 use std::io::{Read, Result, Write};
+use log::info;
 
 struct ChannelReader {
     receiver: Receiver<ProcessorMessage>,
@@ -80,6 +81,8 @@ pub(crate) fn encoder(
     let mut encoder = SeaEncoder::new(1, sample_rate, None, settings, reader, writer).unwrap();
 
     while encoder.encode_frame().is_ok() {}
+
+    info!("Encoder finished");
 }
 
 pub(crate) fn decoder(receiver: Receiver<ProcessorMessage>, sender: Sender<ProcessorMessage>) {
@@ -93,5 +96,7 @@ pub(crate) fn decoder(receiver: Receiver<ProcessorMessage>, sender: Sender<Proce
 
     let mut decoder = SeaDecoder::new(reader, writer).unwrap();
 
-    while decoder.decode_frame().is_ok() {}
+    while decoder.decode_frame().is_ok_and(|d| d) {}
+
+    info!("Decoder finished");
 }
