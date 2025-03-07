@@ -21,6 +21,9 @@ pub(crate) fn configure_audio_session() {
             error!("Failed to set AVAudioSession category.");
         }
 
+        let override_output: *mut AnyObject = msg_send![class!(AVAudioSession), sharedInstance];
+        let _: Bool = msg_send![override_output, overrideOutputAudioPort: 1, error: &error];
+
         // Activate the audio session
         let success: Bool = msg_send![av_audio_session, setActive: Bool::YES, error: &error];
 
