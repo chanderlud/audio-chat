@@ -254,7 +254,7 @@ jobs:
           arch: ${{ matrix.arch }}
           distro: ${{ matrix.distro }}
           githubToken: ${{ github.token }}
-          shell: /bin/sh
+          shell: /bin/bash
 
           # create an artifacts directory
           setup: |
