@@ -274,6 +274,7 @@ jobs:
             export FLUTTER_VERSION=stable
             git clone --depth 1 --branch ${FLUTTER_VERSION} https://github.com/flutter/flutter.git /flutter
             export PATH="$PATH:/flutter/bin"
+            export PATH="$PATH":"$HOME/.pub-cache/bin"
             flutter doctor
             dart pub global activate flutter_distributor
             flutter_distributor release --name=distribution --jobs=release-distribution-linux-deb,release-distribution-linux-rpm
