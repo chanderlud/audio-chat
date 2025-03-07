@@ -8,10 +8,6 @@ packagerEmail: me@chanchan.dev
 license: MIT
 url: https://github.com/chanderlud/audio-chat
 
-build_arch:
-  - x86_64
-  - aarch64
-
 requires:
   - libsecret
   - gtk3

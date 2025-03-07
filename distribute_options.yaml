@@ -6,10 +6,8 @@ releases:
         package:
           platform: linux
           target: deb
-          architectures: [x64, aarch64]
 
       - name: release-distribution-linux-rpm
         package:
           platform: linux
           target: rpm
-          architectures: [x64, aarch64]

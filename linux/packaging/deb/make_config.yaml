@@ -9,10 +9,6 @@ priority: optional
 
 section: sound
 
-architectures:
-  - amd64
-  - arm64
-
 description: "A peer-to-peer audio chat application."
 
 installed_size: 42308
