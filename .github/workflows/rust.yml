@@ -274,7 +274,7 @@ jobs:
                 tar xf flutter.tar.xz
                 export PATH="$PATH:`pwd`/flutter/bin"
                 echo 'export PATH="$PATH:`pwd`/flutter/bin"' >> ~/.bashrc
-                source ~/.bashrc
+                . ~/.bashrc
                 git config --global --add safe.directory `pwd`/flutter
                 flutter --version
                 dart pub global activate flutter_distributor
