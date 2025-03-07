@@ -12,9 +12,10 @@ env:
 jobs:
   test_rust:
     runs-on: ${{ matrix.info.image }}
+    name: Test on ${{ matrix.info.image }} ${{ matrix.info.target }}
 
     strategy:
-      fail-fast: false
+      fail-fast: true
 
       matrix:
         info:
@@ -90,6 +91,7 @@ jobs:
 
   build_flutter:
     runs-on: ${{ matrix.info.image }}
+    name: Build on ${{ matrix.info.image }} ${{ matrix.info.target }} ${{ startsWith(github.ref, 'refs/tags/') && 'release' || 'debug' }}
 
     strategy:
       fail-fast: false
@@ -191,8 +193,8 @@ jobs:
         if: matrix.info.target == 'linux' && startsWith(github.ref, 'refs/tags/')
         run: |
           flutter_distributor release --name=distribution --jobs=release-distribution-linux-deb,release-distribution-linux-rpm
-          mv dist/*/audio_chat-*-linux.deb audio_chat.deb
-          mv dist/*/audio_chat-*-linux.rpm audio_chat.rpm
+          mv dist/*/audio_chat-*-linux.deb audio-chat.deb
+          mv dist/*/audio_chat-*-linux.rpm audio-chat.rpm
 
       - name: Compile Windows Installer
         if: matrix.info.target == 'windows' && startsWith(github.ref, 'refs/tags/')
@@ -201,35 +203,35 @@ jobs:
           path: windows/installer.iss
       - name: Move Windows Installer
         if: matrix.info.target == 'windows' && startsWith(github.ref, 'refs/tags/')
-        run: mv windows/Output/audio_chat_installer.exe audio_chat_installer.exe
+        run: mv windows/Output/audio_chat_installer.exe audio-chat-windows-x64.exe
 
       - name: Move APK
         if: matrix.info.target == 'apk'
-        run: mv build/app/outputs/flutter-apk/${{ startsWith(github.ref, 'refs/tags/') && 'app-release.apk' || 'app-debug.apk' }} audio_chat.apk
+        run: mv build/app/outputs/flutter-apk/${{ startsWith(github.ref, 'refs/tags/') && 'app-release.apk' || 'app-debug.apk' }} audio-chat.apk
 
       - name: Move IPA
         if: matrix.info.target == 'ios'
-        run: mv build/ios/iphoneos/Runner.app audio_chat.app
+        run: mv build/ios/iphoneos/Runner.app audio-chat.app
 
       - name: Move Linux Bundle
         if: matrix.info.target == 'linux'
-        run: mv build/linux/x64/${{ startsWith(github.ref, 'refs/tags/') && 'release' || 'debug' }}/bundle audio_chat
+        run: mv build/linux/x64/${{ startsWith(github.ref, 'refs/tags/') && 'release' || 'debug' }}/bundle audio-chat
 
       - name: Move Windows Bundle
         if: matrix.info.target == 'windows'
-        run: mv build/windows/x64/runner/${{ startsWith(github.ref, 'refs/tags/') && 'Release' || 'Debug' }} audio_chat
+        run: mv build/windows/x64/runner/${{ startsWith(github.ref, 'refs/tags/') && 'Release' || 'Debug' }} audio-chat
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: audio_chat_${{ matrix.info.target }}
           path: |
-            audio_chat.apk
-            audio_chat
-            audio_chat.app
-            audio_chat_installer.exe
-            audio_chat.deb
-            audio_chat.rpm
+            audio-chat.apk
+            audio-chat
+            audio-chat.app
+            audio-chat-windows-x64.exe
+            audio-chat.deb
+            audio-chat.rpm
           if-no-files-found: ignore
 
   build_cross:
@@ -251,27 +253,24 @@ jobs:
         with:
           arch: ${{ matrix.arch }}
           distro: ${{ matrix.distro }}
-
-          # Not required, but speeds up builds
           githubToken: ${{ github.token }}
+          shell: /bin/sh
 
-          # Create an artifacts directory
+          # create an artifacts directory
           setup: |
             mkdir -p "${PWD}/artifacts"
 
-          # Mount the artifacts directory as /artifacts in the container
+          # mount the artifacts directory as /artifacts in the container
           dockerRunArgs: |
             --volume "${PWD}/artifacts:/artifacts"
 
-          # The shell to run commands with in the container
-          shell: /bin/sh
-
-          # Install dependencies
+          # install dependencies
           install: |
             case "${{ matrix.distro }}" in
               ubuntu*|jessie|stretch|buster|bullseye)
                 apt-get update -q -y
                 apt-get install -q -y protobuf-compiler clang cmake git ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libasound2-dev libsecret-1-dev rpm patchelf gcc-aarch64-linux-gnu g++-aarch64-linux-gnu dpkg-cross snapd
+                service snapd start
                 snap install flutter --classic
                 flutter --version
                 dart pub global activate flutter_distributor
@@ -282,13 +281,11 @@ jobs:
                 ;;
             esac
 
-          # Produce a binary artifact and place it in the mounted volume
+          # produce a binary artifact and place it in the mounted volume
           run: |
             cp $(flutter --version) "/artifacts/${artifact_name}"
             echo "Produced artifact at /artifacts/${artifact_name}"
 
       - name: Show the artifact
-        # Items placed in /artifacts in the container will be in
-        # ${PWD}/artifacts on the host.
         run: |
           ls -al "${PWD}/artifacts"
