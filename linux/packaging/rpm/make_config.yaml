@@ -1,5 +1,5 @@
 display_name: Audio Chat
-icon: windows/runner/resources/app_icon.ico
+icon: linux/icon.png
 summary: A cross platform p2p chat application
 group: Applications/Development Tools
 vendor: Chander Luderman Miller
