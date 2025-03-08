@@ -283,10 +283,10 @@ jobs:
 
       - name: Show the artifact
         run: |
-          ls -al "${PWD}/artifacts"
+          ls -al artifacts
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: audio_chat_${{ matrix.distro }}_${{ matrix.arch }}
-          path: /artifacts
+          path: artifacts
