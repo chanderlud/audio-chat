@@ -267,12 +267,12 @@ jobs:
               ubuntu*)
                 apt-get update -q -y
                 apt-get install -q -y protobuf-compiler clang cmake git ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libasound2-dev libsecret-1-dev rpm patchelf gcc-aarch64-linux-gnu g++-aarch64-linux-gnu dpkg-cross curl unzip
+                curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+                git clone --depth 1 --branch stable https://github.com/flutter/flutter.git /flutter
                 ;;
             esac
 
           run: |
-            export FLUTTER_VERSION=stable
-            git clone --depth 1 --branch ${FLUTTER_VERSION} https://github.com/flutter/flutter.git /flutter
             export PATH="$PATH:/flutter/bin"
             export PATH="$PATH":"$HOME/.pub-cache/bin"
             flutter doctor
