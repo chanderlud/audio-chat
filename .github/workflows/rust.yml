@@ -253,7 +253,7 @@ jobs:
         with:
           arch: ${{ matrix.arch }}
           distro: ${{ matrix.distro }}
-          githubToken: ${{ github.token }}
+          githubToken: ${{ secrets.GHCR_PAT }}
           shell: /bin/bash
 
           setup: |
