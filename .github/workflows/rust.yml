@@ -269,13 +269,13 @@ jobs:
                 apt-get install -q -y protobuf-compiler clang cmake git ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libasound2-dev libsecret-1-dev rpm patchelf gcc-aarch64-linux-gnu g++-aarch64-linux-gnu dpkg-cross curl unzip
                 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
                 git clone --depth 1 --branch stable https://github.com/flutter/flutter.git /flutter
+                /flutter/bin/flutter --version # triggers flutter initialization
                 ;;
             esac
 
           run: |
             export PATH="$PATH:/flutter/bin"
             export PATH="$PATH":"$HOME/.pub-cache/bin"
-            flutter doctor
             dart pub global activate flutter_distributor
             flutter_distributor release --name=distribution --jobs=release-distribution-linux-deb,release-distribution-linux-rpm
             mv dist/*/audio_chat-*-linux.deb /artifacts/audio-chat.deb
