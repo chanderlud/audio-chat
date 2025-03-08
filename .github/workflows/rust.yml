@@ -243,6 +243,8 @@ jobs:
         include:
           - arch: aarch64
             distro: ubuntu22.04
+          - arch: riscv64
+            distro: ubuntu22.04
 
     steps:
       - uses: actions/checkout@v4
@@ -270,20 +272,16 @@ jobs:
                 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
                 git clone --depth 1 --branch stable https://github.com/flutter/flutter.git /flutter
                 /flutter/bin/flutter --version # triggers flutter initialization
+                /flutter/bin/cache/dart-sdk/bin/dart pub global activate flutter_distributor
                 ;;
             esac
 
           run: |
             export PATH="$PATH:/flutter/bin"
             export PATH="$PATH":"$HOME/.pub-cache/bin"
-            dart pub global activate flutter_distributor
             flutter_distributor release --name=distribution --jobs=release-distribution-linux-deb,release-distribution-linux-rpm
             mv dist/*/audio_chat-*-linux.deb /artifacts/audio-chat.deb
             mv dist/*/audio_chat-*-linux.rpm /artifacts/audio-chat.rpm
-
-      - name: Show the artifact
-        run: |
-          ls -al artifacts
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
