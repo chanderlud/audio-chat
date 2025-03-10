@@ -270,17 +270,29 @@ jobs:
                 apt-get update -q -y
                 apt-get install -q -y protobuf-compiler clang cmake git ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libasound2-dev libsecret-1-dev rpm patchelf dpkg-cross curl unzip
                 
+                curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+                git clone --depth 1 --branch stable https://github.com/flutter/flutter.git /flutter
+                
                 case "${{ matrix.arch }}" in
                   aarch64)
                     apt-get install -q -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
                     ;;
                   riscv64)
-                    apt-get install -q -y gcc-riscv64-linux-gnu g++-riscv64-linux-gnu
+                    apt-get install -q -y gcc-riscv64-linux-gnu g++-riscv64-linux-gnu python3 xz-utils
+                    
+                    # build dart sdk for riscv
+                    git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+                    export PATH="$PATH:$PWD/depot_tools"
+                    mkdir dart-sdk
+                    cd dart-sdk
+                    fetch dart
+                    cd sdk
+                    ./tools/build.py --mode release --arch riscv64 create_sdk
+                    mkdir /flutter/bin/cache
+                    mv out/Release*/dart-sdk /flutter/bin/cache/dart-sdk
                     ;;
                 esac
                 
-                curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-                git clone --depth 1 --branch stable https://github.com/flutter/flutter.git /flutter
                 /flutter/bin/flutter --version # triggers flutter initialization
                 /flutter/bin/cache/dart-sdk/bin/dart pub global activate flutter_distributor
                 ;;
