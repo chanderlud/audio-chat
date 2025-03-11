@@ -271,33 +271,16 @@ jobs:
                 apt-get install -q -y protobuf-compiler clang cmake git ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libasound2-dev libsecret-1-dev rpm patchelf dpkg-cross curl unzip
                 
                 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-                git clone --depth 1 --branch stable https://github.com/flutter/flutter.git /flutter
+                
                 
                 case "${{ matrix.arch }}" in
                   aarch64)
                     apt-get install -q -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+                    git clone --depth 1 --branch stable https://github.com/flutter/flutter.git /flutter
                     ;;
                   riscv64)
-                    apt-get install -q -y python3 xz-utils gcc-9 g++-9
-                    ls /usr/bin/riscv64-linux-gnu*
-            
-                    update-alternatives --install /usr/bin/riscv64-linux-gnu-gcc riscv64-linux-gnu-gcc /usr/bin/riscv64-linux-gnu-gcc-9 100
-                    update-alternatives --install /usr/bin/riscv64-linux-gnu-g++ riscv64-linux-gnu-g++ /usr/bin/riscv64-linux-gnu-g++-9 100
-                    update-alternatives --config riscv64-linux-gnu-gcc
-                    update-alternatives --config riscv64-linux-gnu-g++
-
-                    riscv64-linux-gnu-g++ --version            
-                      
-                    # build dart sdk for riscv
-                    git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
-                    export PATH="$PATH:$PWD/depot_tools"
-                    mkdir dart-sdk
-                    cd dart-sdk
-                    fetch dart
-                    cd sdk
-                    ./tools/build.py --mode release --arch riscv64 --no-clang create_sdk
-                    mkdir /flutter/bin/cache
-                    mv out/Release*/dart-sdk /flutter/bin/cache/dart-sdk
+                    apt-get install -q -y gcc-riscv64-linux-gnu g++-riscv64-linux-gnu
+                    git clone --depth 1 --branch beta https://github.com/flutter/flutter.git /flutter
                     ;;
                 esac
                 
