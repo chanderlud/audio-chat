@@ -239,6 +239,8 @@ jobs:
     name: Build on ${{ matrix.distro }} ${{ matrix.arch }}
 
     strategy:
+      fail-fast: false
+
       matrix:
         include:
           - arch: aarch64
