@@ -278,12 +278,11 @@ jobs:
                     apt-get install -q -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
                     ;;
                   riscv64)
-                    ls /usr/bin/riscv64-linux-gnu*
-                    apt-get install -q -y python3 xz-utils gcc-10 g++-10
+                    apt-get install -q -y python3 xz-utils gcc-9 g++-9
                     ls /usr/bin/riscv64-linux-gnu*
             
-                    update-alternatives --install /usr/bin/riscv64-linux-gnu-gcc riscv64-linux-gnu-gcc /usr/bin/riscv64-linux-gnu-gcc-10 100
-                    update-alternatives --install /usr/bin/riscv64-linux-gnu-g++ riscv64-linux-gnu-g++ /usr/bin/riscv64-linux-gnu-g++-10 100
+                    update-alternatives --install /usr/bin/riscv64-linux-gnu-gcc riscv64-linux-gnu-gcc /usr/bin/riscv64-linux-gnu-gcc-9 100
+                    update-alternatives --install /usr/bin/riscv64-linux-gnu-g++ riscv64-linux-gnu-g++ /usr/bin/riscv64-linux-gnu-g++-9 100
                     update-alternatives --config riscv64-linux-gnu-gcc
                     update-alternatives --config riscv64-linux-gnu-g++
 
