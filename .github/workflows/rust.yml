@@ -29,6 +29,8 @@ jobs:
             target: aarch64-linux-android
           - image: macos-13
             target: aarch64-apple-ios
+          - image: windows-2019
+            target: web
 
     steps:
       - uses: actions/checkout@v4
@@ -76,8 +78,12 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt, clippy
-          target: ${{ matrix.info.target }}
+          target: ${{ matrix.info.target == 'web' && 'wasm32-unknown-unknown' || matrix.info.target }}
           cache: false
+
+      - name: Install FRB Codegen
+        if : matrix.info.target == 'web'
+        run: cargo install flutter_rust_bridge_codegen
 
       - name: Check formatting
         run: cd rust && cargo fmt -- --check
@@ -87,7 +93,12 @@ jobs:
         run: cd rust && cargo clippy -- -D warnings
 
       - name: Build
+        if: matrix.info.target != 'web'
         run: cd rust && cargo build --verbose --target ${{ matrix.info.target }}
+
+      - name: Build Web
+        if: matrix.info.target == 'web'
+        run: flutter_rust_bridge_codegen build-web --rust-root rust/audio_chat
 
   build_flutter:
     runs-on: ${{ matrix.info.image }}
@@ -245,8 +256,8 @@ jobs:
         include:
           - arch: aarch64
             distro: ubuntu22.04
-          - arch: riscv64
-            distro: ubuntu22.04
+#          - arch: riscv64
+#            distro: ubuntu22.04
 
     steps:
       - uses: actions/checkout@v4

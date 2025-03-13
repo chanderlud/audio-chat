@@ -1,30 +1,44 @@
 use std::fmt::Display;
+#[cfg(not(target_family = "wasm"))]
 use std::process::Stdio;
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use std::process::{ExitStatus, Output};
 use std::str::FromStr;
+#[cfg(not(target_family = "wasm"))]
 use std::sync::atomic::AtomicUsize;
+#[cfg(not(target_family = "wasm"))]
 use std::sync::atomic::Ordering::Relaxed;
+#[cfg(not(target_family = "wasm"))]
 use std::sync::Arc;
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use crate::api::audio_chat::Capabilities;
 use crate::api::audio_chat::RecordingConfig;
+#[cfg(not(target_family = "wasm"))]
 use libp2p::futures::{AsyncReadExt as ReadExt, AsyncWriteExt as WriteExt};
+#[cfg(not(target_family = "wasm"))]
 use libp2p::Stream;
+#[cfg(not(target_family = "wasm"))]
 use log::{error, info, warn};
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_family = "wasm"))]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(not(target_family = "wasm"))]
 use tokio::process::Command;
+#[cfg(not(target_family = "wasm"))]
 use tokio::select;
+#[cfg(not(target_family = "wasm"))]
 use tokio::sync::Notify;
 
+#[cfg(not(target_family = "wasm"))]
 use crate::api::error::{Error, ErrorKind};
 
+#[cfg(not(target_family = "wasm"))]
 type Result<T> = std::result::Result<T, Error>;
 
+#[cfg(not(target_family = "wasm"))]
 const BUFFER_SIZE: usize = 512;
 #[cfg(target_os = "windows")]
 const CREATION_FLAGS: u32 = 0x08000000;
@@ -122,6 +136,7 @@ impl Device {
         vec![Self::X11Grab]
     }
 
+    #[cfg(not(target_family = "wasm"))]
     fn to_args(&self, encoder: Encoder) -> Vec<&str> {
         // TODO figure out a way to only add the video size for encoders if needed
         match self {
@@ -241,6 +256,7 @@ impl FromStr for Encoder {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl Encoder {
     /// returns the valid decoders for this encoder in preferred order
     fn decoders(&self) -> Vec<Decoder> {
@@ -303,6 +319,7 @@ impl FromStr for Decoder {
     }
 }
 impl RecordingConfig {
+    #[cfg(not(target_family = "wasm"))]
     fn make_command(&self, test: bool) -> Command {
         let mut command = Command::new("ffmpeg");
         command.args(self.device.to_args(self.encoder));
@@ -353,10 +370,12 @@ impl RecordingConfig {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 struct PlaybackConfig {
     decoder: Decoder,
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl PlaybackConfig {
     fn make_command(&self) -> Command {
         let mut command = Command::new("ffplay");
@@ -367,6 +386,7 @@ impl PlaybackConfig {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub(crate) async fn record(
     mut stream: Stream,
     stop: Arc<Notify>,
@@ -418,6 +438,7 @@ pub(crate) async fn record(
     Ok(())
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub(crate) async fn playback(
     mut stream: Stream,
     stop: Arc<Notify>,

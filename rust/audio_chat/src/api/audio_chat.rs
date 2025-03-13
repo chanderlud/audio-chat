@@ -10,7 +10,6 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize};
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_throttle::RateLimiter;
 use atomic_float::AtomicF32;
 use chrono::{DateTime, Local};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -25,8 +24,12 @@ use libp2p::futures::StreamExt;
 use libp2p::identity::Keypair;
 use libp2p::multiaddr::Protocol;
 use libp2p::swarm::{ConnectionId, SwarmEvent};
-use libp2p::{autonat, dcutr, identify, noise, ping, tcp, yamux, Multiaddr, PeerId, Stream};
+#[cfg(not(target_family = "wasm"))]
+use libp2p::tcp;
+use libp2p::{autonat, dcutr, identify, noise, ping, yamux, Multiaddr, PeerId, Stream};
 use libp2p_stream::Control;
+#[cfg(target_family = "wasm")]
+use libp2p_webrtc_websys;
 use log::{debug, error, info, warn};
 use nnnoiseless::{DenoiseState, RnnModel, FRAME_SIZE};
 use rayon::iter::ParallelIterator;
@@ -34,10 +37,11 @@ use rayon::prelude::IntoParallelRefMutIterator;
 use rubato::{Resampler, SincFixedIn};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
+#[cfg(not(target_family = "wasm"))]
 use tokio::net::lookup_host;
 use tokio::select;
 use tokio::sync::{Mutex, Notify, RwLock};
-use tokio::time::{interval, sleep_until, timeout, Instant, Interval};
+use tokio::time::{interval, sleep, sleep_until, timeout, Instant, Interval};
 use tokio_util::bytes::Bytes;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tokio_util::compat::{Compat, FuturesAsyncReadCompatExt};
@@ -234,16 +238,12 @@ impl AudioChat {
         // start the session manager
         let chat_clone = chat.clone();
         spawn(async move {
-            // retry the session manager if it fails, but not too fast
-            let rate_limiter = RateLimiter::new(Duration::from_millis(100));
-
             loop {
-                while let Err(error) = rate_limiter
-                    .throttle(|| async { chat_clone.session_manager(&session, &screenshare).await })
-                    .await
-                {
+                while let Err(error) = chat_clone.session_manager(&session, &screenshare).await {
                     (chat_clone.manager_active.lock().await)(false, false).await;
                     error!("Session manager failed: {}", error);
+                    // retry the session manager if it fails, but not too fast
+                    sleep(Duration::from_millis(100)).await;
                 }
 
                 debug!("Session manager waiting for restart signal");
@@ -461,8 +461,14 @@ impl AudioChat {
         start: &AsyncReceiver<PeerId>,
         screenshare: &AsyncReceiver<StartScreenshare>,
     ) -> Result<()> {
-        let mut swarm =
-            libp2p::SwarmBuilder::with_existing_identity(self.identity.read().await.clone())
+        let builder =
+            libp2p::SwarmBuilder::with_existing_identity(self.identity.read().await.clone());
+
+        let provider_phase;
+
+        #[cfg(not(target_family = "wasm"))]
+        {
+            provider_phase = builder
                 .with_tokio()
                 .with_tcp(
                     tcp::Config::default().nodelay(true),
@@ -470,28 +476,42 @@ impl AudioChat {
                     yamux::Config::default,
                 )
                 .map_err(|_| ErrorKind::SwarmBuild)?
-                .with_quic()
-                .with_relay_client(noise::Config::new, yamux::Config::default)
-                .map_err(|_| ErrorKind::SwarmBuild)?
-                .with_behaviour(|keypair, relay_behaviour| Behaviour {
-                    relay_client: relay_behaviour,
-                    ping: ping::Behaviour::new(ping::Config::new()),
-                    identify: identify::Behaviour::new(identify::Config::new(
-                        "/audio-chat/0.0.1".to_string(),
-                        keypair.public(),
-                    )),
-                    dcutr: dcutr::Behaviour::new(keypair.public().to_peer_id()),
-                    stream: libp2p_stream::Behaviour::new(),
-                    auto_nat: autonat::Behaviour::new(
-                        keypair.public().to_peer_id(),
-                        autonat::Config {
-                            ..Default::default()
-                        },
-                    ),
-                })
-                .map_err(|_| ErrorKind::SwarmBuild)?
-                .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(30)))
-                .build();
+                .with_quic();
+        }
+
+        #[cfg(target_family = "wasm")]
+        {
+            provider_phase = builder
+                .with_wasm_bindgen()
+                .with_other_transport(|id_keys| {
+                    Ok(libp2p_webrtc_websys::Transport::new(
+                        libp2p_webrtc_websys::Config::new(id_keys),
+                    ))
+                })?;
+        }
+
+        let mut swarm = provider_phase
+            .with_relay_client(noise::Config::new, yamux::Config::default)
+            .map_err(|_| ErrorKind::SwarmBuild)?
+            .with_behaviour(|keypair, relay_behaviour| Behaviour {
+                relay_client: relay_behaviour,
+                ping: ping::Behaviour::new(ping::Config::new()),
+                identify: identify::Behaviour::new(identify::Config::new(
+                    "/audio-chat/0.0.1".to_string(),
+                    keypair.public(),
+                )),
+                dcutr: dcutr::Behaviour::new(keypair.public().to_peer_id()),
+                stream: libp2p_stream::Behaviour::new(),
+                auto_nat: autonat::Behaviour::new(
+                    keypair.public().to_peer_id(),
+                    autonat::Config {
+                        ..Default::default()
+                    },
+                ),
+            })
+            .map_err(|_| ErrorKind::SwarmBuild)?
+            .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(30)))
+            .build();
 
         let listen_addr_quic = Multiaddr::empty()
             .with(Protocol::from(Ipv4Addr::UNSPECIFIED))
@@ -669,6 +689,7 @@ impl AudioChat {
                                 .await {
                                 let width = self.screenshare_config.width.load(Relaxed);
                                 let height = self.screenshare_config.height.load(Relaxed);
+                                #[cfg(not(target_family = "wasm"))]
                                 spawn(screenshare::playback(stream, stop, state.download_bandwidth.clone(), header.encoder, width, height));
                                 (self.screenshare_started.lock().await)(dart_stop, false).await;
                             }
@@ -684,6 +705,7 @@ impl AudioChat {
                             state.wants_stream.store(true, Relaxed);
 
                             if let Ok(stream) = state.stream_receiver.recv().await {
+                                #[cfg(not(target_family = "wasm"))]
                                 spawn(screenshare::record(stream, stop, state.upload_bandwidth.clone(), config));
                             }
 
@@ -1965,6 +1987,7 @@ impl NetworkConfig {
         })
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub async fn set_relay_address(
         &self,
         relay_address: String,
@@ -1979,6 +2002,14 @@ impl NetworkConfig {
         } else {
             Err("Failed to resolve address".to_string().into())
         }
+    }
+
+    #[cfg(target_family = "wasm")]
+    pub async fn set_relay_address(
+        &self,
+        _relay_address: String,
+    ) -> std::result::Result<(), DartError> {
+        todo!()
     }
 
     pub async fn get_relay_address(&self) -> String {

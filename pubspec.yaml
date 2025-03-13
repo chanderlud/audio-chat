@@ -13,7 +13,7 @@ dependencies:
   rust_builder:
     path: rust_builder
 
-  flutter_rust_bridge: 2.8.0
+  flutter_rust_bridge: 2.9.0
   flutter_secure_storage: ^9.0.0
 
   shared_preferences: ^2.2.2

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:core';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'package:audio_chat/settings/controller.dart';
 import 'package:audio_chat/src/rust/api/player.dart';
@@ -227,8 +228,10 @@ class SettingsPageState extends State<SettingsPage>
                       _buildMenuItem(3, 'Interface'),
                       const SizedBox(height: 12),
                       _buildMenuItem(4, 'View Log'),
-                      if (Platform.isWindows) const SizedBox(height: 12),
-                      if (Platform.isWindows) _buildMenuItem(5, 'Overlay'),
+                      if (!kIsWeb && Platform.isWindows)
+                        const SizedBox(height: 12),
+                      if (!kIsWeb && Platform.isWindows)
+                        _buildMenuItem(5, 'Overlay'),
                     ],
                   ),
                 ),

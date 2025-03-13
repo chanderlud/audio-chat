@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'package:audio_chat/settings/view.dart';
 import 'package:audio_chat/src/rust/api/audio_chat.dart';
@@ -38,11 +39,13 @@ Future<void> main() async {
     DebugConsole.log(message);
   });
 
-  if (Platform.isAndroid || Platform.isIOS) {
-    PermissionStatus status = await Permission.microphone.request();
+  if (!kIsWeb) {
+    if (Platform.isAndroid || Platform.isIOS) {
+      PermissionStatus status = await Permission.microphone.request();
 
-    if (!status.isGranted) {
-      DebugConsole.error('Microphone permission not accepted');
+      if (!status.isGranted) {
+        DebugConsole.error('Microphone permission not accepted');
+      }
     }
   }
 

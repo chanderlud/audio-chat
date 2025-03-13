@@ -11,7 +11,6 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 messages = { path = "../messages" }
-tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec", "compat"] }
 cpal = "0.15"
 prost = "0.13"
@@ -22,29 +21,38 @@ rubato = "0.16"
 nnnoiseless = { version = "0.5", default-features = false }
 atomic_float = "1"
 rayon = "1"
-flutter_rust_bridge = "=2.8.0"
+flutter_rust_bridge = "=2.9.0"
 parking_lot = "0.12"
 lazy_static = "1"
-uuid = { version = "1", features = ["v4"] }
 bytes = "1"
-async-throttle = "0.3"
-libp2p = { version = "0.55", features = ["tokio", "quic", "tcp", "ping", "dcutr", "identify", "macros", "noise", "yamux", "autonat", "relay"] }
 libp2p-stream = { version = "0.3.0-alpha" }
-gag = "1"
 chrono = "*"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sea-codec = "0.5.2"
+log-panics = "2"
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
 ndk-context = "0.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.59", features = ["Win32_Graphics", "Win32_Graphics_GdiPlus", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader"] }
+windows = { version = "0.60", features = ["Win32_Graphics", "Win32_Graphics_GdiPlus", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader"] }
 widestring = "1.1"
 
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "*"
 objc2-foundation = "*"
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+uuid = { version = "1", features = ["v4", "js"] }
+getrandom = { version = "0.2", features = ["js"] }
+tokio = { version = "1", features = ["time", "io-util", "macros", "rt"] }
+libp2p = { version = "0.55", features = ["quic", "ping", "dcutr", "identify", "macros", "noise", "yamux", "autonat", "relay", "wasm-bindgen"] }
+libp2p-webrtc-websys = "0.4.0"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+uuid = { version = "1", features = ["v4"] }
+tokio = { version = "1", features = ["time", "io-util", "macros", "process", "net", "rt-multi-thread"] }
+libp2p = { version = "0.55", features = ["tokio", "quic", "tcp", "ping", "dcutr", "identify", "macros", "noise", "yamux", "autonat", "relay"] }
+sea-codec = "0.5.2"
