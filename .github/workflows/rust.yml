@@ -81,6 +81,13 @@ jobs:
           target: ${{ matrix.info.target == 'web' && 'wasm32-unknown-unknown' || matrix.info.target }}
           cache: false
 
+      - name: Setup Flutter SDK
+        if : matrix.info.target == 'web'
+        uses: flutter-actions/setup-flutter@v4
+        with:
+          channel: stable
+          version: 3.29.0
+
       - name: Install FRB Codegen
         if : matrix.info.target == 'web'
         run: cargo install flutter_rust_bridge_codegen
