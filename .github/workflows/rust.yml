@@ -79,7 +79,7 @@ jobs:
         with:
           toolchain: ${{ matrix.info.target == 'web' && 'nightly' || 'stable' }}
           components: rustfmt, clippy
-          target: ${{ matrix.info.target == 'web' && 'wasm32-unknown-unknown' || matrix.info.target }}
+          target: ${{ matrix.info.target == 'web' && 'x86_64-pc-windows-msvc' || matrix.info.target }}
           cache: false
 
       - name: Setup Flutter SDK
