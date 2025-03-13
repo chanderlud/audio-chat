@@ -90,7 +90,7 @@ jobs:
 
       - name: Install FRB Codegen
         if : matrix.info.target == 'web'
-        run: cargo install flutter_rust_bridge_codegen
+        run: cargo install flutter_rust_bridge_codegen wasm-pack
 
       - name: Check formatting
         run: cd rust && cargo fmt -- --check
@@ -263,8 +263,8 @@ jobs:
         include:
           - arch: aarch64
             distro: ubuntu22.04
-#          - arch: riscv64
-#            distro: ubuntu22.04
+          - arch: riscv64
+            distro: ubuntu22.04
 
     steps:
       - uses: actions/checkout@v4
