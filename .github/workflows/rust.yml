@@ -77,6 +77,7 @@ jobs:
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
+          toolchain: ${{ matrix.info.target == 'web' && 'nightly' || 'stable' }}
           components: rustfmt, clippy
           target: ${{ matrix.info.target == 'web' && 'wasm32-unknown-unknown' || matrix.info.target }}
           cache: false
@@ -88,7 +89,7 @@ jobs:
           channel: stable
           version: 3.29.0
 
-      - name: Install FRB Codegen
+      - name: Install Tools
         if : matrix.info.target == 'web'
         run: cargo install flutter_rust_bridge_codegen wasm-pack
 
@@ -263,8 +264,8 @@ jobs:
         include:
           - arch: aarch64
             distro: ubuntu22.04
-          - arch: riscv64
-            distro: ubuntu22.04
+          # - arch: riscv64
+          #   distro: ubuntu22.04
 
     steps:
       - uses: actions/checkout@v4
