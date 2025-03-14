@@ -264,8 +264,8 @@ jobs:
         include:
           - arch: aarch64
             distro: ubuntu22.04
-          # - arch: riscv64
-          #   distro: ubuntu22.04
+          - arch: riscv64
+            distro: ubuntu22.04
 
     steps:
       - uses: actions/checkout@v4
@@ -286,6 +286,8 @@ jobs:
             --volume "${PWD}/artifacts:/artifacts"
 
           install: |
+            arch
+            
             case "${{ matrix.distro }}" in
               ubuntu*)
                 apt-get update -q -y
