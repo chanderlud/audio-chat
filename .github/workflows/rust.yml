@@ -196,7 +196,7 @@ jobs:
 
       - name: Build Web
         if: matrix.info.target == 'web'
-        run: flutter_rust_bridge_codegen build-web --rust-root rust/audio_chat ${{ startsWith(github.ref, 'refs/tags/') && '--release' || '--debug' }}
+        run: flutter_rust_bridge_codegen build-web --rust-root rust/audio_chat ${{ startsWith(github.ref, 'refs/tags/') && '--release' || '' }}
 
       - name: Build Flutter
         if: matrix.info.target != 'linux' || !startsWith(github.ref, 'refs/tags/')
