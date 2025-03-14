@@ -2,9 +2,7 @@ use crate::api::audio_chat::ProcessorMessage;
 use bytes::Bytes;
 use kanal::{Receiver, Sender};
 use log::info;
-#[cfg(not(target_family = "wasm"))]
 use sea_codec::decoder::SeaDecoder;
-#[cfg(not(target_family = "wasm"))]
 use sea_codec::encoder::{EncoderSettings, SeaEncoder};
 use std::io::{Read, Result, Write};
 
@@ -73,7 +71,6 @@ pub(crate) fn encoder(
 
     let writer = ChannelWriter { sender };
 
-    #[cfg(not(target_family = "wasm"))]
     let settings = EncoderSettings {
         frames_per_chunk: 480,
         scale_factor_frames: 20,
@@ -82,10 +79,8 @@ pub(crate) fn encoder(
         ..Default::default()
     };
 
-    #[cfg(not(target_family = "wasm"))]
     let mut encoder = SeaEncoder::new(1, sample_rate, None, settings, reader, writer).unwrap();
 
-    #[cfg(not(target_family = "wasm"))]
     while encoder.encode_frame().is_ok() {}
 
     info!("Encoder finished");
@@ -100,10 +95,8 @@ pub(crate) fn decoder(receiver: Receiver<ProcessorMessage>, sender: Sender<Proce
 
     let writer = ChannelWriter { sender };
 
-    #[cfg(not(target_family = "wasm"))]
     let mut decoder = SeaDecoder::new(reader, writer).unwrap();
 
-    #[cfg(not(target_family = "wasm"))]
     while decoder.decode_frame().is_ok_and(|d| d) {}
 
     info!("Decoder finished");

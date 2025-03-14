@@ -31,6 +31,7 @@ regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log-panics = "2"
+sea-codec = "0.5.2"
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
@@ -55,4 +56,3 @@ libp2p-webrtc-websys = "0.4.0"
 uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["time", "io-util", "macros", "process", "net", "rt-multi-thread"] }
 libp2p = { version = "0.55", features = ["tokio", "quic", "tcp", "ping", "dcutr", "identify", "macros", "noise", "yamux", "autonat", "relay"] }
-sea-codec = "0.5.2"

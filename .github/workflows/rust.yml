@@ -92,7 +92,7 @@ jobs:
 
   build_flutter:
     runs-on: ${{ matrix.info.image }}
-    name: Build [${{ matrix.info.image }} ${{ matrix.info.target }} ${{ startsWith(github.ref, 'refs/tags/') && 'Release' || 'Debug' }}]
+    name: Build [${{ matrix.info.image }} ${{ matrix.info.target }} ${{ startsWith(github.ref, 'refs/tags/') && 'release' || 'debug' }}]
 
     strategy:
       fail-fast: false
@@ -192,7 +192,7 @@ jobs:
         if : matrix.info.target == 'web'
         run: |
           cargo install flutter_rust_bridge_codegen wasm-pack
-          rustup component add rust-src --toolchain nightly-x86_64-pc-windows-msvc
+          rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu
 
       - name: Build Web
         if: matrix.info.target == 'web'
