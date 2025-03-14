@@ -11,7 +11,7 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 messages = { path = "../messages" }
-sea-codec = { path = "../sea-codec" }
+sea-codec = { path = "../sea_codec" }
 tokio-util = { version = "0.7", features = ["codec", "compat"] }
 cpal = { version = "0.15", features = ["wasm-bindgen"] }
 prost = "0.13"

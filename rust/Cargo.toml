@@ -4,7 +4,7 @@ members = [
     "audio_chat",
     "chat_room",
     "messages",
-    "sea-codec"
+    "sea_codec"
 ]
 resolver = "2"
 
