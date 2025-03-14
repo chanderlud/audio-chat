@@ -1,0 +1,14 @@
+[package]
+name = "sea-codec"
+version = "0.5.2"
+description = "Low-complexity, lossy audio codec designed for embedded devices"
+homepage = "https://github.com/Daninet/sea-codec"
+repository = "https://github.com/Daninet/sea-codec"
+keywords = ["audio", "codec", "encoder", "decoder", "embedded"]
+categories = ["multimedia::audio", "multimedia::encoding"]
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+kanal = "0.1.0-pre8"
+bytes = "1"
