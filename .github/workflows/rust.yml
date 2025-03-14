@@ -12,7 +12,7 @@ env:
 jobs:
   test_rust:
     runs-on: ${{ matrix.info.image }}
-    name: Test on ${{ matrix.info.image }} ${{ matrix.info.target }}
+    name: Test [${{ matrix.info.image }} ${{ matrix.info.target }}]
 
     strategy:
       fail-fast: true
@@ -29,8 +29,6 @@ jobs:
             target: aarch64-linux-android
           - image: macos-13
             target: aarch64-apple-ios
-          - image: windows-2019
-            target: web
 
     steps:
       - uses: actions/checkout@v4
@@ -77,23 +75,10 @@ jobs:
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: ${{ matrix.info.target == 'web' && 'nightly' || 'stable' }}
+          toolchain: 'stable'
           components: rustfmt, clippy
-          target: ${{ matrix.info.target == 'web' && 'wasm32-unknown-unknown' || matrix.info.target }}
+          target: ${{ matrix.info.target }}
           cache: false
-
-      - name: Setup Flutter SDK
-        if : matrix.info.target == 'web'
-        uses: flutter-actions/setup-flutter@v4
-        with:
-          channel: stable
-          version: 3.29.0
-
-      - name: Install Tools
-        if : matrix.info.target == 'web'
-        run: |
-          cargo install flutter_rust_bridge_codegen wasm-pack
-          rustup component add rust-src --toolchain nightly-x86_64-pc-windows-msvc
 
       - name: Check formatting
         run: cd rust && cargo fmt -- --check
@@ -103,16 +88,11 @@ jobs:
         run: cd rust && cargo clippy -- -D warnings
 
       - name: Build
-        if: matrix.info.target != 'web'
         run: cd rust && cargo build --verbose --target ${{ matrix.info.target }}
-
-      - name: Build Web
-        if: matrix.info.target == 'web'
-        run: flutter_rust_bridge_codegen build-web --rust-root rust/audio_chat
 
   build_flutter:
     runs-on: ${{ matrix.info.image }}
-    name: Build on ${{ matrix.info.image }} ${{ matrix.info.target }} ${{ startsWith(github.ref, 'refs/tags/') && 'release' || 'debug' }}
+    name: Build [${{ matrix.info.image }} ${{ matrix.info.target }} ${{ startsWith(github.ref, 'refs/tags/') && 'Release' || 'Debug' }}]
 
     strategy:
       fail-fast: false
@@ -121,14 +101,16 @@ jobs:
         info:
           - image: windows-2019
             target: windows
-          # - image: macos-13
-          #   target: macos
+          - image: macos-13
+            target: macos
           - image: ubuntu-latest
             target: linux
           - image: windows-2019
             target: apk
           - image: macos-13
             target: ios
+          - image: ubuntu-latest
+            target: web
 
     steps:
       - uses: actions/checkout@v4
@@ -206,6 +188,16 @@ jobs:
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
 
+      - name: Install Web Tools
+        if : matrix.info.target == 'web'
+        run: |
+          cargo install flutter_rust_bridge_codegen wasm-pack
+          rustup component add rust-src --toolchain nightly-x86_64-pc-windows-msvc
+
+      - name: Build Web
+        if: matrix.info.target == 'web'
+        run: flutter_rust_bridge_codegen build-web --rust-root rust/audio_chat ${{ startsWith(github.ref, 'refs/tags/') && '--release' || '--debug' }}
+
       - name: Build Flutter
         if: matrix.info.target != 'linux' || !startsWith(github.ref, 'refs/tags/')
         run: flutter build ${{ matrix.info.target }} ${{ startsWith(github.ref, 'refs/tags/') && '--release' || '--debug' }}
@@ -222,6 +214,7 @@ jobs:
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
         with:
           path: windows/installer.iss
+
       - name: Move Windows Installer
         if: matrix.info.target == 'windows' && startsWith(github.ref, 'refs/tags/')
         run: mv windows/Output/audio_chat_installer.exe audio-chat-windows-x64.exe
@@ -241,6 +234,10 @@ jobs:
       - name: Move Windows Bundle
         if: matrix.info.target == 'windows'
         run: mv build/windows/x64/runner/${{ startsWith(github.ref, 'refs/tags/') && 'Release' || 'Debug' }} audio-chat
+
+      - name: Move Web Bundle
+        if: matrix.info.target == 'web'
+        run: mv build/web audio-chat
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
