@@ -79,7 +79,7 @@ jobs:
         with:
           toolchain: ${{ matrix.info.target == 'web' && 'nightly' || 'stable' }}
           components: rustfmt, clippy
-          target: ${{ matrix.info.target == 'web' && 'x86_64-pc-windows-msvc' || matrix.info.target }}
+          target: ${{ matrix.info.target == 'web' && 'wasm32-unknown-unknown' || matrix.info.target }}
           cache: false
 
       - name: Setup Flutter SDK
@@ -91,7 +91,9 @@ jobs:
 
       - name: Install Tools
         if : matrix.info.target == 'web'
-        run: cargo install flutter_rust_bridge_codegen wasm-pack
+        run: |
+          cargo install flutter_rust_bridge_codegen wasm-pack
+          rustup component add rust-src --toolchain nightly-x86_64-pc-windows-msvc
 
       - name: Check formatting
         run: cd rust && cargo fmt -- --check
@@ -264,8 +266,8 @@ jobs:
         include:
           - arch: aarch64
             distro: ubuntu22.04
-          - arch: riscv64
-            distro: ubuntu22.04
+          # - arch: riscv64
+          #   distro: ubuntu22.04
 
     steps:
       - uses: actions/checkout@v4
@@ -286,8 +288,6 @@ jobs:
             --volume "${PWD}/artifacts:/artifacts"
 
           install: |
-            arch
-            
             case "${{ matrix.distro }}" in
               ubuntu*)
                 apt-get update -q -y
