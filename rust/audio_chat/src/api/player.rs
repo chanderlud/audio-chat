@@ -170,20 +170,18 @@ async fn play_sound(
     // the sender used by the processor
     let sender = processed_sender.clone_sync();
 
-    let processor_handle = std::thread::spawn(move || {
-        processor(
-            bytes,
-            sample_format,
-            spec,
-            output_volume,
-            sender,
-            output_channels,
-            ratio,
-        )
-    });
-
     let processor_future = spawn_blocking_with(
-        move || processor_handle.join(),
+        move || {
+            processor(
+                bytes,
+                sample_format,
+                spec,
+                output_volume,
+                sender,
+                output_channels,
+                ratio,
+            )
+        },
         FLUTTER_RUST_BRIDGE_HANDLER.thread_pool(),
     );
 
@@ -256,8 +254,7 @@ fn processor(
 
                 for (i, sample) in chunk.chunks(2 * channels_usize).enumerate() {
                     for (j, channel) in sample.chunks(2).enumerate() {
-                        let sample =
-                            i16::from_le_bytes(channel.try_into().unwrap()) as f32 / float_i16_max;
+                        let sample = i16::from_le_bytes(channel.try_into()?) as f32 / float_i16_max;
                         pre_buf[j][i] = sample;
                     }
                 }
@@ -267,8 +264,7 @@ fn processor(
 
                 for (i, sample) in chunk.chunks(4 * channels_usize).enumerate() {
                     for (j, channel) in sample.chunks(4).enumerate() {
-                        let sample =
-                            i32::from_le_bytes(channel.try_into().unwrap()) as f32 / float_i32_max;
+                        let sample = i32::from_le_bytes(channel.try_into()?) as f32 / float_i32_max;
                         pre_buf[j][i] = sample;
                     }
                 }
@@ -276,7 +272,7 @@ fn processor(
             SampleFormat::F32 => {
                 for (i, sample) in chunk.chunks(4 * channels_usize).enumerate() {
                     for (j, channel) in sample.chunks(4).enumerate() {
-                        let sample = f32::from_le_bytes(channel.try_into().unwrap());
+                        let sample = f32::from_le_bytes(channel.try_into()?);
                         pre_buf[j][i] = sample;
                     }
                 }
@@ -284,7 +280,7 @@ fn processor(
             SampleFormat::F64 => {
                 for (i, sample) in chunk.chunks(8 * channels_usize).enumerate() {
                     for (j, channel) in sample.chunks(8).enumerate() {
-                        let sample = f64::from_le_bytes(channel.try_into().unwrap()) as f32;
+                        let sample = f64::from_le_bytes(channel.try_into()?) as f32;
                         pre_buf[j][i] = sample;
                     }
                 }

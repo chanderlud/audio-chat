@@ -6,7 +6,6 @@ use std::time::Duration;
 
 /// The number of bytes in a single network audio frame
 pub(crate) const TRANSFER_BUFFER_SIZE: usize = FRAME_SIZE * mem::size_of::<i16>();
-pub(crate) const SILENT_FRAME: &[u8; TRANSFER_BUFFER_SIZE] = &[0; TRANSFER_BUFFER_SIZE];
 /// Parameters used for resampling throughout the application
 pub(crate) const RESAMPLER_PARAMETERS: SincInterpolationParameters = SincInterpolationParameters {
     sinc_len: 256,

@@ -17,7 +17,7 @@ pub use cpal::Host;
 use cpal::{Device, Stream as CpalStream};
 use flutter_rust_bridge::for_generated::futures::stream::{SplitSink, SplitStream};
 use flutter_rust_bridge::for_generated::futures::{Sink, SinkExt};
-use flutter_rust_bridge::{frb, spawn, DartFnFuture};
+use flutter_rust_bridge::{frb, spawn, spawn_blocking_with, DartFnFuture};
 pub use kanal::AsyncReceiver;
 use kanal::{bounded, bounded_async, unbounded_async, AsyncSender, Receiver, Sender};
 use libp2p::futures::StreamExt;
@@ -56,8 +56,10 @@ use crate::api::overlay::overlay::Overlay;
 use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
 use crate::api::screenshare;
 use crate::api::screenshare::{Decoder, Encoder};
+use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
 use crate::{Behaviour, BehaviourEvent};
 use messages::{message, Attachment, AudioHeader, Message, ScreenshareHeader};
+use sea_codec::ProcessorMessage;
 
 type Result<T> = std::result::Result<T, Error>;
 pub(crate) type DeviceName = Arc<Mutex<Option<String>>>;
@@ -676,6 +678,7 @@ impl AudioChat {
                     let (peer_id, header_option) = result?;
                     info!("starting screenshare for {} {:?}", peer_id, header_option);
 
+                    #[cfg(not(target_family = "wasm"))]
                     if let Some(state) = self.session_states.read().await.get(&peer_id) {
                         let stop = Arc::new(Notify::new());
                         let dart_stop = DartNotify { inner: stop.clone() };
@@ -689,7 +692,7 @@ impl AudioChat {
                                 .await {
                                 let width = self.screenshare_config.width.load(Relaxed);
                                 let height = self.screenshare_config.height.load(Relaxed);
-                                #[cfg(not(target_family = "wasm"))]
+
                                 spawn(screenshare::playback(stream, stop, state.download_bandwidth.clone(), header.encoder, width, height));
                                 (self.screenshare_started.lock().await)(dart_stop, false).await;
                             }
@@ -705,7 +708,6 @@ impl AudioChat {
                             state.wants_stream.store(true, Relaxed);
 
                             if let Ok(stream) = state.stream_receiver.recv().await {
-                                #[cfg(not(target_family = "wasm"))]
                                 spawn(screenshare::record(stream, stop, state.upload_bandwidth.clone(), config));
                             }
 
@@ -1522,19 +1524,22 @@ impl AudioChat {
         ));
 
         // spawn the input processor thread
-        std::thread::spawn(move || {
-            input_processor(
-                input_receiver,
-                processed_input_sender,
-                sample_rate,
-                input_volume,
-                rms_threshold,
-                muted,
-                denoiser,
-                input_rms_sender.to_sync(),
-                codec_enabled,
-            )
-        });
+        spawn_blocking_with(
+            move || {
+                input_processor(
+                    input_receiver,
+                    processed_input_sender,
+                    sample_rate,
+                    input_volume,
+                    rms_threshold,
+                    muted,
+                    denoiser,
+                    input_rms_sender.to_sync(),
+                    codec_enabled,
+                )
+            },
+            FLUTTER_RUST_BRIDGE_HANDLER.thread_pool(),
+        );
 
         // the ratio of the output sample rate to the remote input sample rate
         let ratio = output_config.sample_rate().0 as f64 / remote_input_config.sample_rate as f64;
@@ -1548,37 +1553,46 @@ impl AudioChat {
         };
 
         // spawn the output processor thread
-        std::thread::spawn(move || {
-            output_processor(
-                output_processor_receiver,
-                output_sender,
-                ratio,
-                output_volume,
-                output_rms_sender.to_sync(),
-            )
-        });
+        spawn_blocking_with(
+            move || {
+                output_processor(
+                    output_processor_receiver,
+                    output_sender,
+                    ratio,
+                    output_volume,
+                    output_rms_sender.to_sync(),
+                )
+            },
+            FLUTTER_RUST_BRIDGE_HANDLER.thread_pool(),
+        );
 
         // if using codec, spawn extra encoder and decoder threads
         if codec_enabled {
             let encoder_receiver = processed_input_receiver.clone_sync();
             let encoder_sender = encoded_input_sender.clone_sync();
 
-            std::thread::spawn(move || {
-                encoder(
-                    encoder_receiver,
-                    encoder_sender,
-                    if denoise { 48_000 } else { sample_rate as u32 },
-                    vbr,
-                    residual_bits,
-                );
-            });
+            spawn_blocking_with(
+                move || {
+                    encoder(
+                        encoder_receiver,
+                        encoder_sender,
+                        if denoise { 48_000 } else { sample_rate as u32 },
+                        vbr,
+                        residual_bits,
+                    );
+                },
+                FLUTTER_RUST_BRIDGE_HANDLER.thread_pool(),
+            );
 
             let decoder_receiver = network_output_receiver.to_sync();
             let decoder_sender = decoded_output_sender.clone_sync();
 
-            std::thread::spawn(move || {
-                decoder(decoder_receiver, decoder_sender);
-            });
+            spawn_blocking_with(
+                move || {
+                    decoder(decoder_receiver, decoder_sender);
+                },
+                FLUTTER_RUST_BRIDGE_HANDLER.thread_pool(),
+            );
         }
 
         let input_channels = input_config.channels() as usize;
@@ -1815,27 +1829,6 @@ pub(crate) struct SendStream {
 }
 
 unsafe impl Send for SendStream {}
-
-/// a message containing either a frame of audio or silence
-pub(crate) enum ProcessorMessage {
-    Data(Bytes),
-    Silence,
-}
-
-/// common processor message constructors
-impl ProcessorMessage {
-    fn slice(bytes: &'static [u8]) -> Self {
-        Self::Data(Bytes::from(bytes))
-    }
-
-    fn silence() -> Self {
-        Self::Silence
-    }
-
-    fn bytes(frame: Bytes) -> Self {
-        Self::Data(frame)
-    }
-}
 
 /// shared values for a single session
 struct SessionState {
@@ -2576,6 +2569,7 @@ async fn audio_input(
                     // send the bytes to the socket
                     socket.send(bytes).await?;
                 }
+                ProcessorMessage::Samples(_) => warn!("audio input received Samples"),
             }
         }
 
@@ -2733,7 +2727,6 @@ async fn statistics_collector(
     Ok(())
 }
 
-// TODO try and get it so SILENCE_FRAME and codec_enabled are not needed for the input processor
 /// Processes the audio input and sends it to the sending socket
 #[allow(clippy::too_many_arguments)]
 fn input_processor(
@@ -2792,11 +2785,7 @@ fn input_processor(
             if position > FRAME_SIZE {
                 position = 0;
 
-                sender.try_send(if codec_enabled {
-                    ProcessorMessage::slice(SILENT_FRAME)
-                } else {
-                    ProcessorMessage::silence()
-                })?;
+                sender.try_send(ProcessorMessage::silence())?;
             } else {
                 position += 1;
             }
@@ -2852,11 +2841,7 @@ fn input_processor(
             if silence_length < 80 {
                 silence_length += 1; // short silences are ignored
             } else {
-                sender.try_send(if codec_enabled {
-                    ProcessorMessage::slice(SILENT_FRAME)
-                } else {
-                    ProcessorMessage::silence()
-                })?;
+                sender.try_send(ProcessorMessage::silence())?;
 
                 continue;
             }
@@ -2867,15 +2852,19 @@ fn input_processor(
         // cast the f32 samples to i16
         int_buffer = out_buf.map(|x| x as i16);
 
-        // convert the i16 samples to bytes
-        let bytes = unsafe {
-            std::slice::from_raw_parts(
-                int_buffer.as_ptr() as *const u8,
-                int_buffer.len() * i16_size,
-            )
-        };
+        if codec_enabled {
+            sender.try_send(ProcessorMessage::samples(int_buffer))?;
+        } else {
+            // convert the i16 samples to bytes
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    int_buffer.as_ptr() as *const u8,
+                    int_buffer.len() * i16_size,
+                )
+            };
 
-        sender.try_send(ProcessorMessage::slice(bytes))?;
+            sender.try_send(ProcessorMessage::slice(bytes))?;
+        }
     }
 
     debug!("Input processor ended");
@@ -2912,6 +2901,8 @@ fn output_processor(
                 for _ in 0..FRAME_SIZE {
                     sender.try_send(0_f32)?;
                 }
+
+                continue;
             }
             ProcessorMessage::Data(bytes) => {
                 // convert the bytes to 16-bit integers
@@ -2923,27 +2914,34 @@ fn output_processor(
                 ints.iter()
                     .enumerate()
                     .for_each(|(i, &x)| pre_buf[0][i] = x as f32 / max_i16_f32);
+            }
+            ProcessorMessage::Samples(samples) => {
+                // convert the frame to f32s
+                samples
+                    .iter()
+                    .enumerate()
+                    .for_each(|(i, &x)| pre_buf[0][i] = x as f32 / max_i16_f32);
+            }
+        }
 
-                // apply the output volume
-                mul(pre_buf[0], output_volume.load());
+        // apply the output volume
+        mul(pre_buf[0], output_volume.load());
 
-                let rms = calculate_rms(pre_buf[0]);
-                rms_sender.send(rms)?;
+        let rms = calculate_rms(pre_buf[0]);
+        rms_sender.send(rms)?;
 
-                if let Some(resampler) = &mut resampler {
-                    // resample the data
-                    let processed = resampler.process_into_buffer(&pre_buf, &mut post_buf, None)?;
+        if let Some(resampler) = &mut resampler {
+            // resample the data
+            let processed = resampler.process_into_buffer(&pre_buf, &mut post_buf, None)?;
 
-                    // send the resampled data to the output stream
-                    for sample in &post_buf[0][..processed.1] {
-                        sender.try_send(*sample)?;
-                    }
-                } else {
-                    // if no resampling is needed, send the data to the output stream
-                    for sample in *pre_buf[0] {
-                        sender.try_send(sample)?;
-                    }
-                }
+            // send the resampled data to the output stream
+            for sample in &post_buf[0][..processed.1] {
+                sender.try_send(*sample)?;
+            }
+        } else {
+            // if no resampling is needed, send the data to the output stream
+            for sample in *pre_buf[0] {
+                sender.try_send(sample)?;
             }
         }
     }

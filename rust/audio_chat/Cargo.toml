@@ -11,11 +11,11 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 messages = { path = "../messages" }
+sea-codec = { path = "../sea-codec" }
 tokio-util = { version = "0.7", features = ["codec", "compat"] }
-cpal = "0.15"
+cpal = { version = "0.15", features = ["wasm-bindgen"] }
 prost = "0.13"
 log = "0.4"
-fast_log = "1"
 kanal = "0.1.0-pre8"
 rubato = "0.16"
 nnnoiseless = { version = "0.5", default-features = false }
@@ -31,7 +31,6 @@ regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log-panics = "2"
-sea-codec = "0.5.2"
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
@@ -56,3 +55,4 @@ libp2p-webrtc-websys = "0.4.0"
 uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["time", "io-util", "macros", "process", "net", "rt-multi-thread"] }
 libp2p = { version = "0.55", features = ["tokio", "quic", "tcp", "ping", "dcutr", "identify", "macros", "noise", "yamux", "autonat", "relay"] }
+simple-logging = "2"

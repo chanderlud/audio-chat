@@ -76,8 +76,6 @@ impl From<other_windows::core::Error> for Error {
 #[cfg(windows)]
 #[cfg(test)]
 mod tests {
-    use fast_log::Config;
-    use log::{LevelFilter, Log};
     use tokio::time::sleep;
 
     use crate::api::overlay::color::Color;
@@ -86,14 +84,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_overlay() {
-        let logger = fast_log::init(
-            Config::new()
-                .chan_len(Some(100))
-                .file("tests.log")
-                .level(LevelFilter::Debug),
-        )
-        .unwrap();
-
         let bcolor = Color::new(0, 0, 0, 125);
         let fcolor = Color::new(255, 255, 255, 255);
         let overlay = Overlay::new(true, 100, 0, 600, 36, 36, bcolor.argb(), fcolor.argb()).await;
@@ -122,7 +112,5 @@ mod tests {
                 LATENCY.store(x as usize / 5, std::sync::atomic::Ordering::Relaxed);
             }
         }
-
-        logger.flush();
     }
 }

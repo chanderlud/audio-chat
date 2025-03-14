@@ -3,8 +3,6 @@
 
 use std::sync::Once;
 
-use fast_log::appender::{FastLogRecord, LogAppender};
-use fast_log::Config;
 use flutter_rust_bridge::frb;
 use lazy_static::lazy_static;
 use log::{info, warn, LevelFilter};
@@ -37,23 +35,9 @@ pub fn init_logger() {
             level
         );
 
-        let mut config = Config::new().chan_len(Some(100)).level(level);
-
-        // #[cfg(any(target_os = "windows", target_os = "linux"))]
-        // {
-        //     config = config.file("audio_chat.log");
-        // }
-        //
-        // #[cfg(any(target_os = "android", target_os = "macos"))]
-        // {
-        //     config = config.custom(SendToDartLogger {});
-        // }
-
-        config = config.custom(SendToDartLogger {});
-
-        // TODO switch to a different logging crate
+        // TODO better logging & web logging support
         #[cfg(not(target_family = "wasm"))]
-        fast_log::init(config).unwrap();
+        simple_logging::log_to_file("audio_chat.log", level).unwrap();
 
         log_panics::init();
 
@@ -82,21 +66,6 @@ impl SendToDartLogger {
                 "SendToDartLogger::set_stream_sink but already exist a sink, thus overriding. \
                 (This may or may not be a problem. It will happen normally if hot-reload Flutter app.)"
             );
-        }
-    }
-
-    fn record_to_formatted(record: &FastLogRecord) -> String {
-        record.formated.replace('\n', "")
-    }
-}
-
-impl LogAppender for SendToDartLogger {
-    fn do_logs(&mut self, records: &[FastLogRecord]) {
-        for record in records {
-            let entry = Self::record_to_formatted(record);
-            if let Some(sink) = &*SEND_TO_DART_LOGGER_STREAM_SINK.read() {
-                _ = sink.add(entry);
-            }
         }
     }
 }
