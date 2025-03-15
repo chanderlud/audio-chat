@@ -2,7 +2,7 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "Audio Chat"
-#define MyAppVersion "2.4.1"
+#define MyAppVersion "2.4.2"
 #define MyAppPublisher "Vysion Software LLC"
 #define MyAppURL "https://chanchan.dev/audio-chat"
 #define MyAppExeName "audio_chat.exe"
