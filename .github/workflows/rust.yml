@@ -105,13 +105,15 @@ jobs:
             target: windows
           - image: macos-13
             target: macos
-          - image: ubuntu-latest
+          - image: ubuntu-24.04
+            target: linux
+          - image: ubuntu-22.04
             target: linux
           - image: windows-2019
             target: apk
           - image: macos-13
             target: ios
-          - image: ubuntu-latest
+          - image: ubuntu-24.04
             target: web
 
     steps:
@@ -244,7 +246,7 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: audio_chat_${{ matrix.info.target }}
+          name: audio_chat_${{ matrix.info.image }}_${{ matrix.info.target }}
           path: |
             audio-chat.apk
             audio-chat
@@ -264,7 +266,11 @@ jobs:
       matrix:
         include:
           - arch: aarch64
+            distro: ubuntu20.04
+          - arch: aarch64
             distro: ubuntu22.04
+          - arch: aarch64
+            distro: ubuntu_latest
           # - arch: riscv64
           #   distro: ubuntu22.04
 
@@ -327,6 +333,7 @@ jobs:
             flutter_distributor release --name=distribution --jobs=release-distribution-linux-deb,release-distribution-linux-rpm
             mv dist/*/audio_chat-*-linux.deb /artifacts/audio-chat.deb
             mv dist/*/audio_chat-*-linux.rpm /artifacts/audio-chat.rpm
+            mv build/linux/x64/${{ startsWith(github.ref, 'refs/tags/') && 'release' || 'debug' }}/bundle /artifacts/audio-chat
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
