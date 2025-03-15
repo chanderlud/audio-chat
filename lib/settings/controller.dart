@@ -13,7 +13,7 @@ import '../src/rust/api/contact.dart';
 import '../src/rust/api/crypto.dart';
 
 const defaultRelayAddress = '5.78.76.47:40142';
-const defaultRelayId = '12D3KooWMpeKAbMK4BTPsQY3rG7XwtdstseHGcq7kffY8LToYYKK';
+const defaultRelayId = '12D3KooWSePyyLtTHJsTMqMUS5pbQtdt8oJJX7rrEYCwG8bURYBG';
 const defaultOverlayEnabled = false;
 const defaultOverlayX = 0.0;
 const defaultOverlayY = 0.0;
