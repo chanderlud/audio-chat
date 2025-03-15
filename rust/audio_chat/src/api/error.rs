@@ -35,6 +35,8 @@ pub(crate) enum ErrorKind {
     Join(JoinError),
     AddrParse(AddrParseError),
     Timeout(Elapsed),
+    #[cfg(target_family = "wasm")]
+    WasmTimeout(wasmtimer::tokio::error::Elapsed),
     IdentityDecode(DecodingError),
     OpenStream(OpenStreamError),
     Dial(DialError),
@@ -247,6 +249,15 @@ impl From<TransportBuilderError> for Error {
     }
 }
 
+#[cfg(target_family = "wasm")]
+impl From<wasmtimer::tokio::error::Elapsed> for Error {
+    fn from(err: wasmtimer::tokio::error::Elapsed) -> Self {
+        Self {
+            kind: ErrorKind::WasmTimeout(err),
+        }
+    }
+}
+
 impl From<ErrorKind> for Error {
     fn from(kind: ErrorKind) -> Self {
         Self { kind }
@@ -272,6 +283,8 @@ impl Display for Error {
                 ErrorKind::KanalReceive(ref err) => format!("Kanal receive error: {}", err),
                 ErrorKind::Join(ref err) => format!("Join error: {}", err),
                 ErrorKind::Timeout(_) => "The connection timed out".to_string(),
+                #[cfg(target_family = "wasm")]
+                ErrorKind::WasmTimeout(_) => "The connection timed out".to_string(),
                 ErrorKind::TryFromSlice(ref err) => format!("Try from slice error: {}", err),
                 ErrorKind::AddrParse(ref err) => err.to_string(),
                 ErrorKind::IdentityDecode(ref err) => format!("Identity decode error: {}", err),

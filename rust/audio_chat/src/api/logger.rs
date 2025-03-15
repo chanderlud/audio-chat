@@ -35,9 +35,13 @@ pub fn init_logger() {
             level
         );
 
-        // TODO better logging & web logging support
+        // TODO reintegrate logging with dart
+
         #[cfg(not(target_family = "wasm"))]
         simple_logging::log_to_file("audio_chat.log", level).unwrap();
+
+        #[cfg(target_family = "wasm")]
+        wasm_logger::init(wasm_logger::Config::default());
 
         log_panics::init();
 

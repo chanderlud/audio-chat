@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::mem;
+#[cfg(not(target_family = "wasm"))]
 use std::net::Ipv4Addr;
 pub use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
@@ -23,13 +24,13 @@ use kanal::{bounded, bounded_async, unbounded_async, AsyncSender, Receiver, Send
 use libp2p::futures::StreamExt;
 use libp2p::identity::Keypair;
 use libp2p::multiaddr::Protocol;
+#[cfg(target_family = "wasm")]
+use libp2p::multihash::Multihash;
 use libp2p::swarm::{ConnectionId, SwarmEvent};
 #[cfg(not(target_family = "wasm"))]
 use libp2p::tcp;
 use libp2p::{autonat, dcutr, identify, noise, ping, yamux, Multiaddr, PeerId, Stream};
 use libp2p_stream::Control;
-#[cfg(target_family = "wasm")]
-use libp2p_webrtc_websys;
 use log::{debug, error, info, warn};
 use nnnoiseless::{DenoiseState, RnnModel, FRAME_SIZE};
 use rayon::iter::ParallelIterator;
@@ -41,10 +42,15 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::lookup_host;
 use tokio::select;
 use tokio::sync::{Mutex, Notify, RwLock};
-use tokio::time::{interval, sleep, sleep_until, timeout, Instant, Interval};
+#[cfg(not(target_family = "wasm"))]
+use tokio::time::{interval, sleep_until, timeout, Instant, Interval};
 use tokio_util::bytes::Bytes;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tokio_util::compat::{Compat, FuturesAsyncReadCompatExt};
+#[cfg(target_family = "wasm")]
+use wasmtimer::std::Instant;
+#[cfg(target_family = "wasm")]
+use wasmtimer::tokio::{interval, sleep_until, timeout, Interval};
 
 use crate::api::codec::{decoder, encoder};
 use crate::api::constants::*;
@@ -240,12 +246,20 @@ impl AudioChat {
         // start the session manager
         let chat_clone = chat.clone();
         spawn(async move {
+            let mut interval = interval(Duration::from_millis(100));
+
             loop {
-                while let Err(error) = chat_clone.session_manager(&session, &screenshare).await {
-                    (chat_clone.manager_active.lock().await)(false, false).await;
-                    error!("Session manager failed: {}", error);
+                loop {
                     // retry the session manager if it fails, but not too fast
-                    sleep(Duration::from_millis(100)).await;
+                    interval.tick().await;
+
+                    if let Err(error) = chat_clone.session_manager(&session, &screenshare).await {
+                        (chat_clone.manager_active.lock().await)(false, false).await;
+                        error!("Session manager failed: {}", error);
+                    } else {
+                        // if the session manager succeeds, wait for restart signal
+                        break;
+                    }
                 }
 
                 debug!("Session manager waiting for restart signal");
@@ -486,8 +500,8 @@ impl AudioChat {
             provider_phase = builder
                 .with_wasm_bindgen()
                 .with_other_transport(|id_keys| {
-                    Ok(libp2p_webrtc_websys::Transport::new(
-                        libp2p_webrtc_websys::Config::new(id_keys),
+                    Ok(libp2p_webtransport_websys::Transport::new(
+                        libp2p_webtransport_websys::Config::new(id_keys),
                     ))
                 })?;
         }
@@ -515,37 +529,62 @@ impl AudioChat {
             .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(30)))
             .build();
 
+        #[cfg(not(target_family = "wasm"))]
+        let listen_port = *self.network_config.listen_port.read().await;
+
+        #[cfg(not(target_family = "wasm"))]
         let listen_addr_quic = Multiaddr::empty()
             .with(Protocol::from(Ipv4Addr::UNSPECIFIED))
-            .with(Protocol::Udp(*self.network_config.listen_port.read().await))
+            .with(Protocol::Udp(listen_port))
             .with(Protocol::QuicV1);
 
+        #[cfg(not(target_family = "wasm"))]
         swarm.listen_on(listen_addr_quic)?;
 
+        #[cfg(not(target_family = "wasm"))]
         let listen_addr_tcp = Multiaddr::empty()
             .with(Protocol::from(Ipv4Addr::UNSPECIFIED))
-            .with(Protocol::Tcp(*self.network_config.listen_port.read().await));
+            .with(Protocol::Tcp(listen_port));
 
+        #[cfg(not(target_family = "wasm"))]
         swarm.listen_on(listen_addr_tcp)?;
 
         let socket_address = *self.network_config.relay_address.read().await;
         let relay_identity = *self.network_config.relay_id.read().await;
 
-        let relay_address_udp = Multiaddr::empty()
-            .with(Protocol::from(socket_address.ip()))
+        #[cfg(not(target_family = "wasm"))]
+        let relay_address_udp = Multiaddr::from(socket_address.ip())
             .with(Protocol::Udp(socket_address.port()))
             .with(Protocol::QuicV1)
             .with_p2p(relay_identity)
             .map_err(|_| ErrorKind::SwarmBuild)?;
 
-        let relay_address_tcp = Multiaddr::empty()
-            .with(Protocol::from(socket_address.ip()))
+        #[cfg(not(target_family = "wasm"))]
+        let relay_address_tcp = Multiaddr::from(socket_address.ip())
             .with(Protocol::Tcp(socket_address.port()))
+            .with_p2p(relay_identity)
+            .map_err(|_| ErrorKind::SwarmBuild)?;
+
+        #[cfg(target_family = "wasm")]
+        let relay_address_web = Multiaddr::from(socket_address.ip())
+            // TODO stop using a fixed port
+            .with(Protocol::Udp(40143))
+            .with(Protocol::QuicV1)
+            .with(Protocol::WebTransport)
+            // TODO stop using a fixed certhash
+            // .with(Protocol::Certhash(
+            //     Multihash::from_bytes(&[
+            //         18, 32, 166, 38, 202, 81, 62, 37, 58, 55, 64, 63, 211, 133, 165, 232, 77, 249,
+            //         21, 205, 217, 109, 248, 177, 38, 70, 154, 93, 63, 52, 197, 97, 185, 249,
+            //     ])
+            //     .unwrap(),
+            // ))
             .with_p2p(relay_identity)
             .map_err(|_| ErrorKind::SwarmBuild)?;
 
         let relay_address;
 
+        #[cfg(not(target_family = "wasm"))]
         if swarm.dial(relay_address_udp.clone()).is_err() {
             if let Err(error) = swarm.dial(relay_address_tcp.clone()) {
                 return Err(error.into());
@@ -556,6 +595,14 @@ impl AudioChat {
         } else {
             info!("connected to relay with udp");
             relay_address = relay_address_udp.with(Protocol::P2pCircuit);
+        }
+
+        #[cfg(target_family = "wasm")]
+        if let Err(error) = swarm.dial(relay_address_web.clone()) {
+            return Err(error.into());
+        } else {
+            info!("connected to relay with webtransport");
+            relay_address = relay_address_web.with(Protocol::P2pCircuit);
         }
 
         let mut learned_observed_addr = false;
