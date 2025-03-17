@@ -12,3 +12,5 @@ pub mod overlay;
 pub mod player;
 /// flutter_rust_bridge:ignore
 mod screenshare;
+/// flutter_rust_bridge:ignore
+mod utils;

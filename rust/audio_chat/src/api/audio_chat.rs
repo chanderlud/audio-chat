@@ -33,8 +33,6 @@ use libp2p::{autonat, dcutr, identify, noise, ping, yamux, Multiaddr, PeerId, St
 use libp2p_stream::Control;
 use log::{debug, error, info, warn};
 use nnnoiseless::{DenoiseState, RnnModel, FRAME_SIZE};
-use rayon::iter::ParallelIterator;
-use rayon::prelude::IntoParallelRefMutIterator;
 use rubato::{Resampler, SincFixedIn};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -62,6 +60,7 @@ use crate::api::overlay::overlay::Overlay;
 use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
 use crate::api::screenshare;
 use crate::api::screenshare::{Decoder, Encoder};
+use crate::api::utils::{calculate_rms, db_to_multiplier, mul};
 use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
 use crate::{Behaviour, BehaviourEvent};
 use messages::{message, Attachment, AudioHeader, Message, ScreenshareHeader};
@@ -1468,11 +1467,10 @@ impl AudioChat {
 
         // input processor -> encoder or sending socket
         let (processed_input_sender, processed_input_receiver) =
-            bounded_async::<ProcessorMessage>(framed_size);
+            unbounded_async::<ProcessorMessage>();
 
         // encoder -> sending socket
-        let (encoded_input_sender, encoded_input_receiver) =
-            bounded_async::<ProcessorMessage>(framed_size);
+        let (encoded_input_sender, encoded_input_receiver) = unbounded_async::<ProcessorMessage>();
 
         // receiving socket -> output processor or decoder
         let (network_output_sender, network_output_receiver) =
@@ -1480,7 +1478,7 @@ impl AudioChat {
 
         // decoder -> output processor
         let (decoded_output_sender, decoded_output_receiver) =
-            bounded_async::<ProcessorMessage>(2_400);
+            unbounded_async::<ProcessorMessage>();
 
         // output processor -> output stream
         let (output_sender, output_receiver) = bounded::<f32>(CHANNEL_SIZE);
@@ -2047,9 +2045,11 @@ impl NetworkConfig {
     #[cfg(target_family = "wasm")]
     pub async fn set_relay_address(
         &self,
-        _relay_address: String,
+        relay_address: String,
     ) -> std::result::Result<(), DartError> {
-        todo!()
+        *self.relay_address.write().await = SocketAddr::from_str(&relay_address)
+            .map_err(|error| DartError::from(error.to_string()))?;
+        Ok(())
     }
 
     pub async fn get_relay_address(&self) -> String {
@@ -2510,15 +2510,12 @@ async fn call_controller(
             },
             receiving = state_receiver.recv() => {
                 if receiving? {
-                    // info!("state switched to not receiving r={} rr={}", is_receiving, remote_is_receiving);
-
                     // the instant the disconnect began
                     disconnected_at = Instant::now();
                     // notify the ui in 2 seconds if the disconnect hasn't ended
                     notify_ui = disconnected_at + disconnect_duration;
                 } else if is_receiving && remote_is_receiving {
                     let elapsed = disconnected_at.elapsed();
-                    // info!("reconnected after {}ms interruption", elapsed.as_millis());
 
                     // update the overlay to connected
                     if !CONNECTED.swap(true, Relaxed) {
@@ -2531,16 +2528,9 @@ async fn call_controller(
                     // prevents any notification to the ui as audio is being received
                     notify_ui = Instant::now() + Duration::from_secs(86400 * 365 * 30);
                 }
-                // else if is_receiving ^ remote_is_receiving {
-                //     info!("partial reconnect r={} rr={}", is_receiving, remote_is_receiving);
-                // } else {
-                //     info!("full disconnect r={} rr={}", is_receiving, remote_is_receiving)
-                // }
             },
             // receives when the receiving state changes
             Ok(receiving) = receiving.recv() => {
-                // info!("received receiving state: {} | r={} rr={}", receiving, is_receiving, remote_is_receiving);
-
                 if receiving != is_receiving {
                     state_sender.send(is_receiving && remote_is_receiving).await?;
 
@@ -2867,7 +2857,7 @@ fn input_processor(
         let factor = max_i16_f32 * input_factor.load();
 
         // rescale the samples to -32768.0 to 32767.0 for rnnoise
-        target_buffer.par_iter_mut().for_each(|x| {
+        target_buffer.iter_mut().for_each(|x| {
             *x *= factor;
             *x = x.trunc().clamp(min_i16_f32, max_i16_f32);
         });
@@ -2889,7 +2879,6 @@ fn input_processor(
                 silence_length += 1; // short silences are ignored
             } else {
                 sender.try_send(ProcessorMessage::silence())?;
-
                 continue;
             }
         } else {
@@ -2900,7 +2889,7 @@ fn input_processor(
         int_buffer = out_buf.map(|x| x as i16);
 
         if codec_enabled {
-            sender.try_send(ProcessorMessage::samples(int_buffer))?;
+            sender.send(ProcessorMessage::samples(int_buffer))?;
         } else {
             // convert the i16 samples to bytes
             let bytes = unsafe {
@@ -2910,7 +2899,7 @@ fn input_processor(
                 )
             };
 
-            sender.try_send(ProcessorMessage::slice(bytes))?;
+            sender.send(ProcessorMessage::slice(bytes))?;
         }
     }
 
@@ -2926,8 +2915,8 @@ fn output_processor(
     output_volume: Arc<AtomicF32>,
     rms_sender: Sender<f32>,
 ) -> Result<()> {
-    let max_i16_f32 = i16::MAX as f32;
-    let i16_size = mem::size_of::<i16>();
+    let scale = 1_f32 / i16::MAX as f32;
+    let i16_size = size_of::<i16>();
 
     let mut resampler = resampler_factory(ratio, 1, FRAME_SIZE)?;
 
@@ -2935,7 +2924,7 @@ fn output_processor(
     let post_len = (FRAME_SIZE as f64 * ratio + 10_f64) as usize;
 
     // the input for the resampler
-    let mut pre_buf = [&mut [0_f32; FRAME_SIZE]];
+    let pre_buf = [&mut [0_f32; FRAME_SIZE]];
     // the output for the resampler
     let mut post_buf = [vec![0_f32; post_len]];
 
@@ -2958,16 +2947,15 @@ fn output_processor(
                 };
 
                 // convert the frame to f32s
-                ints.iter()
-                    .enumerate()
-                    .for_each(|(i, &x)| pre_buf[0][i] = x as f32 / max_i16_f32);
+                for (out, &x) in pre_buf[0].iter_mut().zip(ints.iter()) {
+                    *out = x as f32 * scale;
+                }
             }
             ProcessorMessage::Samples(samples) => {
                 // convert the frame to f32s
-                samples
-                    .iter()
-                    .enumerate()
-                    .for_each(|(i, &x)| pre_buf[0][i] = x as f32 / max_i16_f32);
+                for (out, &x) in pre_buf[0].iter_mut().zip(samples.iter()) {
+                    *out = x as f32 * scale;
+                }
             }
         }
 
@@ -2995,26 +2983,6 @@ fn output_processor(
 
     debug!("Output processor ended");
     Ok(())
-}
-
-/// Calculates the RMS of the data
-fn calculate_rms(data: &[f32]) -> f32 {
-    let sum_of_squares: f32 = data.iter().map(|&x| x * x).sum();
-    let mean_of_squares = sum_of_squares / data.len() as f32;
-    mean_of_squares.sqrt()
-}
-
-/// Multiplies each element in the slice by the factor
-pub(crate) fn mul(frame: &mut [f32], factor: f32) {
-    frame.par_iter_mut().for_each(|p| {
-        *p *= factor;
-        *p = p.clamp(-1_f32, 1_f32);
-    })
-}
-
-/// Converts a decibel value to a multiplier
-pub(crate) fn db_to_multiplier(db: f32) -> f32 {
-    10_f32.powf(db / 20_f32)
 }
 
 /// Produces a resampler if needed
@@ -3117,5 +3085,199 @@ async fn read_message<M: prost::Message + Default, R: AsyncRead + Unpin>(
         Ok(message)
     } else {
         Err(ErrorKind::TransportRecv.into())
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use kanal::unbounded;
+    use log::LevelFilter;
+    use rand::prelude::SliceRandom;
+    use rand::Rng;
+    use std::fs::read;
+    use std::thread::spawn;
+
+    struct BenchmarkResult {
+        average: Duration,
+        min: Duration,
+        max: Duration,
+        end: Duration,
+    }
+
+    #[test]
+    fn benchmark() {
+        simple_logging::log_to_file("bench.log", LevelFilter::Trace).unwrap();
+
+        let sample_rate = 44_100;
+
+        let mut samples = Vec::new();
+        let bytes = read("../bench.raw").unwrap();
+
+        for chunk in bytes.chunks(4) {
+            let sample = f32::from_ne_bytes(chunk.try_into().unwrap());
+            samples.push(sample);
+        }
+
+        // warmup
+        for _ in 0..5 {
+            benchmark_input_stack(false, false, sample_rate, &samples, 2400);
+        }
+
+        let num_iterations = 10;
+        let mut results: HashMap<(bool, bool), (Vec<Duration>, Duration)> = HashMap::new();
+
+        for _ in 0..num_iterations {
+            let mut cases = vec![(false, false), (false, true), (true, false), (true, true)];
+            cases.shuffle(&mut rand::thread_rng()); // Shuffle for each iteration
+
+            for (denoise, codec_enabled) in cases {
+                let (durations, end) =
+                    benchmark_input_stack(denoise, codec_enabled, sample_rate, &samples, 2400);
+
+                // Update the results in a cumulative way
+                results
+                    .entry((denoise, codec_enabled))
+                    .and_modify(|(all_durations, total_time)| {
+                        all_durations.extend(durations.clone());
+                        *total_time += end;
+                    })
+                    .or_insert((durations, end));
+            }
+        }
+
+        // compute final averages
+        for ((_denoise, _codec_enabled), (_durations, total_time)) in results.iter_mut() {
+            *total_time /= num_iterations as u32; // Average total runtime
+        }
+
+        compare_runs(results);
+    }
+
+    fn benchmark_input_stack(
+        denoise: bool,
+        codec_enabled: bool,
+        sample_rate: u32,
+        samples: &[f32],
+        channel_size: usize,
+    ) -> (Vec<Duration>, Duration) {
+        // input stream -> input processor
+        let (input_sender, input_receiver) = bounded(channel_size);
+
+        // input processor -> encoder or dummy
+        let (processed_input_sender, processed_input_receiver) = unbounded::<ProcessorMessage>();
+
+        // encoder -> dummy
+        let (encoded_input_sender, encoded_input_receiver) = unbounded::<ProcessorMessage>();
+
+        // dummy (will leak memory)
+        let (input_rms_sender, input_rms_receiver) = unbounded_async::<f32>();
+
+        let model = RnnModel::default();
+
+        let denoiser = denoise.then_some(DenoiseState::from_model(model));
+
+        spawn(move || {
+            input_processor(
+                input_receiver,
+                processed_input_sender,
+                sample_rate as f64,
+                Arc::new(AtomicF32::new(1_f32)),
+                Arc::new(AtomicF32::new(15_f32)),
+                Arc::new(AtomicBool::new(false)),
+                denoiser,
+                input_rms_sender.to_sync(),
+                codec_enabled,
+            )
+        });
+
+        let output_receiver = if codec_enabled {
+            spawn(move || {
+                encoder(
+                    processed_input_receiver,
+                    encoded_input_sender,
+                    if denoise { 48_000 } else { sample_rate },
+                    true,
+                    5.0,
+                );
+            });
+
+            encoded_input_receiver
+        } else {
+            processed_input_receiver
+        };
+
+        let samples = samples.to_vec();
+        spawn(move || {
+            for sample in samples {
+                input_sender.send(sample).unwrap();
+            }
+        });
+
+        let start = Instant::now();
+        let mut now = Instant::now();
+        let mut durations = Vec::new();
+
+        while let Ok(_) = output_receiver.recv() {
+            durations.push(now.elapsed());
+            now = Instant::now();
+        }
+
+        let end = start.elapsed();
+
+        (durations, end)
+    }
+
+    fn compute_statistics(durations: &[Duration]) -> (Duration, Duration, Duration) {
+        let sum: Duration = durations.iter().sum();
+        let average = sum / durations.len() as u32;
+
+        let min = *durations.iter().min().unwrap();
+        let max = *durations.iter().max().unwrap();
+
+        (average, min, max)
+    }
+
+    fn compare_runs(benchmark_results: HashMap<(bool, bool), (Vec<Duration>, Duration)>) {
+        let mut summary: HashMap<(bool, bool), BenchmarkResult> = HashMap::new();
+
+        for ((denoise, codec_enabled), (durations, end)) in benchmark_results {
+            let (average, min, max) = compute_statistics(&durations);
+            summary.insert(
+                (denoise, codec_enabled),
+                BenchmarkResult {
+                    average,
+                    min,
+                    max,
+                    end,
+                },
+            );
+        }
+
+        info!("\nComparison of Runs:");
+        info!("===================================================");
+        info!(" Denoise | Codec Enabled | Avg Duration | Min Duration | Max Duration | Runtime ");
+        info!("---------------------------------------------------");
+
+        for ((denoise, codec_enabled), result) in summary {
+            info!(
+                " {}   | {}     | {:?} | {:?} | {:?} | {:?}",
+                denoise, codec_enabled, result.average, result.min, result.max, result.end
+            );
+        }
+    }
+
+    /// returns a frame of random samples
+    pub(crate) fn dummy_frame() -> [f32; 4096] {
+        let mut frame = [0_f32; 4096];
+        let mut rng = rand::thread_rng();
+        rng.fill(&mut frame[..]);
+
+        for x in &mut frame {
+            *x /= i16::MAX as f32;
+            *x = x.trunc().clamp(i16::MIN as f32, i16::MAX as f32);
+        }
+
+        frame
     }
 }

@@ -15,10 +15,9 @@ use tokio::select;
 use tokio::sync::Notify;
 use tokio::time::sleep;
 
-use crate::api::audio_chat::{
-    db_to_multiplier, get_output_device, mul, resampler_factory, DeviceName, SendStream,
-};
+use crate::api::audio_chat::{get_output_device, resampler_factory, DeviceName, SendStream};
 use crate::api::error::{Error, ErrorKind};
+use crate::api::utils::{db_to_multiplier, mul};
 use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
 use messages::AudioHeader;
 
@@ -338,35 +337,27 @@ fn processor(
     Ok(())
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use fast_log::Config;
-//     use log::{LevelFilter, Log};
-//     use tokio::fs::File;
-//     use tokio::io::AsyncReadExt;
-//     use tokio::time::sleep;
-//
-//     #[tokio::test]
-//     async fn test_player() {
-//         let logger = fast_log::init(
-//             Config::new()
-//                 .chan_len(Some(100))
-//                 .file("tests.log")
-//                 .level(LevelFilter::Debug),
-//         )
-//         .unwrap();
-//
-//         let mut wav_bytes = Vec::new();
-//         let mut wav_file = File::open("../sounds/outgoing.wav").await.unwrap();
-//         wav_file.read_to_end(&mut wav_bytes).await.unwrap();
-//
-//         let player = super::SoundPlayer::new(1_f32);
-//         let handle = player.play(wav_bytes).await;
-//
-//         sleep(std::time::Duration::from_secs(1)).await;
-//         handle.cancel();
-//         sleep(std::time::Duration::from_secs(1)).await;
-//
-//         logger.flush();
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use log::LevelFilter;
+    use tokio::fs::File;
+    use tokio::io::AsyncReadExt;
+    use tokio::time::sleep;
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_player() {
+        simple_logging::log_to_file("tests.log", LevelFilter::Debug).unwrap();
+
+        let mut wav_bytes = Vec::new();
+        let mut wav_file = File::open("../sounds/outgoing.wav").await.unwrap();
+        wav_file.read_to_end(&mut wav_bytes).await.unwrap();
+
+        let player = super::SoundPlayer::new(1_f32);
+        let handle = player.play(wav_bytes).await;
+
+        sleep(std::time::Duration::from_secs(1)).await;
+        handle.cancel();
+        sleep(std::time::Duration::from_secs(1)).await;
+    }
+}

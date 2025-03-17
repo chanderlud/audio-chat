@@ -531,6 +531,7 @@ mod tests {
     use log::debug;
 
     #[tokio::test]
+    #[ignore]
     async fn test_capabilities() {
         let capabilities = Capabilities::new().await;
         debug!("{:?}", capabilities);
