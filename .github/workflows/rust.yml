@@ -103,8 +103,8 @@ jobs:
         info:
           - image: windows-2019
             target: windows
-          - image: macos-13
-            target: macos
+          # - image: macos-13
+          #   target: macos
           - image: ubuntu-24.04
             target: linux
           - image: ubuntu-22.04

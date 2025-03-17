@@ -3224,6 +3224,7 @@ pub(crate) mod tests {
         }
 
         let end = start.elapsed();
+        drop(input_rms_receiver);
 
         (durations, end)
     }

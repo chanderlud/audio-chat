@@ -3,19 +3,23 @@ use std::arch::x86_64::*;
 
 /// multiplies each element in the slice by the factor, clamping result between -1 and 1
 pub(crate) fn mul(frame: &mut [f32], factor: f32) {
+    #[cfg(target_arch = "x86_64")]
     if is_x86_feature_detected!("avx2") {
         unsafe {
             mul_simd_avx2(frame, factor);
         }
-    } else {
-        for p in frame.iter_mut() {
-            *p *= factor;
-            *p = p.clamp(-1_f32, 1_f32);
-        }
+
+        return;
+    }
+
+    for p in frame.iter_mut() {
+        *p *= factor;
+        *p = p.clamp(-1_f32, 1_f32);
     }
 }
 
 /// optimized mul for avx2
+#[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn mul_simd_avx2(frame: &mut [f32], factor: f32) {
     let len = frame.len();
@@ -61,17 +65,16 @@ pub(crate) fn db_to_multiplier(db: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_mul() {
         let frame = crate::api::audio_chat::tests::dummy_frame();
         let mut scalar_frame = frame.clone();
         let mut simd_avx2_frame = frame.clone();
 
-        mul(&mut scalar_frame, 2_f32);
+        super::mul(&mut scalar_frame, 2_f32);
         unsafe {
-            mul_simd_avx2(&mut simd_avx2_frame, 2.0_f32);
+            super::mul_simd_avx2(&mut simd_avx2_frame, 2.0_f32);
         }
 
         assert_eq!(scalar_frame, simd_avx2_frame);
