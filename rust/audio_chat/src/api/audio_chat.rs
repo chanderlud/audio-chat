@@ -24,8 +24,6 @@ use kanal::{bounded, bounded_async, unbounded_async, AsyncSender, Receiver, Send
 use libp2p::futures::StreamExt;
 use libp2p::identity::Keypair;
 use libp2p::multiaddr::Protocol;
-#[cfg(target_family = "wasm")]
-use libp2p::multihash::Multihash;
 use libp2p::swarm::{ConnectionId, SwarmEvent};
 #[cfg(not(target_family = "wasm"))]
 use libp2p::tcp;
@@ -61,10 +59,14 @@ use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
 use crate::api::screenshare;
 use crate::api::screenshare::{Decoder, Encoder};
 use crate::api::utils::{calculate_rms, db_to_multiplier, mul};
+#[cfg(target_family = "wasm")]
+use crate::api::web_audio::init_on_web_struct;
 use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
 use crate::{Behaviour, BehaviourEvent};
 use messages::{message, Attachment, AudioHeader, Message, ScreenshareHeader};
 use sea_codec::ProcessorMessage;
+#[cfg(target_family = "wasm")]
+use crate::api::web_audio::WebAudioStream;
 
 type Result<T> = std::result::Result<T, Error>;
 pub(crate) type DeviceName = Arc<Mutex<Option<String>>>;
@@ -200,6 +202,9 @@ impl AudioChat {
         manager_active: impl Fn(bool, bool) -> DartFnFuture<()> + Send + 'static,
         screenshare_started: impl Fn(DartNotify, bool) -> DartFnFuture<()> + Send + 'static,
     ) -> AudioChat {
+        #[cfg(target_family = "wasm")]
+        init_on_web_struct().await;
+
         let (start_session, session) = unbounded_async::<PeerId>();
         let (start_screenshare, screenshare) = unbounded_async::<StartScreenshare>();
 
@@ -1505,10 +1510,36 @@ impl AudioChat {
         let output_config = output_device.default_output_config()?;
         info!("output device: {:?}", output_device.name());
 
-        // get the input device and its default configuration
-        let input_device = self.get_input_device().await?;
-        let input_config = input_device.default_input_config()?;
-        info!("input_device: {:?}", input_device.name());
+        #[cfg(not(target_family = "wasm"))]
+        let input_device;
+        #[cfg(not(target_family = "wasm"))]
+        let input_config;
+
+        #[cfg(target_family = "wasm")]
+        let input_stream;
+
+        let input_sample_rate;
+        let input_sample_format;
+        let input_channels;
+
+        #[cfg(not(target_family = "wasm"))]
+        {
+            // get the input device and its default configuration
+            input_device = self.get_input_device().await?;
+            input_config = input_device.default_input_config()?;
+            info!("input_device: {:?}", input_device.name());
+            input_sample_rate = input_config.sample_rate().0;
+            input_sample_format = input_config.sample_format().to_string();
+            input_channels = input_config.channels() as usize;
+        }
+
+        #[cfg(target_family = "wasm")]
+        {
+            input_stream = WebAudioStream::new();
+            input_sample_rate = input_stream.sample_rate();
+            input_sample_format = String::from("f32");
+            input_channels = 1; // only ever 1 channel
+        }
 
         // load the shared codec config values
         let config_codec_enabled = self.codec_config.enabled.load(Relaxed);
@@ -1516,9 +1547,9 @@ impl AudioChat {
         let config_residual_bits = self.codec_config.residual_bits.load(Relaxed);
 
         let mut audio_header = AudioHeader {
-            channels: input_config.channels() as u32,
-            sample_rate: input_config.sample_rate().0,
-            sample_format: input_config.sample_format().to_string(),
+            channels: input_channels as u32,
+            sample_rate: input_sample_rate,
+            sample_format: input_sample_format,
             codec_enabled: config_codec_enabled,
             vbr: config_vbr,
             residual_bits: config_residual_bits as f64,
@@ -1562,7 +1593,7 @@ impl AudioChat {
         // get a sync version of the processed input sender
         let processed_input_sender = processed_input_sender.to_sync();
         // the input processor needs the sample rate
-        let sample_rate = input_config.sample_rate().0 as f64;
+        let sample_rate = input_sample_rate as f64;
         // the rnnoise denoiser
         let denoiser = denoise.then_some(DenoiseState::from_model(
             self.denoise_model.read().await.clone(),
@@ -1640,9 +1671,10 @@ impl AudioChat {
             );
         }
 
-        let input_channels = input_config.channels() as usize;
+        #[cfg(not(target_family = "wasm"))]
         let end_call = Arc::clone(&self.end_call);
 
+        #[cfg(not(target_family = "wasm"))]
         let input_stream = SendStream {
             stream: input_device.build_input_stream(
                 &input_config.into(),
@@ -1658,6 +1690,23 @@ impl AudioChat {
                 None,
             )?,
         };
+
+        #[cfg(target_family = "wasm")]
+        spawn_blocking_with(move || {
+            let mut stop = false;
+
+            while let Ok(frame) = input_stream.0.recv() {
+                for sample in frame {
+                    if input_sender.try_send(sample).is_err() {
+                        stop = true;
+                    }
+                }
+
+                if stop {
+                    break;
+                }
+            }
+        }, FLUTTER_RUST_BRIDGE_HANDLER.thread_pool());
 
         // get the output channels for chunking the output
         let output_channels = output_config.channels() as usize;
@@ -1693,8 +1742,9 @@ impl AudioChat {
         };
 
         // play the streams
-        input_stream.stream.play()?;
         output_stream.stream.play()?;
+        #[cfg(not(target_family = "wasm"))]
+        input_stream.stream.play()?;
 
         spawn(statistics_collector(
             input_rms_receiver,
@@ -1788,6 +1838,7 @@ impl AudioChat {
     }
 
     /// Returns either the default or the user specified device
+    #[cfg(not(target_family = "wasm"))]
     async fn get_input_device(&self) -> Result<Device> {
         match *self.input_device.lock().await {
             Some(ref name) => Ok(self

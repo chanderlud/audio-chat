@@ -14,3 +14,6 @@ pub mod player;
 mod screenshare;
 /// flutter_rust_bridge:ignore
 mod utils;
+/// flutter_rust_bridge:ignore
+#[cfg(target_family = "wasm")]
+mod web_audio;

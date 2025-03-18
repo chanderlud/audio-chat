@@ -7,8 +7,8 @@ use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{Host, SampleFormat};
 use flutter_rust_bridge::spawn;
 use flutter_rust_bridge::{frb, spawn_blocking_with};
-use kanal::{bounded_async, Sender};
-use log::{error, info};
+use kanal::{bounded, bounded_async, Sender};
+use log::error;
 use nnnoiseless::FRAME_SIZE;
 use rubato::Resampler;
 use tokio::select;
@@ -123,15 +123,13 @@ async fn play_sound(
 
     // the resampling ratio used by the processor
     let ratio = output_config.sample_rate().0 as f64 / spec.sample_rate as f64;
-    info!("player ratio: {}", ratio);
 
     // sends samples from the processor to the output stream
-    let (processed_sender, processed_receiver) = bounded_async::<Vec<f32>>(1_000);
+    let (processed_sender, processed_receiver) = bounded::<Vec<f32>>(1_000);
 
     // used to chunk the output buffer correctly
     let output_channels = output_config.channels() as usize;
     // the receiver used by the output stream
-    let sync_receiver = processed_receiver.to_sync();
     // keep track of the last samples played
     let mut last_samples = vec![0_f32; output_channels];
     // a counter used for fading out the last samples when the sound is cancelled
@@ -144,7 +142,7 @@ async fn play_sound(
             &output_config.into(),
             move |output: &mut [f32], _: &_| {
                 for frame in output.chunks_mut(output_channels) {
-                    if let Ok(samples) = sync_receiver.recv() {
+                    if let Ok(samples) = processed_receiver.recv() {
                         // play the samples
                         frame.copy_from_slice(&samples);
                         last_samples = samples;
@@ -168,7 +166,7 @@ async fn play_sound(
     };
 
     // the sender used by the processor
-    let sender = processed_sender.clone_sync();
+    let sender = processed_sender.clone();
 
     let processor_future = spawn_blocking_with(
         move || {
