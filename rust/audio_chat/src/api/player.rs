@@ -350,7 +350,9 @@ mod tests {
         simple_logging::log_to_file("tests.log", LevelFilter::Debug).unwrap();
 
         let mut wav_bytes = Vec::new();
-        let mut wav_file = File::open("../../assets/sounds/incoming.wav").await.unwrap();
+        let mut wav_file = File::open("../../assets/sounds/incoming.wav")
+            .await
+            .unwrap();
         wav_file.read_to_end(&mut wav_bytes).await.unwrap();
 
         let player = super::SoundPlayer::new(2_f32);
