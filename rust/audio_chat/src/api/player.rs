@@ -8,7 +8,7 @@ use cpal::{Host, SampleFormat};
 use flutter_rust_bridge::spawn;
 use flutter_rust_bridge::{frb, spawn_blocking_with};
 use kanal::{bounded_async, Sender};
-use log::error;
+use log::{error, info};
 use nnnoiseless::FRAME_SIZE;
 use rubato::Resampler;
 use tokio::select;
@@ -123,6 +123,7 @@ async fn play_sound(
 
     // the resampling ratio used by the processor
     let ratio = output_config.sample_rate().0 as f64 / spec.sample_rate as f64;
+    info!("player ratio: {}", ratio);
 
     // sends samples from the processor to the output stream
     let (processed_sender, processed_receiver) = bounded_async::<Vec<f32>>(1_000);
@@ -287,16 +288,16 @@ fn processor(
             _ => return Err(ErrorKind::UnknownSampleFormat.into()),
         }
 
+        for channel in pre_buf.iter_mut() {
+            mul(channel, output_volume);
+        }
+
         let (target_buffer, len) = if let Some(resampler) = &mut resampler {
             let processed = resampler.process_into_buffer(&pre_buf, &mut post_buf, None)?;
             (&mut post_buf, processed.1)
         } else {
             (&mut pre_buf, FRAME_SIZE)
         };
-
-        for channel in target_buffer.iter_mut() {
-            mul(&mut channel[..len], output_volume);
-        }
 
         for i in 0..len {
             let multiplier = if position < audio_len {
@@ -345,18 +346,17 @@ mod tests {
     use tokio::time::sleep;
 
     #[tokio::test]
-    #[ignore]
     async fn test_player() {
         simple_logging::log_to_file("tests.log", LevelFilter::Debug).unwrap();
 
         let mut wav_bytes = Vec::new();
-        let mut wav_file = File::open("../sounds/outgoing.wav").await.unwrap();
+        let mut wav_file = File::open("../../assets/sounds/incoming.wav").await.unwrap();
         wav_file.read_to_end(&mut wav_bytes).await.unwrap();
 
-        let player = super::SoundPlayer::new(1_f32);
+        let player = super::SoundPlayer::new(2_f32);
         let handle = player.play(wav_bytes).await;
 
-        sleep(std::time::Duration::from_secs(1)).await;
+        sleep(std::time::Duration::from_secs(3)).await;
         handle.cancel();
         sleep(std::time::Duration::from_secs(1)).await;
     }

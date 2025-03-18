@@ -74,7 +74,7 @@ mod tests {
 
         super::mul(&mut scalar_frame, 2_f32);
         unsafe {
-            super::mul_simd_avx2(&mut simd_avx2_frame, 2.0_f32);
+            super::mul_simd_avx2(&mut simd_avx2_frame, 2_f32);
         }
 
         assert_eq!(scalar_frame, simd_avx2_frame);
