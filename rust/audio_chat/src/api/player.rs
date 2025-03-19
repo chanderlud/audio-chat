@@ -7,7 +7,7 @@ use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{Host, SampleFormat};
 use flutter_rust_bridge::spawn;
 use flutter_rust_bridge::{frb, spawn_blocking_with};
-use kanal::{bounded, bounded_async, Sender};
+use kanal::{bounded, Sender};
 use log::error;
 use nnnoiseless::FRAME_SIZE;
 use rubato::Resampler;

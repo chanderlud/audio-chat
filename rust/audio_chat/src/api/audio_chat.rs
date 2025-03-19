@@ -1,7 +1,6 @@
 #![allow(clippy::type_complexity)]
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::mem;
 #[cfg(not(target_family = "wasm"))]
 use std::net::Ipv4Addr;
 pub use std::net::{IpAddr, SocketAddr};
@@ -47,7 +46,6 @@ use tokio_util::compat::{Compat, FuturesAsyncReadCompatExt};
 use wasmtimer::std::Instant;
 #[cfg(target_family = "wasm")]
 use wasmtimer::tokio::{interval, sleep_until, timeout, Interval};
-
 use crate::api::codec::{decoder, encoder};
 use crate::api::constants::*;
 use crate::api::contact::Contact;
@@ -60,13 +58,13 @@ use crate::api::screenshare;
 use crate::api::screenshare::{Decoder, Encoder};
 use crate::api::utils::{calculate_rms, db_to_multiplier, mul};
 #[cfg(target_family = "wasm")]
-use crate::api::web_audio::init_on_web_struct;
+use crate::api::web_audio::init_web_audio;
 use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
 use crate::{Behaviour, BehaviourEvent};
 use messages::{message, Attachment, AudioHeader, Message, ScreenshareHeader};
 use sea_codec::ProcessorMessage;
 #[cfg(target_family = "wasm")]
-use crate::api::web_audio::WebAudioStream;
+use crate::api::web_audio::{WEB_INPUT, SAMPLE_RATE};
 
 type Result<T> = std::result::Result<T, Error>;
 pub(crate) type DeviceName = Arc<Mutex<Option<String>>>;
@@ -203,7 +201,7 @@ impl AudioChat {
         screenshare_started: impl Fn(DartNotify, bool) -> DartFnFuture<()> + Send + 'static,
     ) -> AudioChat {
         #[cfg(target_family = "wasm")]
-        init_on_web_struct().await;
+        init_web_audio().await;
 
         let (start_session, session) = unbounded_async::<PeerId>();
         let (start_screenshare, screenshare) = unbounded_async::<StartScreenshare>();
@@ -1489,7 +1487,14 @@ impl AudioChat {
             unbounded_async::<ProcessorMessage>();
 
         // output processor -> output stream
+        #[cfg(not(target_family = "wasm"))]
         let (output_sender, output_receiver) = bounded::<f32>(CHANNEL_SIZE);
+
+        // output processor -> output stream
+        #[cfg(target_family = "wasm")]
+        let output_sender = Arc::new(wasm_sync::Mutex::new(Vec::new()));
+        #[cfg(target_family = "wasm")]
+        let web_output = output_sender.clone();
 
         // channels used for moving values to the statistics collector
         let (input_rms_sender, input_rms_receiver) = unbounded_async::<f32>();
@@ -1518,9 +1523,6 @@ impl AudioChat {
         #[cfg(not(target_family = "wasm"))]
         let input_config;
 
-        #[cfg(target_family = "wasm")]
-        let input_stream;
-
         let input_sample_rate;
         let input_sample_format;
         let input_channels;
@@ -1538,8 +1540,7 @@ impl AudioChat {
 
         #[cfg(target_family = "wasm")]
         {
-            input_stream = WebAudioStream::new();
-            input_sample_rate = input_stream.sample_rate();
+            input_sample_rate = *SAMPLE_RATE.get().unwrap();
             input_sample_format = String::from("f32");
             input_channels = 1; // only ever 1 channel
         }
@@ -1694,23 +1695,6 @@ impl AudioChat {
             )?,
         };
 
-        #[cfg(target_family = "wasm")]
-        spawn_blocking_with(move || {
-            let mut stop = false;
-
-            while let Ok(frame) = input_stream.0.recv() {
-                for sample in frame {
-                    if input_sender.try_send(sample).is_err() {
-                        stop = true;
-                    }
-                }
-
-                if stop {
-                    break;
-                }
-            }
-        }, FLUTTER_RUST_BRIDGE_HANDLER.thread_pool());
-
         // get the output channels for chunking the output
         let output_channels = output_config.channels() as usize;
 
@@ -1727,12 +1711,32 @@ impl AudioChat {
                         return;
                     }
 
+                    #[cfg(not(target_family = "wasm"))]
                     for frame in output.chunks_mut(output_channels) {
                         let sample = output_receiver.recv().unwrap_or(0_f32);
 
                         // write the sample to all the channels
                         for channel in frame.iter_mut() {
                             *channel = sample;
+                        }
+                    }
+
+                    #[cfg(target_family = "wasm")]
+                    if let Ok(mut data) = web_output.lock() {
+                        let mut i = 0;
+
+                        let data_len = data.len();
+                        info!("{}", data_len);
+                        for sample in data.drain(..(output.len() / output_channels).min(data_len)) {
+                            for j in 0..output_channels {
+                                output[i + j] = sample;
+                            }
+
+                            i += output_channels;
+
+                            if i > data_len {
+                                break;
+                            }
                         }
                     }
                 },
@@ -2821,7 +2825,10 @@ async fn statistics_collector(
 /// Processes the audio input and sends it to the sending socket
 #[allow(clippy::too_many_arguments)]
 fn input_processor(
+    #[cfg(not(target_family = "wasm"))]
     receiver: Receiver<f32>,
+    #[cfg(target_family = "wasm")]
+    _receiver: Receiver<f32>,
     sender: Sender<ProcessorMessage>,
     sample_rate: f64,
     input_factor: Arc<AtomicF32>,
@@ -2834,7 +2841,7 @@ fn input_processor(
     // the maximum and minimum values for i16 as f32
     let max_i16_f32 = i16::MAX as f32;
     let min_i16_f32 = i16::MIN as f32;
-    let i16_size = mem::size_of::<i16>();
+    let i16_size = size_of::<i16>();
 
     let ratio = if denoiser.is_some() {
         // rnnoise requires a 48kHz sample rate
@@ -2870,27 +2877,51 @@ fn input_processor(
     let mut rms_threshold = CachedAtomicFloat::new(&rms_threshold);
     let mut input_factor = CachedAtomicFloat::new(&input_factor);
 
-    while let Ok(sample) = receiver.recv() {
-        // sends a silence signal for every FRAME_SIZE samples if the input is muted
-        if muted.load() {
-            if position > FRAME_SIZE {
-                position = 0;
+    #[cfg(target_family = "wasm")]
+    let web_input = WEB_INPUT.get().unwrap().clone();
 
-                sender.try_send(ProcessorMessage::silence())?;
-            } else {
+    loop {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            if let Ok(sample) = receiver.recv() {
+                pre_buf[0][position] = sample;
                 position += 1;
+            } else {
+                break;
             }
-
-            continue;
         }
 
-        pre_buf[0][position] = sample;
-        position += 1;
+        // TODO this will never end & probably needs some type of delay (could this be spinning?)
+        #[cfg(target_family = "wasm")]
+        {
+            if let Ok(mut data) = web_input.lock() {
+                if data.is_empty() {
+                    continue;
+                }
+
+                for sample in data.drain(..(in_len - position)) {
+                    pre_buf[0][position] = sample;
+                    position += 1;
+
+                    if position == in_len {
+                        break;
+                    }
+                }
+            } else {
+                break;
+            }
+        }
 
         if position < in_len {
             continue;
-        } else {
-            position = 0;
+        }
+
+        position = 0;
+
+        // sends a silence signal if the input is muted
+        if muted.load() {
+            sender.try_send(ProcessorMessage::silence())?;
+            continue;
         }
 
         let (target_buffer, len) = if let Some(resampler) = &mut resampler {
@@ -2964,6 +2995,9 @@ fn input_processor(
 /// Processes the audio data and sends it to the output stream
 fn output_processor(
     receiver: Receiver<ProcessorMessage>,
+    #[cfg(target_family = "wasm")]
+    web_output: Arc<wasm_sync::Mutex<Vec<f32>>>,
+    #[cfg(not(target_family = "wasm"))]
     sender: Sender<f32>,
     ratio: f64,
     output_volume: Arc<AtomicF32>,
@@ -2988,9 +3022,16 @@ fn output_processor(
     while let Ok(message) = receiver.recv() {
         match message {
             ProcessorMessage::Silence => {
+                #[cfg(not(target_family = "wasm"))]
                 for _ in 0..FRAME_SIZE {
                     sender.try_send(0_f32)?;
                 }
+
+                #[cfg(target_family = "wasm")]
+                web_output
+                    .lock()
+                    .map(|mut data| data.extend(SILENCE))
+                    .unwrap();
 
                 continue;
             }
@@ -3024,14 +3065,28 @@ fn output_processor(
             let processed = resampler.process_into_buffer(&pre_buf, &mut post_buf, None)?;
 
             // send the resampled data to the output stream
+            #[cfg(not(target_family = "wasm"))]
             for sample in &post_buf[0][..processed.1] {
                 sender.try_send(*sample)?;
             }
+
+            #[cfg(target_family = "wasm")]
+            web_output
+                .lock()
+                .map(|mut data| data.extend(&post_buf[0][..processed.1]))
+                .unwrap();
         } else {
             // if no resampling is needed, send the data to the output stream
+            #[cfg(not(target_family = "wasm"))]
             for sample in *pre_buf[0] {
                 sender.try_send(sample)?;
             }
+
+            #[cfg(target_family = "wasm")]
+            web_output
+                .lock()
+                .map(|mut data| data.extend(*pre_buf[0]))
+                .unwrap();
         }
     }
 

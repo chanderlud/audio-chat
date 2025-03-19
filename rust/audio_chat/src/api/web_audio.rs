@@ -1,38 +1,17 @@
-// MIT License
-// Copyright (c) oligamiq 2024
+// The following is a modified version of the code found at
+// https://github.com/RustAudio/cpal/issues/813#issuecomment-2413007276
 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software to deal in the Software without restriction, subject to the
-// following conditions:
-
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
-
-use std::sync::OnceLock;
-use kanal::{bounded, Receiver};
-use wasm_bindgen::{prelude::Closure, JsCast as _};
-use wasm_bindgen_futures::{spawn_local, JsFuture};
+use std::sync::{Arc, OnceLock};
+use wasm_bindgen::{prelude::Closure, JsCast};
+use wasm_bindgen_futures::JsFuture;
 use web_sys::BlobPropertyBag;
+use wasm_sync::Mutex;
 
-// https://zenn.dev/tetter/articles/web-realtime-audio-processing
-// https://qiita.com/okaxaki/items/c807bdfe3e96d6ef7960
+pub(crate) static WEB_INPUT: OnceLock<Arc<Mutex<Vec<f32>>>> = OnceLock::new();
+pub(crate) static SAMPLE_RATE: OnceLock<u32> = OnceLock::new();
 
-static WEB_INPUT: OnceLock<Receiver<Vec<f32>>> = OnceLock::new();
-static SAMPLE_RATE: OnceLock<u32> = OnceLock::new();
-
-pub(crate) struct WebAudioStream(pub(crate) Receiver<Vec<f32>>);
-
-impl WebAudioStream {
-    pub(crate) fn new() -> Self {
-        Self(WEB_INPUT.get().unwrap().clone())
-    }
-
-    pub(crate) fn sample_rate(&self) -> u32 {
-        SAMPLE_RATE.get().unwrap().clone()
-    }
-}
-
-struct OnWebStruct {
-    receiver: Receiver<Vec<f32>>,
+struct WebAudioWrapper {
+    data: Arc<Mutex<Vec<f32>>>,
     sample_rate: Option<f32>,
     _audio_ctx: web_sys::AudioContext,
     _source: web_sys::MediaStreamAudioSourceNode,
@@ -42,13 +21,8 @@ struct OnWebStruct {
     _worklet_node: web_sys::AudioWorkletNode,
 }
 
-impl std::fmt::Debug for OnWebStruct {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "OnWebStruct")
-    }
-}
-
-impl OnWebStruct {
+// TODO only produce audio when needed
+impl WebAudioWrapper {
     async fn new() -> Self {
         let audio_ctx = web_sys::AudioContext::new().unwrap();
 
@@ -121,7 +95,8 @@ impl OnWebStruct {
 
         source.connect_with_audio_node(&worklet_node).unwrap();
 
-        let (sender, receiver) = bounded(10);
+        let data = Arc::new(Mutex::new(Vec::new()));
+        let data_clone = data.clone();
 
         // Float32Array
         let js_closure = Closure::wrap(Box::new(move |msg: wasm_bindgen::JsValue| {
@@ -131,11 +106,9 @@ impl OnWebStruct {
 
             let data: Vec<f32> = serde_wasm_bindgen::from_value(data).unwrap();
 
-            // let sender = sender.clone_async();
-            //
-            // spawn_local(async move {
-            //     sender.send(data).await.unwrap();
-            // });
+            if let Ok(mut data_clone) = data_clone.lock() {
+                data_clone.extend(data);
+            }
         }) as Box<dyn FnMut(wasm_bindgen::JsValue)>);
 
         let js_func = js_closure.as_ref().unchecked_ref();
@@ -145,8 +118,8 @@ impl OnWebStruct {
             .expect("Failed to get port")
             .set_onmessage(Some(js_func));
 
-        OnWebStruct {
-            receiver,
+        WebAudioWrapper {
+            data,
             sample_rate: Some(sample_rate),
             _audio_ctx: audio_ctx,
             _source: source,
@@ -158,18 +131,18 @@ impl OnWebStruct {
     }
 }
 
-impl Drop for OnWebStruct {
+impl Drop for WebAudioWrapper {
     fn drop(&mut self) {
         let _ = self._audio_ctx.close();
     }
 }
 
-pub(crate) async fn init_on_web_struct() {
-    let on_web = OnWebStruct::new().await;
+pub(crate) async fn init_web_audio() {
+    let on_web = WebAudioWrapper::new().await;
 
-    let receiver = on_web.receiver.clone();
+    let data = on_web.data.clone();
 
-    WEB_INPUT.get_or_init(|| receiver);
+    WEB_INPUT.get_or_init(|| data);
 
     let sample_rate = on_web.sample_rate.unwrap();
 
