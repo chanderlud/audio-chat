@@ -1726,17 +1726,12 @@ impl AudioChat {
                         let mut i = 0;
 
                         let data_len = data.len();
-                        info!("{}", data_len);
                         for sample in data.drain(..(output.len() / output_channels).min(data_len)) {
                             for j in 0..output_channels {
                                 output[i + j] = sample;
                             }
 
                             i += output_channels;
-
-                            if i > data_len {
-                                break;
-                            }
                         }
                     }
                 },
@@ -2891,7 +2886,7 @@ fn input_processor(
             }
         }
 
-        // TODO this will never end & probably needs some type of delay (could this be spinning?)
+        // TODO this will never end & should use a condvar to wait for changes to WEB_INPUT i think
         #[cfg(target_family = "wasm")]
         {
             if let Ok(mut data) = web_input.lock() {
@@ -2899,7 +2894,8 @@ fn input_processor(
                     continue;
                 }
 
-                for sample in data.drain(..(in_len - position)) {
+                let data_len = data.len();
+                for sample in data.drain(..(in_len - position).min(data_len)) {
                     pre_buf[0][position] = sample;
                     position += 1;
 

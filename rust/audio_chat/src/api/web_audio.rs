@@ -22,6 +22,7 @@ struct WebAudioWrapper {
 }
 
 // TODO only produce audio when needed
+// TODO latency controls for WEB_INPUT and web output
 impl WebAudioWrapper {
     async fn new() -> Self {
         let audio_ctx = web_sys::AudioContext::new().unwrap();
