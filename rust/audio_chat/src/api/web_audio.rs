@@ -10,7 +10,7 @@
 use std::sync::OnceLock;
 use kanal::{bounded, Receiver};
 use wasm_bindgen::{prelude::Closure, JsCast as _};
-use wasm_bindgen_futures::JsFuture;
+use wasm_bindgen_futures::{spawn_local, JsFuture};
 use web_sys::BlobPropertyBag;
 
 // https://zenn.dev/tetter/articles/web-realtime-audio-processing
@@ -130,7 +130,12 @@ impl OnWebStruct {
             let data = msg_event.data();
 
             let data: Vec<f32> = serde_wasm_bindgen::from_value(data).unwrap();
-            sender.send(data).unwrap();
+
+            // let sender = sender.clone_async();
+            //
+            // spawn_local(async move {
+            //     sender.send(data).await.unwrap();
+            // });
         }) as Box<dyn FnMut(wasm_bindgen::JsValue)>);
 
         let js_func = js_closure.as_ref().unchecked_ref();

@@ -13,7 +13,10 @@ use nnnoiseless::FRAME_SIZE;
 use rubato::Resampler;
 use tokio::select;
 use tokio::sync::Notify;
+#[cfg(not(target_family = "wasm"))]
 use tokio::time::sleep;
+#[cfg(target_family = "wasm")]
+use wasmtimer::tokio::sleep;
 
 use crate::api::audio_chat::{get_output_device, resampler_factory, DeviceName, SendStream};
 use crate::api::error::{Error, ErrorKind};

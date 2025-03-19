@@ -250,6 +250,9 @@ impl AudioChat {
         // start the session manager
         let chat_clone = chat.clone();
         spawn(async move {
+            #[cfg(target_family = "wasm")]
+            return; // session manager will currently fail on wasm
+
             let mut interval = interval(Duration::from_millis(100));
 
             loop {
