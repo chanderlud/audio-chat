@@ -25,6 +25,7 @@ use crate::api::error::{Error, ErrorKind};
 use crate::api::utils::{db_to_multiplier, mul};
 use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
 use messages::AudioHeader;
+use crate::api::web_audio::WebAudioBuffer;
 
 #[frb(opaque)]
 pub struct SoundPlayer {
@@ -134,7 +135,7 @@ async fn play_sound(
     let (processed_sender, processed_receiver) = bounded::<Vec<f32>>(1_000);
 
     #[cfg(target_family = "wasm")]
-    let processed_sender = Arc::new(Mutex::new(Vec::new()));
+    let processed_sender: Arc<WebAudioBuffer> = Default::default();
     #[cfg(target_family = "wasm")]
     let processed_receiver = processed_sender.clone();
 
@@ -153,7 +154,16 @@ async fn play_sound(
             &output_config.into(),
             move |output: &mut [f32], _: &_| {
                 #[cfg(target_family = "wasm")]
-                let mut data = processed_receiver.lock().unwrap();
+                let mut data = processed_receiver.buffer.lock().unwrap();
+
+                #[cfg(target_family = "wasm")]
+                while data.len() < output.len() {
+                    if let Ok(d) = processed_receiver.condvar.wait(data) {
+                        data = d;
+                    } else {
+                        return;
+                    }
+                }
 
                 for frame in output.chunks_mut(output_channels) {
                     #[cfg(not(target_family = "wasm"))]
@@ -227,7 +237,7 @@ fn processor(
     spec: AudioHeader,
     output_volume: Arc<AtomicF32>,
     #[cfg(not(target_family = "wasm"))] processed_sender: Sender<Vec<f32>>,
-    #[cfg(target_family = "wasm")] processed_sender: Arc<Mutex<Vec<f32>>>,
+    #[cfg(target_family = "wasm")] processed_sender: Arc<WebAudioBuffer>,
     output_channels: usize,
     ratio: f64,
 ) -> Result<(), Error> {
@@ -357,8 +367,9 @@ fn processor(
             processed_sender.send(buffer)?;
 
             #[cfg(target_family = "wasm")]
-            if let Ok(mut data) = processed_sender.lock() {
+            if let Ok(mut data) = processed_sender.buffer.lock() {
                 data.extend(buffer);
+                processed_sender.condvar.notify_one();
             }
         }
     }
