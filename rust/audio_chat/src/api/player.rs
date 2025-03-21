@@ -8,7 +8,7 @@ use cpal::{Host, SampleFormat};
 use flutter_rust_bridge::spawn;
 use flutter_rust_bridge::{frb, spawn_blocking_with};
 use kanal::{bounded, Sender};
-use log::{error, info};
+use log::error;
 use nnnoiseless::FRAME_SIZE;
 use rubato::Resampler;
 use tokio::select;
@@ -172,8 +172,6 @@ async fn play_sound(
                     #[cfg(target_family = "wasm")]
                     let samples_result: Result<Vec<f32>, ()> =
                         Ok(data.drain(..output_channels).collect());
-
-                    info!("recv samples {:?}", samples_result);
 
                     if let Ok(samples) = samples_result {
                         // play the samples
@@ -370,7 +368,6 @@ fn processor(
 
             #[cfg(target_family = "wasm")]
             if let Ok(mut data) = processed_sender.buffer.lock() {
-                info!("send {:?}", buffer);
                 data.extend(buffer);
                 processed_sender.condvar.notify_one();
             }
