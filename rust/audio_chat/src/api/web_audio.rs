@@ -5,13 +5,13 @@ use std::sync::{Arc, OnceLock};
 use wasm_bindgen::{prelude::Closure, JsCast};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::BlobPropertyBag;
-use wasm_sync::Mutex;
+use wasm_sync::{Mutex, Condvar};
 
-pub(crate) static WEB_INPUT: OnceLock<Arc<Mutex<Vec<f32>>>> = OnceLock::new();
+pub(crate) static WEB_INPUT: OnceLock<Arc<WebAudioBuffer>> = OnceLock::new();
 pub(crate) static SAMPLE_RATE: OnceLock<u32> = OnceLock::new();
 
-struct WebAudioWrapper {
-    data: Arc<Mutex<Vec<f32>>>,
+pub(crate) struct WebAudioWrapper {
+    buffer: Arc<WebAudioBuffer>,
     sample_rate: Option<f32>,
     _audio_ctx: web_sys::AudioContext,
     _source: web_sys::MediaStreamAudioSourceNode,
@@ -96,8 +96,8 @@ impl WebAudioWrapper {
 
         source.connect_with_audio_node(&worklet_node).unwrap();
 
-        let data = Arc::new(Mutex::new(Vec::new()));
-        let data_clone = data.clone();
+        let buffer: Arc<WebAudioBuffer> = Default::default();
+        let buffer_clone = Arc::clone(&buffer);
 
         // Float32Array
         let js_closure = Closure::wrap(Box::new(move |msg: wasm_bindgen::JsValue| {
@@ -107,8 +107,9 @@ impl WebAudioWrapper {
 
             let data: Vec<f32> = serde_wasm_bindgen::from_value(data).unwrap();
 
-            if let Ok(mut data_clone) = data_clone.lock() {
+            if let Ok(mut data_clone) = buffer_clone.buffer.lock() {
                 data_clone.extend(data);
+                buffer_clone.condvar.notify_one();
             }
         }) as Box<dyn FnMut(wasm_bindgen::JsValue)>);
 
@@ -120,7 +121,7 @@ impl WebAudioWrapper {
             .set_onmessage(Some(js_func));
 
         WebAudioWrapper {
-            data,
+            buffer,
             sample_rate: Some(sample_rate),
             _audio_ctx: audio_ctx,
             _source: source,
@@ -138,12 +139,18 @@ impl Drop for WebAudioWrapper {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct WebAudioBuffer {
+    pub(crate) buffer: Mutex<Vec<f32>>,
+    pub(crate) condvar: Condvar,
+}
+
 pub(crate) async fn init_web_audio() {
     let on_web = WebAudioWrapper::new().await;
 
-    let data = on_web.data.clone();
+    let buffer = on_web.buffer.clone();
 
-    WEB_INPUT.get_or_init(|| data);
+    WEB_INPUT.get_or_init(|| buffer);
 
     let sample_rate = on_web.sample_rate.unwrap();
 

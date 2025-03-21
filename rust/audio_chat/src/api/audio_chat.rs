@@ -64,7 +64,7 @@ use crate::{Behaviour, BehaviourEvent};
 use messages::{message, Attachment, AudioHeader, Message, ScreenshareHeader};
 use sea_codec::ProcessorMessage;
 #[cfg(target_family = "wasm")]
-use crate::api::web_audio::{WEB_INPUT, SAMPLE_RATE};
+use crate::api::web_audio::{WEB_INPUT, SAMPLE_RATE, WebAudioBuffer};
 
 type Result<T> = std::result::Result<T, Error>;
 pub(crate) type DeviceName = Arc<Mutex<Option<String>>>;
@@ -1469,7 +1469,11 @@ impl AudioChat {
         let framed_size = CHANNEL_SIZE / FRAME_SIZE;
 
         // input stream -> input processor
+        #[cfg(not(target_family = "wasm"))]
         let (input_sender, input_receiver) = bounded::<f32>(CHANNEL_SIZE);
+
+        #[cfg(target_family = "wasm")]
+        let input_receiver = WEB_INPUT.get().unwrap().clone();
 
         // input processor -> encoder or sending socket
         let (processed_input_sender, processed_input_receiver) =
@@ -2823,7 +2827,7 @@ fn input_processor(
     #[cfg(not(target_family = "wasm"))]
     receiver: Receiver<f32>,
     #[cfg(target_family = "wasm")]
-    _receiver: Receiver<f32>,
+    web_input: Arc<WebAudioBuffer>,
     sender: Sender<ProcessorMessage>,
     sample_rate: f64,
     input_factor: Arc<AtomicF32>,
@@ -2872,9 +2876,6 @@ fn input_processor(
     let mut rms_threshold = CachedAtomicFloat::new(&rms_threshold);
     let mut input_factor = CachedAtomicFloat::new(&input_factor);
 
-    #[cfg(target_family = "wasm")]
-    let web_input = WEB_INPUT.get().unwrap().clone();
-
     loop {
         #[cfg(not(target_family = "wasm"))]
         {
@@ -2886,12 +2887,16 @@ fn input_processor(
             }
         }
 
-        // TODO this will never end & should use a condvar to wait for changes to WEB_INPUT i think
+        // TODO this will never end
         #[cfg(target_family = "wasm")]
         {
-            if let Ok(mut data) = web_input.lock() {
+            if let Ok(mut data) = web_input.buffer.lock() {
                 if data.is_empty() {
-                    continue;
+                    if let Ok(d) = web_input.condvar.wait(data) {
+                        data = d;
+                    } else {
+                        break;
+                    }
                 }
 
                 let data_len = data.len();
