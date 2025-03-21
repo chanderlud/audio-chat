@@ -16,6 +16,8 @@ use tokio::sync::Notify;
 #[cfg(not(target_family = "wasm"))]
 use tokio::time::sleep;
 #[cfg(target_family = "wasm")]
+use wasm_sync::Mutex;
+#[cfg(target_family = "wasm")]
 use wasmtimer::tokio::sleep;
 
 use crate::api::audio_chat::{get_output_device, resampler_factory, DeviceName, SendStream};
@@ -128,7 +130,13 @@ async fn play_sound(
     let ratio = output_config.sample_rate().0 as f64 / spec.sample_rate as f64;
 
     // sends samples from the processor to the output stream
+    #[cfg(not(target_family = "wasm"))]
     let (processed_sender, processed_receiver) = bounded::<Vec<f32>>(1_000);
+
+    #[cfg(target_family = "wasm")]
+    let processed_sender = Arc::new(Mutex::new(Vec::new()));
+    #[cfg(target_family = "wasm")]
+    let processed_receiver = processed_sender.clone();
 
     // used to chunk the output buffer correctly
     let output_channels = output_config.channels() as usize;
@@ -144,8 +152,18 @@ async fn play_sound(
         stream: output_device.build_output_stream(
             &output_config.into(),
             move |output: &mut [f32], _: &_| {
+                #[cfg(target_family = "wasm")]
+                let mut data = processed_receiver.lock().unwrap();
+
                 for frame in output.chunks_mut(output_channels) {
-                    if let Ok(samples) = processed_receiver.recv() {
+                    #[cfg(not(target_family = "wasm"))]
+                    let samples_result = processed_receiver.recv();
+
+                    #[cfg(target_family = "wasm")]
+                    let samples_result: Result<Vec<f32>, ()> =
+                        Ok(data.drain(..output_channels).collect());
+
+                    if let Ok(samples) = samples_result {
                         // play the samples
                         frame.copy_from_slice(&samples);
                         last_samples = samples;
@@ -191,6 +209,7 @@ async fn play_sound(
     select! {
         _ = cancel.notified() => {
             // this causes the stream to begin fading out
+            #[cfg(not(target_family = "wasm"))]
             processed_sender.close();
             // we sleep to prevent the stream from being closed while fading
             sleep(std::time::Duration::from_secs(1)).await;
@@ -207,7 +226,8 @@ fn processor(
     sample_format: SampleFormat,
     spec: AudioHeader,
     output_volume: Arc<AtomicF32>,
-    processed_sender: Sender<Vec<f32>>,
+    #[cfg(not(target_family = "wasm"))] processed_sender: Sender<Vec<f32>>,
+    #[cfg(target_family = "wasm")] processed_sender: Arc<Mutex<Vec<f32>>>,
     output_channels: usize,
     ratio: f64,
 ) -> Result<(), Error> {
@@ -332,7 +352,14 @@ fn processor(
 
             // take this buffer and send it to the output
             let buffer = mem::take(&mut out_buf);
+
+            #[cfg(not(target_family = "wasm"))]
             processed_sender.send(buffer)?;
+
+            #[cfg(target_family = "wasm")]
+            if let Ok(mut data) = processed_sender.lock() {
+                data.extend(buffer);
+            }
         }
     }
 

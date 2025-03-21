@@ -10,6 +10,23 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::api::codec::{decoder, encoder};
+use crate::api::constants::*;
+use crate::api::contact::Contact;
+use crate::api::error::{DartError, Error, ErrorKind};
+#[cfg(target_os = "ios")]
+use crate::api::ios::{configure_audio_session, deactivate_audio_session};
+use crate::api::overlay::overlay::Overlay;
+use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
+use crate::api::screenshare;
+use crate::api::screenshare::{Decoder, Encoder};
+use crate::api::utils::{calculate_rms, db_to_multiplier, mul};
+#[cfg(target_family = "wasm")]
+use crate::api::web_audio::init_web_audio;
+#[cfg(target_family = "wasm")]
+use crate::api::web_audio::{WebAudioBuffer, SAMPLE_RATE, WEB_INPUT};
+use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
+use crate::{Behaviour, BehaviourEvent};
 use atomic_float::AtomicF32;
 use chrono::{DateTime, Local};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -29,8 +46,10 @@ use libp2p::tcp;
 use libp2p::{autonat, dcutr, identify, noise, ping, yamux, Multiaddr, PeerId, Stream};
 use libp2p_stream::Control;
 use log::{debug, error, info, warn};
+use messages::{message, Attachment, AudioHeader, Message, ScreenshareHeader};
 use nnnoiseless::{DenoiseState, RnnModel, FRAME_SIZE};
 use rubato::{Resampler, SincFixedIn};
+use sea_codec::ProcessorMessage;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 #[cfg(not(target_family = "wasm"))]
@@ -46,25 +65,6 @@ use tokio_util::compat::{Compat, FuturesAsyncReadCompatExt};
 use wasmtimer::std::Instant;
 #[cfg(target_family = "wasm")]
 use wasmtimer::tokio::{interval, sleep_until, timeout, Interval};
-use crate::api::codec::{decoder, encoder};
-use crate::api::constants::*;
-use crate::api::contact::Contact;
-use crate::api::error::{DartError, Error, ErrorKind};
-#[cfg(target_os = "ios")]
-use crate::api::ios::{configure_audio_session, deactivate_audio_session};
-use crate::api::overlay::overlay::Overlay;
-use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
-use crate::api::screenshare;
-use crate::api::screenshare::{Decoder, Encoder};
-use crate::api::utils::{calculate_rms, db_to_multiplier, mul};
-#[cfg(target_family = "wasm")]
-use crate::api::web_audio::init_web_audio;
-use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
-use crate::{Behaviour, BehaviourEvent};
-use messages::{message, Attachment, AudioHeader, Message, ScreenshareHeader};
-use sea_codec::ProcessorMessage;
-#[cfg(target_family = "wasm")]
-use crate::api::web_audio::{WEB_INPUT, SAMPLE_RATE, WebAudioBuffer};
 
 type Result<T> = std::result::Result<T, Error>;
 pub(crate) type DeviceName = Arc<Mutex<Option<String>>>;
@@ -2824,10 +2824,8 @@ async fn statistics_collector(
 /// Processes the audio input and sends it to the sending socket
 #[allow(clippy::too_many_arguments)]
 fn input_processor(
-    #[cfg(not(target_family = "wasm"))]
-    receiver: Receiver<f32>,
-    #[cfg(target_family = "wasm")]
-    web_input: Arc<WebAudioBuffer>,
+    #[cfg(not(target_family = "wasm"))] receiver: Receiver<f32>,
+    #[cfg(target_family = "wasm")] web_input: Arc<WebAudioBuffer>,
     sender: Sender<ProcessorMessage>,
     sample_rate: f64,
     input_factor: Arc<AtomicF32>,
@@ -2996,10 +2994,8 @@ fn input_processor(
 /// Processes the audio data and sends it to the output stream
 fn output_processor(
     receiver: Receiver<ProcessorMessage>,
-    #[cfg(target_family = "wasm")]
-    web_output: Arc<wasm_sync::Mutex<Vec<f32>>>,
-    #[cfg(not(target_family = "wasm"))]
-    sender: Sender<f32>,
+    #[cfg(target_family = "wasm")] web_output: Arc<wasm_sync::Mutex<Vec<f32>>>,
+    #[cfg(not(target_family = "wasm"))] sender: Sender<f32>,
     ratio: f64,
     output_volume: Arc<AtomicF32>,
     rms_sender: Sender<f32>,

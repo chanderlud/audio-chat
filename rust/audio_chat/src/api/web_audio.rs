@@ -4,8 +4,8 @@
 use std::sync::{Arc, OnceLock};
 use wasm_bindgen::{prelude::Closure, JsCast};
 use wasm_bindgen_futures::JsFuture;
+use wasm_sync::{Condvar, Mutex};
 use web_sys::BlobPropertyBag;
-use wasm_sync::{Mutex, Condvar};
 
 pub(crate) static WEB_INPUT: OnceLock<Arc<WebAudioBuffer>> = OnceLock::new();
 pub(crate) static SAMPLE_RATE: OnceLock<u32> = OnceLock::new();
