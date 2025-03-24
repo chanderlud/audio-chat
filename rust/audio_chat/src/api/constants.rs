@@ -23,4 +23,5 @@ pub(crate) const CHANNEL_SIZE: usize = 2_400;
 /// the protocol identifier for audio chat
 pub(crate) const CHAT_PROTOCOL: StreamProtocol = StreamProtocol::new("/audio-chat/0.0.1");
 pub(crate) const ROOM_PROTOCOL: StreamProtocol = StreamProtocol::new("/audio-chat-room/0.0.1");
+#[cfg(target_family = "wasm")]
 pub(crate) const SILENCE: [f32; FRAME_SIZE] = [0_f32; FRAME_SIZE];
