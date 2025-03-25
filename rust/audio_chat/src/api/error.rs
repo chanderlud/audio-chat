@@ -45,6 +45,8 @@ pub(crate) enum ErrorKind {
     AlreadyRegistered(AlreadyRegistered),
     Canceled(Canceled),
     TransportBuildError(TransportBuilderError),
+    #[cfg(target_family = "wasm")]
+    JsError(Option<String>),
     NoOutputDevice,
     NoInputDevice,
     InvalidContactFormat,
@@ -258,6 +260,15 @@ impl From<wasmtimer::tokio::error::Elapsed> for Error {
     }
 }
 
+#[cfg(target_family = "wasm")]
+impl From<wasm_bindgen::JsValue> for Error {
+    fn from(err: wasm_bindgen::JsValue) -> Self {
+        Self {
+            kind: ErrorKind::JsError(err.as_string()),
+        }
+    }
+}
+
 impl From<ErrorKind> for Error {
     fn from(kind: ErrorKind) -> Self {
         Self { kind }
@@ -296,6 +307,8 @@ impl Display for Error {
                 ErrorKind::Canceled(ref err) => format!("Canceled: {}", err),
                 ErrorKind::TransportBuildError(ref err) =>
                     format!("Transport build error: {}", err),
+                #[cfg(target_family = "wasm")]
+                ErrorKind::JsError(ref err) => format!("Javascript error: {:?}", err),
                 ErrorKind::NoOutputDevice => "No output device found".to_string(),
                 ErrorKind::NoInputDevice => "No input device found".to_string(),
                 ErrorKind::InvalidContactFormat => "Invalid contact format".to_string(),

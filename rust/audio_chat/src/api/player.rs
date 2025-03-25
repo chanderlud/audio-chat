@@ -20,7 +20,7 @@ use tokio::sync::Notify;
 #[cfg(not(target_family = "wasm"))]
 use tokio::time::sleep;
 #[cfg(target_family = "wasm")]
-use wasm_sync::{Condvar, Mutex};
+use wasm_sync::Mutex;
 #[cfg(target_family = "wasm")]
 use wasmtimer::tokio::sleep;
 
@@ -147,7 +147,7 @@ async fn play_sound(
     #[cfg(target_family = "wasm")]
     let processed_sender: Arc<AudioBuffer> = Default::default();
     #[cfg(target_family = "wasm")]
-    let processed_receiver = processed_sender.clone();
+    let audio_buffer = processed_sender.clone();
 
     #[cfg(target_family = "wasm")]
     let output_finished = Arc::new(Notify::new());
@@ -168,14 +168,7 @@ async fn play_sound(
             &output_config.into(),
             move |output: &mut [f32], _: &_| {
                 #[cfg(target_family = "wasm")]
-                let mut data = processed_receiver.buffer.lock().unwrap();
-
-                // this assumes that the output never gets ahead of the processor
-                #[cfg(target_family = "wasm")]
-                if data.len() < output.len() {
-                    output_finished_clone.notify_one();
-                    return;
-                }
+                let mut data = audio_buffer.buffer.lock().unwrap();
 
                 for frame in output.chunks_mut(output_channels) {
                     #[cfg(not(target_family = "wasm"))]
@@ -184,7 +177,7 @@ async fn play_sound(
                     let canceled = samples_result.is_err();
 
                     #[cfg(target_family = "wasm")]
-                    let canceled = processed_receiver.canceled.load(Relaxed);
+                    let canceled = audio_buffer.canceled.load(Relaxed);
 
                     if canceled {
                         // fade each sample
@@ -196,6 +189,12 @@ async fn play_sound(
                         frame.copy_from_slice(&last_samples);
                         i += 1; // advance the counter
                     } else {
+                        #[cfg(target_family = "wasm")]
+                        if data.is_empty() {
+                            output_finished_clone.notify_one();
+                            return;
+                        }
+
                         // this unwrap is safe as the result was already checked for is_err
                         #[cfg(not(target_family = "wasm"))]
                         let samples = samples_result.unwrap();
@@ -233,10 +232,6 @@ async fn play_sound(
         },
         FLUTTER_RUST_BRIDGE_HANDLER.thread_pool(),
     );
-
-    // on web, delay the start of playback slightly because the output is non-blocking so the processor needs a lil head start
-    #[cfg(target_family = "wasm")]
-    sleep(Duration::from_millis(50)).await;
 
     output_stream.stream.play()?; // play the stream
 
