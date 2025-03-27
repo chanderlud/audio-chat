@@ -1,4 +1,4 @@
-// This is a modified version of the code found at
+// The following is a modified version of the code found at
 // https://github.com/fzyzcjy/flutter_rust_bridge/issues/486
 
 use std::sync::Once;

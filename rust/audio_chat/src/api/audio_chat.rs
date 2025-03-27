@@ -1,7 +1,6 @@
 #![allow(clippy::type_complexity)]
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::mem;
 #[cfg(not(target_family = "wasm"))]
 use std::net::Ipv4Addr;
 pub use std::net::{IpAddr, SocketAddr};
@@ -11,6 +10,21 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::api::codec::{decoder, encoder};
+use crate::api::constants::*;
+use crate::api::contact::Contact;
+use crate::api::error::{DartError, Error, ErrorKind};
+#[cfg(target_os = "ios")]
+use crate::api::ios::{configure_audio_session, deactivate_audio_session};
+use crate::api::overlay::overlay::Overlay;
+use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
+use crate::api::screenshare;
+use crate::api::screenshare::{Decoder, Encoder};
+use crate::api::utils::{calculate_rms, db_to_multiplier, mul};
+#[cfg(target_family = "wasm")]
+use crate::api::web_audio::WebAudioWrapper;
+use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
+use crate::{Behaviour, BehaviourEvent};
 use atomic_float::AtomicF32;
 use chrono::{DateTime, Local};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -19,21 +33,23 @@ use cpal::{Device, Stream as CpalStream};
 use flutter_rust_bridge::for_generated::futures::stream::{SplitSink, SplitStream};
 use flutter_rust_bridge::for_generated::futures::{Sink, SinkExt};
 use flutter_rust_bridge::{frb, spawn, spawn_blocking_with, DartFnFuture};
+#[cfg(not(target_family = "wasm"))]
+use kanal::bounded;
 pub use kanal::AsyncReceiver;
-use kanal::{bounded, bounded_async, unbounded_async, AsyncSender, Receiver, Sender};
+use kanal::{bounded_async, unbounded_async, AsyncSender, Receiver, Sender};
 use libp2p::futures::StreamExt;
 use libp2p::identity::Keypair;
 use libp2p::multiaddr::Protocol;
-#[cfg(target_family = "wasm")]
-use libp2p::multihash::Multihash;
 use libp2p::swarm::{ConnectionId, SwarmEvent};
 #[cfg(not(target_family = "wasm"))]
 use libp2p::tcp;
 use libp2p::{autonat, dcutr, identify, noise, ping, yamux, Multiaddr, PeerId, Stream};
 use libp2p_stream::Control;
 use log::{debug, error, info, warn};
+use messages::{message, Attachment, AudioHeader, Message, ScreenshareHeader};
 use nnnoiseless::{DenoiseState, RnnModel, FRAME_SIZE};
 use rubato::{Resampler, SincFixedIn};
+use sea_codec::ProcessorMessage;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 #[cfg(not(target_family = "wasm"))]
@@ -49,22 +65,6 @@ use tokio_util::compat::{Compat, FuturesAsyncReadCompatExt};
 use wasmtimer::std::Instant;
 #[cfg(target_family = "wasm")]
 use wasmtimer::tokio::{interval, sleep_until, timeout, Interval};
-
-use crate::api::codec::{decoder, encoder};
-use crate::api::constants::*;
-use crate::api::contact::Contact;
-use crate::api::error::{DartError, Error, ErrorKind};
-#[cfg(target_os = "ios")]
-use crate::api::ios::{configure_audio_session, deactivate_audio_session};
-use crate::api::overlay::overlay::Overlay;
-use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
-use crate::api::screenshare;
-use crate::api::screenshare::{Decoder, Encoder};
-use crate::api::utils::{calculate_rms, db_to_multiplier, mul};
-use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
-use crate::{Behaviour, BehaviourEvent};
-use messages::{message, Attachment, AudioHeader, Message, ScreenshareHeader};
-use sea_codec::ProcessorMessage;
 
 type Result<T> = std::result::Result<T, Error>;
 pub(crate) type DeviceName = Arc<Mutex<Option<String>>>;
@@ -133,6 +133,7 @@ pub struct AudioChat {
     network_config: NetworkConfig,
 
     /// Configuration for the screenshare functionality
+    #[allow(dead_code)]
     screenshare_config: ScreenshareConfig,
 
     /// A reference to the object that controls the call overlay
@@ -142,6 +143,9 @@ pub struct AudioChat {
 
     /// A list of PeerIds which are chat rooms
     chat_rooms: Arc<RwLock<HashSet<PeerId>>>,
+
+    #[cfg(target_family = "wasm")]
+    web_input: Arc<Mutex<Option<WebAudioWrapper>>>,
 
     /// Prompts the user to accept a call
     accept_call:
@@ -175,6 +179,7 @@ pub struct AudioChat {
     manager_active: Arc<Mutex<dyn Fn(bool, bool) -> DartFnFuture<()> + Send>>,
 
     /// Called when a screenshare starts
+    #[allow(dead_code)]
     screenshare_started: Arc<Mutex<dyn Fn(DartNotify, bool) -> DartFnFuture<()> + Send>>,
 }
 
@@ -229,6 +234,8 @@ impl AudioChat {
             overlay: overlay.clone(),
             codec_config: codec_config.clone(),
             chat_rooms: Default::default(),
+            #[cfg(target_family = "wasm")]
+            web_input: Default::default(),
             accept_call: Arc::new(Mutex::new(accept_call)),
             call_ended: Arc::new(Mutex::new(call_ended)),
             get_contact: Arc::new(Mutex::new(get_contact)),
@@ -285,6 +292,11 @@ impl AudioChat {
     /// Attempts to start a call through an existing session
     pub async fn say_hello(&self, contact: &Contact) -> std::result::Result<(), DartError> {
         if let Some(state) = self.session_states.read().await.get(&contact.peer_id) {
+            #[cfg(target_family = "wasm")]
+            self.init_web_audio()
+                .await
+                .map_err::<Error, _>(Error::into)?;
+
             state.start_call.notify_one();
             Ok(())
         } else {
@@ -342,6 +354,11 @@ impl AudioChat {
         self.in_call.store(true, Relaxed);
 
         let stop_io = Arc::new(Notify::new());
+
+        #[cfg(target_family = "wasm")]
+        self.init_web_audio()
+            .await
+            .map_err::<Error, _>(Error::into)?;
 
         let result = self
             .call(None, None, None, None, None, &stop_io)
@@ -467,6 +484,13 @@ impl AudioChat {
         };
 
         *self.denoise_model.write().await = model;
+        Ok(())
+    }
+
+    #[cfg(target_family = "wasm")]
+    async fn init_web_audio(&self) -> Result<()> {
+        let wrapper = WebAudioWrapper::new().await?;
+        *self.web_input.lock().await = Some(wrapper);
         Ok(())
     }
 
@@ -1463,7 +1487,11 @@ impl AudioChat {
         let framed_size = CHANNEL_SIZE / FRAME_SIZE;
 
         // input stream -> input processor
+        #[cfg(not(target_family = "wasm"))]
         let (input_sender, input_receiver) = bounded::<f32>(CHANNEL_SIZE);
+
+        #[cfg(target_family = "wasm")]
+        let input_receiver;
 
         // input processor -> encoder or sending socket
         let (processed_input_sender, processed_input_receiver) =
@@ -1481,7 +1509,14 @@ impl AudioChat {
             unbounded_async::<ProcessorMessage>();
 
         // output processor -> output stream
+        #[cfg(not(target_family = "wasm"))]
         let (output_sender, output_receiver) = bounded::<f32>(CHANNEL_SIZE);
+
+        // output processor -> output stream
+        #[cfg(target_family = "wasm")]
+        let output_sender = Arc::new(wasm_sync::Mutex::new(Vec::new()));
+        #[cfg(target_family = "wasm")]
+        let web_output = output_sender.clone();
 
         // channels used for moving values to the statistics collector
         let (input_rms_sender, input_rms_receiver) = unbounded_async::<f32>();
@@ -1505,10 +1540,38 @@ impl AudioChat {
         let output_config = output_device.default_output_config()?;
         info!("output device: {:?}", output_device.name());
 
-        // get the input device and its default configuration
-        let input_device = self.get_input_device().await?;
-        let input_config = input_device.default_input_config()?;
-        info!("input_device: {:?}", input_device.name());
+        #[cfg(not(target_family = "wasm"))]
+        let input_device;
+        #[cfg(not(target_family = "wasm"))]
+        let input_config;
+
+        let input_sample_rate;
+        let input_sample_format;
+        let input_channels;
+
+        #[cfg(not(target_family = "wasm"))]
+        {
+            // get the input device and its default configuration
+            input_device = self.get_input_device().await?;
+            input_config = input_device.default_input_config()?;
+            info!("input_device: {:?}", input_device.name());
+            input_sample_rate = input_config.sample_rate().0;
+            input_sample_format = input_config.sample_format().to_string();
+            input_channels = input_config.channels() as usize;
+        }
+
+        #[cfg(target_family = "wasm")]
+        {
+            if let Some(web_input) = self.web_input.lock().await.as_ref() {
+                input_receiver = web_input.pair.clone();
+                input_sample_rate = web_input.sample_rate as u32;
+            } else {
+                return Err(ErrorKind::NoInputDevice.into());
+            }
+
+            input_sample_format = String::from("f32");
+            input_channels = 1; // only ever 1 channel
+        }
 
         // load the shared codec config values
         let config_codec_enabled = self.codec_config.enabled.load(Relaxed);
@@ -1516,9 +1579,9 @@ impl AudioChat {
         let config_residual_bits = self.codec_config.residual_bits.load(Relaxed);
 
         let mut audio_header = AudioHeader {
-            channels: input_config.channels() as u32,
-            sample_rate: input_config.sample_rate().0,
-            sample_format: input_config.sample_format().to_string(),
+            channels: input_channels as u32,
+            sample_rate: input_sample_rate,
+            sample_format: input_sample_format,
             codec_enabled: config_codec_enabled,
             vbr: config_vbr,
             residual_bits: config_residual_bits as f64,
@@ -1562,7 +1625,7 @@ impl AudioChat {
         // get a sync version of the processed input sender
         let processed_input_sender = processed_input_sender.to_sync();
         // the input processor needs the sample rate
-        let sample_rate = input_config.sample_rate().0 as f64;
+        let sample_rate = input_sample_rate as f64;
         // the rnnoise denoiser
         let denoiser = denoise.then_some(DenoiseState::from_model(
             self.denoise_model.read().await.clone(),
@@ -1640,9 +1703,10 @@ impl AudioChat {
             );
         }
 
-        let input_channels = input_config.channels() as usize;
+        #[cfg(not(target_family = "wasm"))]
         let end_call = Arc::clone(&self.end_call);
 
+        #[cfg(not(target_family = "wasm"))]
         let input_stream = SendStream {
             stream: input_device.build_input_stream(
                 &input_config.into(),
@@ -1675,12 +1739,27 @@ impl AudioChat {
                         return;
                     }
 
+                    #[cfg(not(target_family = "wasm"))]
                     for frame in output.chunks_mut(output_channels) {
                         let sample = output_receiver.recv().unwrap_or(0_f32);
 
                         // write the sample to all the channels
                         for channel in frame.iter_mut() {
                             *channel = sample;
+                        }
+                    }
+
+                    #[cfg(target_family = "wasm")]
+                    if let Ok(mut data) = web_output.lock() {
+                        let mut i = 0;
+
+                        let data_len = data.len();
+                        for sample in data.drain(..(output.len() / output_channels).min(data_len)) {
+                            for j in 0..output_channels {
+                                output[i + j] = sample;
+                            }
+
+                            i += output_channels;
                         }
                     }
                 },
@@ -1692,9 +1771,18 @@ impl AudioChat {
             )?,
         };
 
-        // play the streams
-        input_stream.stream.play()?;
+        // play the output stream
         output_stream.stream.play()?;
+        // play the input stream (non web)
+        #[cfg(not(target_family = "wasm"))]
+        input_stream.stream.play()?;
+        // play the input stream (web)
+        #[cfg(target_family = "wasm")]
+        if let Some(web_input) = self.web_input.lock().await.as_ref() {
+            web_input.resume();
+        } else {
+            return Err(ErrorKind::NoInputDevice.into());
+        }
 
         spawn(statistics_collector(
             input_rms_receiver,
@@ -1718,76 +1806,77 @@ impl AudioChat {
             ));
 
             self.end_call.notified().await;
+        } else {
+            let (write, read) = audio_transport.unwrap().split();
 
-            // on ios the audio session must be deactivated
-            #[cfg(target_os = "ios")]
-            deactivate_audio_session();
+            spawn(audio_input(
+                if codec_enabled {
+                    encoded_input_receiver
+                } else {
+                    processed_input_receiver
+                },
+                write,
+                Arc::clone(stop_io),
+                upload_bandwidth,
+            ));
 
-            return Ok(());
+            spawn(audio_output(
+                network_output_sender,
+                read,
+                Arc::clone(stop_io),
+                download_bandwidth,
+                receiving_sender,
+            ));
+
+            let transport = transport.as_mut().unwrap();
+            let message_receiver = message_receiver.unwrap();
+
+            // shared values used in the call controller
+            let end_call = Arc::clone(&self.end_call);
+            let message_received = Arc::clone(&self.message_received);
+            let call_state = Arc::clone(&self.call_state);
+
+            let controller_future = call_controller(
+                transport,
+                message_receiver,
+                end_call,
+                receiving_receiver,
+                message_received,
+                call_state,
+                self.start_screenshare.clone(),
+                peer.unwrap(),
+                self.identity.read().await.public().to_peer_id(),
+            );
+
+            info!("call controller starting");
+
+            match controller_future.await {
+                Ok(message) => (self.call_ended.lock().await)(message, true).await,
+                Err(error) => match error.kind {
+                    ErrorKind::CallEnded => (), // when the call is ended externally, no UI notification is needed
+                    _ => (self.call_ended.lock().await)(error.to_string(), false).await,
+                },
+            }
+
+            stop_io.notify_waiters();
+            info!("call controller returned and was handled, call returning");
         }
-
-        let (write, read) = audio_transport.unwrap().split();
-
-        spawn(audio_input(
-            if codec_enabled {
-                encoded_input_receiver
-            } else {
-                processed_input_receiver
-            },
-            write,
-            Arc::clone(stop_io),
-            upload_bandwidth,
-        ));
-
-        spawn(audio_output(
-            network_output_sender,
-            read,
-            Arc::clone(stop_io),
-            download_bandwidth,
-            receiving_sender,
-        ));
-
-        let transport = transport.as_mut().unwrap();
-        let message_receiver = message_receiver.unwrap();
-
-        // shared values used in the call controller
-        let end_call = Arc::clone(&self.end_call);
-        let message_received = Arc::clone(&self.message_received);
-        let call_state = Arc::clone(&self.call_state);
-
-        let controller_future = call_controller(
-            transport,
-            message_receiver,
-            end_call,
-            receiving_receiver,
-            message_received,
-            call_state,
-            self.start_screenshare.clone(),
-            peer.unwrap(),
-            self.identity.read().await.public().to_peer_id(),
-        );
-
-        info!("call controller starting");
-
-        match controller_future.await {
-            Ok(message) => (self.call_ended.lock().await)(message, true).await,
-            Err(error) => match error.kind {
-                ErrorKind::CallEnded => (), // when the call is ended externally, no UI notification is needed
-                _ => (self.call_ended.lock().await)(error.to_string(), false).await,
-            },
-        }
-
-        stop_io.notify_waiters();
-        info!("call controller returned and was handled, call returning");
 
         // on ios the audio session must be deactivated
         #[cfg(target_os = "ios")]
         deactivate_audio_session();
 
+        #[cfg(target_family = "wasm")]
+        {
+            // drop the web input to free resources
+            *self.web_input.lock().await = None;
+        }
+
         Ok(())
     }
 
     /// Returns either the default or the user specified device
+    #[cfg(not(target_family = "wasm"))]
     async fn get_input_device(&self) -> Result<Device> {
         match *self.input_device.lock().await {
             Some(ref name) => Ok(self
@@ -2719,7 +2808,8 @@ async fn statistics_collector(
 /// Processes the audio input and sends it to the sending socket
 #[allow(clippy::too_many_arguments)]
 fn input_processor(
-    receiver: Receiver<f32>,
+    #[cfg(not(target_family = "wasm"))] receiver: Receiver<f32>,
+    #[cfg(target_family = "wasm")] web_input: Arc<(wasm_sync::Mutex<Vec<f32>>, wasm_sync::Condvar)>,
     sender: Sender<ProcessorMessage>,
     sample_rate: f64,
     input_factor: Arc<AtomicF32>,
@@ -2732,7 +2822,7 @@ fn input_processor(
     // the maximum and minimum values for i16 as f32
     let max_i16_f32 = i16::MAX as f32;
     let min_i16_f32 = i16::MIN as f32;
-    let i16_size = mem::size_of::<i16>();
+    let i16_size = size_of::<i16>();
 
     let ratio = if denoiser.is_some() {
         // rnnoise requires a 48kHz sample rate
@@ -2768,27 +2858,53 @@ fn input_processor(
     let mut rms_threshold = CachedAtomicFloat::new(&rms_threshold);
     let mut input_factor = CachedAtomicFloat::new(&input_factor);
 
-    while let Ok(sample) = receiver.recv() {
-        // sends a silence signal for every FRAME_SIZE samples if the input is muted
-        if muted.load() {
-            if position > FRAME_SIZE {
-                position = 0;
-
-                sender.try_send(ProcessorMessage::silence())?;
-            } else {
+    loop {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            if let Ok(sample) = receiver.recv() {
+                pre_buf[0][position] = sample;
                 position += 1;
+            } else {
+                break;
             }
-
-            continue;
         }
 
-        pre_buf[0][position] = sample;
-        position += 1;
+        // TODO this will never end
+        #[cfg(target_family = "wasm")]
+        {
+            if let Ok(mut data) = web_input.0.lock() {
+                if data.is_empty() {
+                    if let Ok(d) = web_input.1.wait(data) {
+                        data = d;
+                    } else {
+                        break;
+                    }
+                }
+
+                let data_len = data.len();
+                for sample in data.drain(..(in_len - position).min(data_len)) {
+                    pre_buf[0][position] = sample;
+                    position += 1;
+
+                    if position == in_len {
+                        break;
+                    }
+                }
+            } else {
+                break;
+            }
+        }
 
         if position < in_len {
             continue;
-        } else {
-            position = 0;
+        }
+
+        position = 0;
+
+        // sends a silence signal if the input is muted
+        if muted.load() {
+            sender.try_send(ProcessorMessage::silence())?;
+            continue;
         }
 
         let (target_buffer, len) = if let Some(resampler) = &mut resampler {
@@ -2862,7 +2978,8 @@ fn input_processor(
 /// Processes the audio data and sends it to the output stream
 fn output_processor(
     receiver: Receiver<ProcessorMessage>,
-    sender: Sender<f32>,
+    #[cfg(target_family = "wasm")] web_output: Arc<wasm_sync::Mutex<Vec<f32>>>,
+    #[cfg(not(target_family = "wasm"))] sender: Sender<f32>,
     ratio: f64,
     output_volume: Arc<AtomicF32>,
     rms_sender: Sender<f32>,
@@ -2886,9 +3003,20 @@ fn output_processor(
     while let Ok(message) = receiver.recv() {
         match message {
             ProcessorMessage::Silence => {
+                #[cfg(not(target_family = "wasm"))]
                 for _ in 0..FRAME_SIZE {
                     sender.try_send(0_f32)?;
                 }
+
+                #[cfg(target_family = "wasm")]
+                web_output
+                    .lock()
+                    .map(|mut data| {
+                        if data.len() < CHANNEL_SIZE {
+                            data.extend(SILENCE)
+                        }
+                    })
+                    .unwrap();
 
                 continue;
             }
@@ -2922,14 +3050,36 @@ fn output_processor(
             let processed = resampler.process_into_buffer(&pre_buf, &mut post_buf, None)?;
 
             // send the resampled data to the output stream
+            #[cfg(not(target_family = "wasm"))]
             for sample in &post_buf[0][..processed.1] {
                 sender.try_send(*sample)?;
             }
+
+            #[cfg(target_family = "wasm")]
+            web_output
+                .lock()
+                .map(|mut data| {
+                    if data.len() < CHANNEL_SIZE {
+                        data.extend(&post_buf[0][..processed.1])
+                    }
+                })
+                .unwrap();
         } else {
             // if no resampling is needed, send the data to the output stream
+            #[cfg(not(target_family = "wasm"))]
             for sample in *pre_buf[0] {
                 sender.try_send(sample)?;
             }
+
+            #[cfg(target_family = "wasm")]
+            web_output
+                .lock()
+                .map(|mut data| {
+                    if data.len() < CHANNEL_SIZE {
+                        data.extend(*pre_buf[0])
+                    }
+                })
+                .unwrap();
         }
     }
 
@@ -3089,6 +3239,7 @@ mod rwlock_option_recording_config {
 }
 
 #[cfg(test)]
+#[cfg(not(target_family = "wasm"))]
 pub(crate) mod tests {
     use super::*;
     use kanal::unbounded;
