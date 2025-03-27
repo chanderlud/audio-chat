@@ -1,6 +1,8 @@
 // The following is a modified version of the code found at
 // https://github.com/RustAudio/cpal/issues/813#issuecomment-2413007276
 
+use crate::api::constants::CHANNEL_SIZE;
+use log::error;
 use std::sync::Arc;
 use wasm_bindgen::{prelude::Closure, JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -18,29 +20,23 @@ pub(crate) struct WebAudioWrapper {
     _worklet_node: web_sys::AudioWorkletNode,
 }
 
-// TODO latency controls for WEB_INPUT and web output
 impl WebAudioWrapper {
     pub(crate) async fn new() -> Result<Self, JsValue> {
         let audio_ctx = web_sys::AudioContext::new()?;
         let sample_rate = audio_ctx.sample_rate();
 
-        let media_devices = web_sys::window().unwrap().navigator().media_devices()?;
+        let media_devices = web_sys::window()
+            .ok_or(JsValue::from_str("unable to get window"))?
+            .navigator()
+            .media_devices()?;
 
         let constraints = web_sys::MediaStreamConstraints::new();
+        constraints.set_audio(&JsValue::TRUE);
 
-        let js_true = wasm_bindgen::JsValue::from(true);
-
-        constraints.set_audio(&js_true);
-
-        let stream = media_devices.get_user_media_with_constraints(&constraints)?;
-
-        let stream = JsFuture::from(stream).await?;
-
-        let stream = stream.dyn_into::<web_sys::MediaStream>()?;
-
+        let stream_promise = media_devices.get_user_media_with_constraints(&constraints)?;
+        let stream_value = JsFuture::from(stream_promise).await?;
+        let stream = stream_value.dyn_into::<web_sys::MediaStream>()?;
         let source = audio_ctx.create_media_stream_source(&stream)?;
-
-        JsFuture::from(audio_ctx.resume()?).await?;
 
         // Return about Float32Array
         // return first input's first channel's samples
@@ -82,15 +78,22 @@ impl WebAudioWrapper {
 
         // Float32Array
         let js_closure = Closure::wrap(Box::new(move |msg: JsValue| {
-            let msg_event = msg.dyn_into::<web_sys::MessageEvent>().unwrap();
+            let data_result: Result<Result<Vec<f32>, _>, _> = msg
+                .dyn_into::<web_sys::MessageEvent>()
+                .map(|msg| serde_wasm_bindgen::from_value(msg.data()));
 
-            let data = msg_event.data();
+            match (data_result, pair_clone.0.lock()) {
+                (Ok(Ok(data)), Ok(mut data_clone)) => {
+                    if data_clone.len() > CHANNEL_SIZE {
+                        return;
+                    }
 
-            let data: Vec<f32> = serde_wasm_bindgen::from_value(data).unwrap();
-
-            if let Ok(mut data_clone) = pair_clone.0.lock() {
-                data_clone.extend(data);
-                pair_clone.1.notify_one();
+                    data_clone.extend(data);
+                    pair_clone.1.notify_one();
+                }
+                (Err(error), _) => error!("failed to handle worker message: {:?}", error),
+                (Ok(Err(error)), _) => error!("failed to handle worker message: {:?}", error),
+                (_, Err(error)) => error!("failed to lock pair: {}", error),
             }
         }) as Box<dyn FnMut(JsValue)>);
 
@@ -108,6 +111,10 @@ impl WebAudioWrapper {
             _js_closure: js_closure,
             _worklet_node: worklet_node,
         })
+    }
+
+    pub(crate) fn resume(&self) {
+        _ = self.audio_ctx.resume();
     }
 }
 

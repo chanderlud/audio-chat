@@ -1770,10 +1770,18 @@ impl AudioChat {
             )?,
         };
 
-        // play the streams
+        // play the output stream
         output_stream.stream.play()?;
+        // play the input stream (non web)
         #[cfg(not(target_family = "wasm"))]
         input_stream.stream.play()?;
+        // play the input stream (web)
+        #[cfg(target_family = "wasm")]
+        if let Some(web_input) = self.web_input.lock().await.as_ref() {
+            web_input.resume();
+        } else {
+            return Err(ErrorKind::NoInputDevice.into());
+        }
 
         spawn(statistics_collector(
             input_rms_receiver,
@@ -1797,72 +1805,61 @@ impl AudioChat {
             ));
 
             self.end_call.notified().await;
+        } else {
+            let (write, read) = audio_transport.unwrap().split();
 
-            // on ios the audio session must be deactivated
-            #[cfg(target_os = "ios")]
-            deactivate_audio_session();
+            spawn(audio_input(
+                if codec_enabled {
+                    encoded_input_receiver
+                } else {
+                    processed_input_receiver
+                },
+                write,
+                Arc::clone(stop_io),
+                upload_bandwidth,
+            ));
 
-            #[cfg(target_family = "wasm")]
-            {
-                *self.web_input.lock().await = None;
+            spawn(audio_output(
+                network_output_sender,
+                read,
+                Arc::clone(stop_io),
+                download_bandwidth,
+                receiving_sender,
+            ));
+
+            let transport = transport.as_mut().unwrap();
+            let message_receiver = message_receiver.unwrap();
+
+            // shared values used in the call controller
+            let end_call = Arc::clone(&self.end_call);
+            let message_received = Arc::clone(&self.message_received);
+            let call_state = Arc::clone(&self.call_state);
+
+            let controller_future = call_controller(
+                transport,
+                message_receiver,
+                end_call,
+                receiving_receiver,
+                message_received,
+                call_state,
+                self.start_screenshare.clone(),
+                peer.unwrap(),
+                self.identity.read().await.public().to_peer_id(),
+            );
+
+            info!("call controller starting");
+
+            match controller_future.await {
+                Ok(message) => (self.call_ended.lock().await)(message, true).await,
+                Err(error) => match error.kind {
+                    ErrorKind::CallEnded => (), // when the call is ended externally, no UI notification is needed
+                    _ => (self.call_ended.lock().await)(error.to_string(), false).await,
+                },
             }
 
-            return Ok(());
+            stop_io.notify_waiters();
+            info!("call controller returned and was handled, call returning");
         }
-
-        let (write, read) = audio_transport.unwrap().split();
-
-        spawn(audio_input(
-            if codec_enabled {
-                encoded_input_receiver
-            } else {
-                processed_input_receiver
-            },
-            write,
-            Arc::clone(stop_io),
-            upload_bandwidth,
-        ));
-
-        spawn(audio_output(
-            network_output_sender,
-            read,
-            Arc::clone(stop_io),
-            download_bandwidth,
-            receiving_sender,
-        ));
-
-        let transport = transport.as_mut().unwrap();
-        let message_receiver = message_receiver.unwrap();
-
-        // shared values used in the call controller
-        let end_call = Arc::clone(&self.end_call);
-        let message_received = Arc::clone(&self.message_received);
-        let call_state = Arc::clone(&self.call_state);
-
-        let controller_future = call_controller(
-            transport,
-            message_receiver,
-            end_call,
-            receiving_receiver,
-            message_received,
-            call_state,
-            self.start_screenshare.clone(),
-            peer.unwrap(),
-            self.identity.read().await.public().to_peer_id(),
-        );
-
-        info!("call controller starting");
-
-        match controller_future.await {
-            Ok(message) => (self.call_ended.lock().await)(message, true).await,
-            Err(error) => match error.kind {
-                ErrorKind::CallEnded => (), // when the call is ended externally, no UI notification is needed
-                _ => (self.call_ended.lock().await)(error.to_string(), false).await,
-            },
-        }
-
-        stop_io.notify_waiters();
-        info!("call controller returned and was handled, call returning");
 
         // on ios the audio session must be deactivated
         #[cfg(target_os = "ios")]
@@ -1870,6 +1867,7 @@ impl AudioChat {
 
         #[cfg(target_family = "wasm")]
         {
+            // drop the web input to free resources
             *self.web_input.lock().await = None;
         }
 
@@ -3060,7 +3058,11 @@ fn output_processor(
                 #[cfg(target_family = "wasm")]
                 web_output
                     .lock()
-                    .map(|mut data| data.extend(SILENCE))
+                    .map(|mut data| {
+                        if data.len() < CHANNEL_SIZE {
+                            data.extend(SILENCE)
+                        }
+                    })
                     .unwrap();
 
                 continue;
@@ -3103,7 +3105,11 @@ fn output_processor(
             #[cfg(target_family = "wasm")]
             web_output
                 .lock()
-                .map(|mut data| data.extend(&post_buf[0][..processed.1]))
+                .map(|mut data| {
+                    if data.len() < CHANNEL_SIZE {
+                        data.extend(&post_buf[0][..processed.1])
+                    }
+                })
                 .unwrap();
         } else {
             // if no resampling is needed, send the data to the output stream
@@ -3115,7 +3121,11 @@ fn output_processor(
             #[cfg(target_family = "wasm")]
             web_output
                 .lock()
-                .map(|mut data| data.extend(*pre_buf[0]))
+                .map(|mut data| {
+                    if data.len() < CHANNEL_SIZE {
+                        data.extend(*pre_buf[0])
+                    }
+                })
                 .unwrap();
         }
     }
