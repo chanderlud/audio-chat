@@ -27,6 +27,7 @@ use crate::{Behaviour, BehaviourEvent};
 use atomic_float::AtomicF32;
 use chrono::{DateTime, Local};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+#[cfg(not(target_family = "wasm"))]
 use cpal::Device;
 pub use cpal::Host;
 use flutter_rust_bridge::for_generated::futures::stream::{SplitSink, SplitStream};
@@ -79,7 +80,7 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 /// A timeout used to detect temporary network issues
 const TIMEOUT_DURATION: Duration = Duration::from_millis(100);
 /// the number of frames to hold in a channel
-const CHANNEL_SIZE: usize = 2_400;
+pub(crate) const CHANNEL_SIZE: usize = 2_400;
 /// the protocol identifier for audio chat
 const CHAT_PROTOCOL: StreamProtocol = StreamProtocol::new("/audio-chat/0.0.1");
 const ROOM_PROTOCOL: StreamProtocol = StreamProtocol::new("/audio-chat-room/0.0.1");

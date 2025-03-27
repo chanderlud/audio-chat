@@ -1,7 +1,7 @@
 // The following is a modified version of the code found at
 // https://github.com/RustAudio/cpal/issues/813#issuecomment-2413007276
 
-use crate::api::constants::CHANNEL_SIZE;
+use crate::api::audio_chat::CHANNEL_SIZE;
 use log::error;
 use std::sync::Arc;
 use wasm_bindgen::{prelude::Closure, JsCast, JsValue};
