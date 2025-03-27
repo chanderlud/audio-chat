@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::api::codec::{decoder, encoder};
-use crate::api::constants::*;
 use crate::api::contact::Contact;
 use crate::api::error::{DartError, Error, ErrorKind};
 #[cfg(target_os = "ios")]
@@ -20,7 +19,7 @@ use crate::api::overlay::overlay::Overlay;
 use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
 use crate::api::screenshare;
 use crate::api::screenshare::{Decoder, Encoder};
-use crate::api::utils::{calculate_rms, db_to_multiplier, mul};
+use crate::api::utils::*;
 #[cfg(target_family = "wasm")]
 use crate::api::web_audio::WebAudioWrapper;
 use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
@@ -28,10 +27,10 @@ use crate::{Behaviour, BehaviourEvent};
 use atomic_float::AtomicF32;
 use chrono::{DateTime, Local};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::Device;
 pub use cpal::Host;
-use cpal::{Device, Stream as CpalStream};
 use flutter_rust_bridge::for_generated::futures::stream::{SplitSink, SplitStream};
-use flutter_rust_bridge::for_generated::futures::{Sink, SinkExt};
+use flutter_rust_bridge::for_generated::futures::SinkExt;
 use flutter_rust_bridge::{frb, spawn, spawn_blocking_with, DartFnFuture};
 #[cfg(not(target_family = "wasm"))]
 use kanal::bounded;
@@ -43,15 +42,16 @@ use libp2p::multiaddr::Protocol;
 use libp2p::swarm::{ConnectionId, SwarmEvent};
 #[cfg(not(target_family = "wasm"))]
 use libp2p::tcp;
-use libp2p::{autonat, dcutr, identify, noise, ping, yamux, Multiaddr, PeerId, Stream};
+use libp2p::{
+    autonat, dcutr, identify, noise, ping, yamux, Multiaddr, PeerId, Stream, StreamProtocol,
+};
 use libp2p_stream::Control;
 use log::{debug, error, info, warn};
 use messages::{message, Attachment, AudioHeader, Message, ScreenshareHeader};
 use nnnoiseless::{DenoiseState, RnnModel, FRAME_SIZE};
-use rubato::{Resampler, SincFixedIn};
+use rubato::Resampler;
 use sea_codec::ProcessorMessage;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncWrite};
 #[cfg(not(target_family = "wasm"))]
 use tokio::net::lookup_host;
 use tokio::select;
@@ -71,6 +71,20 @@ pub(crate) type DeviceName = Arc<Mutex<Option<String>>>;
 type TransportStream = Compat<Stream>;
 pub type Transport<T> = Framed<T, LengthDelimitedCodec>;
 type StartScreenshare = (PeerId, Option<ScreenshareHeader>);
+
+/// The number of bytes in a single network audio frame
+const TRANSFER_BUFFER_SIZE: usize = FRAME_SIZE * size_of::<i16>();
+/// A timeout used when initializing the call
+const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
+/// A timeout used to detect temporary network issues
+const TIMEOUT_DURATION: Duration = Duration::from_millis(100);
+/// the number of frames to hold in a channel
+const CHANNEL_SIZE: usize = 2_400;
+/// the protocol identifier for audio chat
+const CHAT_PROTOCOL: StreamProtocol = StreamProtocol::new("/audio-chat/0.0.1");
+const ROOM_PROTOCOL: StreamProtocol = StreamProtocol::new("/audio-chat-room/0.0.1");
+#[cfg(target_family = "wasm")]
+const SILENCE: [f32; FRAME_SIZE] = [0_f32; FRAME_SIZE];
 
 #[frb(opaque)]
 #[derive(Clone)]
@@ -1957,13 +1971,6 @@ impl ConnectionState {
     }
 }
 
-/// wraps a cpal stream to unsafely make it send
-pub(crate) struct SendStream {
-    pub(crate) stream: CpalStream,
-}
-
-unsafe impl Send for SendStream {}
-
 /// shared values for a single session
 struct SessionState {
     /// signals the session to initiate a call
@@ -2013,57 +2020,6 @@ impl SessionState {
             download_bandwidth: Default::default(),
             wants_stream: Default::default(),
         }
-    }
-}
-
-/// an AtomicBool Flag which is not loaded from the atomic every time
-struct CachedAtomicFlag {
-    counter: i32,
-    cache: bool,
-    atomic: Arc<AtomicBool>,
-}
-
-impl CachedAtomicFlag {
-    fn new(atomic: &Arc<AtomicBool>) -> Self {
-        Self {
-            counter: 0,
-            cache: atomic.load(Relaxed),
-            atomic: Arc::clone(atomic),
-        }
-    }
-
-    fn load(&mut self) -> bool {
-        if self.counter % 100 == 0 {
-            self.cache = self.atomic.load(Relaxed);
-        }
-
-        self.counter += 1;
-        self.cache
-    }
-}
-
-struct CachedAtomicFloat {
-    counter: i32,
-    cache: f32,
-    atomic: Arc<AtomicF32>,
-}
-
-impl CachedAtomicFloat {
-    fn new(atomic: &Arc<AtomicF32>) -> Self {
-        Self {
-            counter: 0,
-            cache: atomic.load(Relaxed),
-            atomic: Arc::clone(atomic),
-        }
-    }
-
-    fn load(&mut self) -> f32 {
-        if self.counter % 100 == 0 {
-            self.cache = self.atomic.load(Relaxed);
-        }
-
-        self.counter += 1;
-        self.cache
     }
 }
 
@@ -3085,157 +3041,6 @@ fn output_processor(
 
     debug!("Output processor ended");
     Ok(())
-}
-
-/// Produces a resampler if needed
-pub(crate) fn resampler_factory(
-    ratio: f64,
-    channels: usize,
-    size: usize,
-) -> Result<Option<SincFixedIn<f32>>> {
-    if ratio == 1_f64 {
-        Ok(None)
-    } else {
-        // create the resampler if needed
-        Ok(Some(SincFixedIn::<f32>::new(
-            ratio,
-            2.0,
-            RESAMPLER_PARAMETERS,
-            size,
-            channels,
-        )?))
-    }
-}
-
-/// Gets the output device
-pub(crate) async fn get_output_device(
-    output_device: &DeviceName,
-    host: &Arc<Host>,
-) -> Result<Device> {
-    match *output_device.lock().await {
-        Some(ref name) => Ok(host
-            .output_devices()?
-            .find(|device| {
-                if let Ok(ref device_name) = device.name() {
-                    name == device_name
-                } else {
-                    false
-                }
-            })
-            .unwrap_or(
-                host.default_output_device()
-                    .ok_or(ErrorKind::NoOutputDevice)?,
-            )),
-        None => host
-            .default_output_device()
-            .ok_or(ErrorKind::NoOutputDevice.into()),
-    }
-}
-
-/// Returns the percentage of the max input volume in the window compared to the max volume
-async fn level_from_window(receiver: &AsyncReceiver<f32>, max: &mut f32) -> f32 {
-    let mut window = Vec::new();
-
-    while let Ok(Some(rms)) = receiver.try_recv() {
-        window.push(rms);
-    }
-
-    let level = if window.is_empty() {
-        0_f32
-    } else {
-        let local_max = window.into_iter().reduce(f32::max).unwrap_or(0_f32);
-        *max = max.max(local_max);
-
-        if *max != 0_f32 {
-            local_max / *max
-        } else {
-            0_f32
-        }
-    };
-
-    if level < 0.01 {
-        0_f32
-    } else {
-        level
-    }
-}
-
-/// Writes a protobuf message to the stream
-async fn write_message<M: prost::Message, W>(transport: &mut Transport<W>, message: M) -> Result<()>
-where
-    W: AsyncWrite + Unpin,
-    Transport<W>: Sink<Bytes> + Unpin,
-{
-    let len = message.encoded_len(); // get the length of the message
-    let mut buffer = Vec::with_capacity(len);
-
-    message.encode(&mut buffer).unwrap(); // encode the message into the buffer (infallible)
-
-    transport
-        .send(Bytes::from(buffer))
-        .await
-        .map_err(|_| ErrorKind::TransportSend)
-        .map_err(Into::into)
-}
-
-/// Reads a protobuf message from the stream
-async fn read_message<M: prost::Message + Default, R: AsyncRead + Unpin>(
-    transport: &mut Transport<R>,
-) -> Result<M> {
-    if let Some(Ok(buffer)) = transport.next().await {
-        let message = M::decode(&buffer[..])?; // decode the message
-        Ok(message)
-    } else {
-        Err(ErrorKind::TransportRecv.into())
-    }
-}
-
-fn atomic_u32_serialize<S>(
-    value: &Arc<AtomicU32>,
-    serializer: S,
-) -> std::result::Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    let value = value.load(Relaxed);
-    serializer.serialize_u32(value)
-}
-
-fn atomic_u32_deserialize<'de, D>(deserializer: D) -> std::result::Result<Arc<AtomicU32>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = u32::deserialize(deserializer)?;
-    Ok(Arc::new(AtomicU32::new(value)))
-}
-
-mod rwlock_option_recording_config {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use std::sync::Arc;
-    use tokio::sync::RwLock;
-
-    use crate::api::audio_chat::RecordingConfig;
-
-    pub fn serialize<S>(
-        value: &Arc<RwLock<Option<RecordingConfig>>>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let lock = value.blocking_read();
-        lock.serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D>(
-        deserializer: D,
-    ) -> Result<Arc<RwLock<Option<RecordingConfig>>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let inner = Option::<RecordingConfig>::deserialize(deserializer)?;
-        Ok(Arc::new(RwLock::new(inner)))
-    }
 }
 
 #[cfg(test)]

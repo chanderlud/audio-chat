@@ -24,9 +24,9 @@ use wasm_sync::Mutex;
 #[cfg(target_family = "wasm")]
 use wasmtimer::tokio::sleep;
 
-use crate::api::audio_chat::{get_output_device, resampler_factory, DeviceName, SendStream};
+use crate::api::audio_chat::DeviceName;
 use crate::api::error::{Error, ErrorKind};
-use crate::api::utils::{db_to_multiplier, mul};
+use crate::api::utils::{db_to_multiplier, get_output_device, mul, resampler_factory, SendStream};
 use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
 use messages::AudioHeader;
 

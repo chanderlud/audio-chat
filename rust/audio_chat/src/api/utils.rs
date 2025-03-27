@@ -1,5 +1,90 @@
+use crate::api::audio_chat::{DeviceName, Transport};
+use crate::api::error::{Error, ErrorKind};
+use atomic_float::AtomicF32;
+use cpal::traits::{DeviceTrait, HostTrait};
+use cpal::{Device, Host, Stream};
+use flutter_rust_bridge::for_generated::futures::{Sink, SinkExt};
+use kanal::AsyncReceiver;
+use libp2p::bytes::Bytes;
+use libp2p::futures::StreamExt;
+use rubato::{SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
+use serde::Deserialize;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
+use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicBool, AtomicU32};
+use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncWrite};
+
+type Result<T> = std::result::Result<T, Error>;
+
+/// Parameters used for resampling throughout the application
+const RESAMPLER_PARAMETERS: SincInterpolationParameters = SincInterpolationParameters {
+    sinc_len: 256,
+    f_cutoff: 0.95,
+    interpolation: SincInterpolationType::Linear,
+    oversampling_factor: 256,
+    window: WindowFunction::BlackmanHarris2,
+};
+
+/// wraps a cpal stream to unsafely make it send
+pub(crate) struct SendStream {
+    pub(crate) stream: Stream,
+}
+
+/// Safety: SendStream must not be used across awaits
+unsafe impl Send for SendStream {}
+
+/// an AtomicBool Flag which is not loaded from the atomic every time
+pub(crate) struct CachedAtomicFlag {
+    counter: i32,
+    cache: bool,
+    atomic: Arc<AtomicBool>,
+}
+
+impl CachedAtomicFlag {
+    pub(crate) fn new(atomic: &Arc<AtomicBool>) -> Self {
+        Self {
+            counter: 0,
+            cache: atomic.load(Relaxed),
+            atomic: Arc::clone(atomic),
+        }
+    }
+
+    pub(crate) fn load(&mut self) -> bool {
+        if self.counter % 100 == 0 {
+            self.cache = self.atomic.load(Relaxed);
+        }
+
+        self.counter += 1;
+        self.cache
+    }
+}
+
+pub(crate) struct CachedAtomicFloat {
+    counter: i32,
+    cache: f32,
+    atomic: Arc<AtomicF32>,
+}
+
+impl CachedAtomicFloat {
+    pub(crate) fn new(atomic: &Arc<AtomicF32>) -> Self {
+        Self {
+            counter: 0,
+            cache: atomic.load(Relaxed),
+            atomic: Arc::clone(atomic),
+        }
+    }
+
+    pub(crate) fn load(&mut self) -> f32 {
+        if self.counter % 100 == 0 {
+            self.cache = self.atomic.load(Relaxed);
+        }
+
+        self.counter += 1;
+        self.cache
+    }
+}
 
 /// multiplies each element in the slice by the factor, clamping result between -1 and 1
 pub(crate) fn mul(frame: &mut [f32], factor: f32) {
@@ -61,6 +146,162 @@ pub(crate) fn calculate_rms(data: &[f32]) -> f32 {
 /// converts a decibel value to a multiplier
 pub(crate) fn db_to_multiplier(db: f32) -> f32 {
     10_f32.powf(db / 20_f32)
+}
+
+/// Produces a resampler if needed
+pub(crate) fn resampler_factory(
+    ratio: f64,
+    channels: usize,
+    size: usize,
+) -> Result<Option<SincFixedIn<f32>>> {
+    if ratio == 1_f64 {
+        Ok(None)
+    } else {
+        // create the resampler if needed
+        Ok(Some(SincFixedIn::<f32>::new(
+            ratio,
+            2_f64,
+            RESAMPLER_PARAMETERS,
+            size,
+            channels,
+        )?))
+    }
+}
+
+/// Gets the output device
+pub(crate) async fn get_output_device(
+    output_device: &DeviceName,
+    host: &Arc<Host>,
+) -> Result<Device> {
+    match *output_device.lock().await {
+        Some(ref name) => Ok(host
+            .output_devices()?
+            .find(|device| {
+                if let Ok(ref device_name) = device.name() {
+                    name == device_name
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(
+                host.default_output_device()
+                    .ok_or(ErrorKind::NoOutputDevice)?,
+            )),
+        None => host
+            .default_output_device()
+            .ok_or(ErrorKind::NoOutputDevice.into()),
+    }
+}
+
+/// Returns the percentage of the max input volume in the window compared to the max volume
+pub(crate) async fn level_from_window(receiver: &AsyncReceiver<f32>, max: &mut f32) -> f32 {
+    let mut window = Vec::new();
+
+    while let Ok(Some(rms)) = receiver.try_recv() {
+        window.push(rms);
+    }
+
+    let level = if window.is_empty() {
+        0_f32
+    } else {
+        let local_max = window.into_iter().reduce(f32::max).unwrap_or(0_f32);
+        *max = max.max(local_max);
+
+        if *max != 0_f32 {
+            local_max / *max
+        } else {
+            0_f32
+        }
+    };
+
+    if level < 0.01 {
+        0_f32
+    } else {
+        level
+    }
+}
+
+/// Writes a protobuf message to the stream
+pub(crate) async fn write_message<M: prost::Message, W>(
+    transport: &mut Transport<W>,
+    message: M,
+) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+    Transport<W>: Sink<Bytes> + Unpin,
+{
+    let len = message.encoded_len(); // get the length of the message
+    let mut buffer = Vec::with_capacity(len);
+
+    message.encode(&mut buffer).unwrap(); // encode the message into the buffer (infallible)
+
+    transport
+        .send(Bytes::from(buffer))
+        .await
+        .map_err(|_| ErrorKind::TransportSend)
+        .map_err(Into::into)
+}
+
+/// Reads a protobuf message from the stream
+pub(crate) async fn read_message<M: prost::Message + Default, R: AsyncRead + Unpin>(
+    transport: &mut Transport<R>,
+) -> Result<M> {
+    if let Some(Ok(buffer)) = transport.next().await {
+        let message = M::decode(&buffer[..])?; // decode the message
+        Ok(message)
+    } else {
+        Err(ErrorKind::TransportRecv.into())
+    }
+}
+
+pub(crate) fn atomic_u32_serialize<S>(
+    value: &Arc<AtomicU32>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let value = value.load(Relaxed);
+    serializer.serialize_u32(value)
+}
+
+pub(crate) fn atomic_u32_deserialize<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Arc<AtomicU32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = u32::deserialize(deserializer)?;
+    Ok(Arc::new(AtomicU32::new(value)))
+}
+
+pub(crate) mod rwlock_option_recording_config {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    use crate::api::audio_chat::RecordingConfig;
+
+    pub fn serialize<S>(
+        value: &Arc<RwLock<Option<RecordingConfig>>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let lock = value.blocking_read();
+        lock.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<Arc<RwLock<Option<RecordingConfig>>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let inner = Option::<RecordingConfig>::deserialize(deserializer)?;
+        Ok(Arc::new(RwLock::new(inner)))
+    }
 }
 
 #[cfg(test)]
