@@ -33,8 +33,10 @@ use cpal::{Device, Stream as CpalStream};
 use flutter_rust_bridge::for_generated::futures::stream::{SplitSink, SplitStream};
 use flutter_rust_bridge::for_generated::futures::{Sink, SinkExt};
 use flutter_rust_bridge::{frb, spawn, spawn_blocking_with, DartFnFuture};
+#[cfg(not(target_family = "wasm"))]
+use kanal::bounded;
 pub use kanal::AsyncReceiver;
-use kanal::{bounded, bounded_async, unbounded_async, AsyncSender, Receiver, Sender};
+use kanal::{bounded_async, unbounded_async, AsyncSender, Receiver, Sender};
 use libp2p::futures::StreamExt;
 use libp2p::identity::Keypair;
 use libp2p::multiaddr::Protocol;
@@ -131,6 +133,7 @@ pub struct AudioChat {
     network_config: NetworkConfig,
 
     /// Configuration for the screenshare functionality
+    #[allow(dead_code)]
     screenshare_config: ScreenshareConfig,
 
     /// A reference to the object that controls the call overlay
@@ -176,6 +179,7 @@ pub struct AudioChat {
     manager_active: Arc<Mutex<dyn Fn(bool, bool) -> DartFnFuture<()> + Send>>,
 
     /// Called when a screenshare starts
+    #[allow(dead_code)]
     screenshare_started: Arc<Mutex<dyn Fn(DartNotify, bool) -> DartFnFuture<()> + Send>>,
 }
 
@@ -248,9 +252,6 @@ impl AudioChat {
         // start the session manager
         let chat_clone = chat.clone();
         spawn(async move {
-            #[cfg(target_family = "wasm")]
-            return; // session manager will currently fail on wasm
-
             let mut interval = interval(Duration::from_millis(100));
 
             loop {
