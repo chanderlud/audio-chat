@@ -16,7 +16,7 @@ use crate::api::overlay::windows;
 use crate::api::overlay::{BACKGROUND_COLOR, FONT_COLOR, FONT_HEIGHT};
 use flutter_rust_bridge::frb;
 #[cfg(windows)]
-use kanal::OneshotSender;
+use kanal::Sender;
 #[cfg(windows)]
 use log::error;
 #[cfg(windows)]
@@ -95,7 +95,7 @@ impl Overlay {
         BACKGROUND_COLOR.store(background_color, Relaxed);
         FONT_COLOR.store(font_color, Relaxed);
 
-        let (rx, tx) = kanal::oneshot_async();
+        let (rx, tx) = kanal::bounded_async(1);
 
         if enabled {
             let sync_rx = rx.to_sync();
@@ -157,7 +157,7 @@ impl Overlay {
     }
 
     #[cfg(windows)]
-    fn start_overlay(rx: OneshotSender<usize>, width: i32, height: i32, x: i32, y: i32) {
+    fn start_overlay(rx: Sender<usize>, width: i32, height: i32, x: i32, y: i32) {
         std::thread::spawn(move || unsafe {
             match windows::build_window(width, height, x, y) {
                 Ok(hwnd) => {
@@ -358,7 +358,7 @@ impl Overlay {
     /// enables the overlay on windows
     #[cfg(windows)]
     async fn _enable(&self) {
-        let (rx, tx) = kanal::oneshot_async();
+        let (rx, tx) = kanal::bounded_async(1);
         let sync_rx = rx.to_sync();
 
         Self::start_overlay(
