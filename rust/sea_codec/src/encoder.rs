@@ -107,7 +107,7 @@ impl SeaEncoder {
     }
 
     pub fn finalize(&mut self) {
-        self.sender.close();
+        _ = self.sender.close();
         self.state = SeaEncoderState::Finished;
     }
 }

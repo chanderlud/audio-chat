@@ -36,7 +36,7 @@ impl SeaDecoder {
     }
 
     pub fn finalize(&mut self) {
-        self.sender.close();
+        _ = self.sender.close();
     }
 
     pub fn get_header(&self) -> SeaFileHeader {
