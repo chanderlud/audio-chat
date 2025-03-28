@@ -239,7 +239,7 @@ async fn play_sound(
         _ = cancel.notified() => {
             // this causes the stream to begin fading out
             #[cfg(not(target_family = "wasm"))]
-            processed_sender.close();
+            processed_sender.close()?;
             #[cfg(target_family = "wasm")]
             processed_sender.canceled.store(true, Relaxed);
 

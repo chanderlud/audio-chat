@@ -32,6 +32,7 @@ pub(crate) enum ErrorKind {
     Resample(ResampleError),
     KanalSend(kanal::SendError),
     KanalReceive(kanal::ReceiveError),
+    KanalClose(kanal::CloseError),
     Join(JoinError),
     AddrParse(AddrParseError),
     Timeout(Elapsed),
@@ -135,6 +136,14 @@ impl From<kanal::ReceiveError> for Error {
     fn from(err: kanal::ReceiveError) -> Self {
         Self {
             kind: ErrorKind::KanalReceive(err),
+        }
+    }
+}
+
+impl From<kanal::CloseError> for Error {
+    fn from(err: kanal::CloseError) -> Self {
+        Self {
+            kind: ErrorKind::KanalClose(err),
         }
     }
 }
@@ -292,6 +301,7 @@ impl Display for Error {
                 ErrorKind::Resample(ref err) => format!("Resample error: {}", err),
                 ErrorKind::KanalSend(ref err) => format!("Kanal send error: {}", err),
                 ErrorKind::KanalReceive(ref err) => format!("Kanal receive error: {}", err),
+                ErrorKind::KanalClose(ref err) => format!("Kanal close error: {}", err),
                 ErrorKind::Join(ref err) => format!("Join error: {}", err),
                 ErrorKind::Timeout(_) => "The connection timed out".to_string(),
                 #[cfg(target_family = "wasm")]

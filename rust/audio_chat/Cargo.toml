@@ -16,7 +16,7 @@ tokio-util = { version = "0.7", features = ["codec", "compat"] }
 cpal = { version = "0.15", features = ["wasm-bindgen"] }
 prost = "0.13"
 log = "0.4"
-kanal = "0.1.0-pre8"
+kanal = "0.1.1"
 rubato = "0.16"
 nnnoiseless = { version = "0.5", default-features = false }
 atomic_float = "1"
@@ -35,7 +35,7 @@ jni = "0.21"
 ndk-context = "0.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.60", features = ["Win32_Graphics", "Win32_Graphics_GdiPlus", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader"] }
+windows = { version = "0.61", features = ["Win32_Graphics", "Win32_Graphics_GdiPlus", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader"] }
 widestring = "1.1"
 
 [target.'cfg(target_os = "ios")'.dependencies]

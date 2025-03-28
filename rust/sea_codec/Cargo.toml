@@ -10,5 +10,5 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
-kanal = "0.1.0-pre8"
+kanal = "0.1.1"
 bytes = "1"
