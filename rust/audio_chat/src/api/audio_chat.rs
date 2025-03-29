@@ -1754,27 +1754,24 @@ impl AudioChat {
                         return;
                     }
 
-                    #[cfg(not(target_family = "wasm"))]
+                    // unwrap is safe because this mutex should never be poisoned
+                    #[cfg(target_family = "wasm")]
+                    let mut data = web_output.lock().unwrap();
+                    #[cfg(target_family = "wasm")]
+                    let data_len = data.len(); // get the len before moving data
+                    // get enough samples to fill the output if possible
+                    #[cfg(target_family = "wasm")]
+                    let mut samples = data.drain(..(output.len() / output_channels).min(data_len));
+
                     for frame in output.chunks_mut(output_channels) {
+                        #[cfg(not(target_family = "wasm"))]
                         let sample = output_receiver.recv().unwrap_or(0_f32);
+                        #[cfg(target_family = "wasm")]
+                        let sample = samples.next().unwrap_or(0_f32);
 
                         // write the sample to all the channels
                         for channel in frame.iter_mut() {
                             *channel = sample;
-                        }
-                    }
-
-                    #[cfg(target_family = "wasm")]
-                    if let Ok(mut data) = web_output.lock() {
-                        let mut i = 0;
-
-                        let data_len = data.len();
-                        for sample in data.drain(..(output.len() / output_channels).min(data_len)) {
-                            for j in 0..output_channels {
-                                output[i + j] = sample;
-                            }
-
-                            i += output_channels;
                         }
                     }
                 },
