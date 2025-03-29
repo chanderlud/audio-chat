@@ -297,31 +297,31 @@ fn processor(
     for chunk in bytes[44..].chunks(FRAME_SIZE * sample_size * channels_usize) {
         match sample_format {
             SampleFormat::U8 => {
-                let float_u8_max = u8::MAX as f32;
+                let scale = 1_f32 / u8::MAX as f32;
 
                 for (i, sample) in chunk.chunks(channels_usize).enumerate() {
                     for (j, channel) in sample.iter().enumerate() {
-                        let sample = *channel as f32 / float_u8_max;
+                        let sample = *channel as f32 * scale;
                         pre_buf[j][i] = sample;
                     }
                 }
             }
             SampleFormat::I16 => {
-                let float_i16_max = i16::MAX as f32;
+                let scale = 1_f32 / i16::MAX as f32;
 
                 for (i, sample) in chunk.chunks(2 * channels_usize).enumerate() {
                     for (j, channel) in sample.chunks(2).enumerate() {
-                        let sample = i16::from_le_bytes(channel.try_into()?) as f32 / float_i16_max;
+                        let sample = i16::from_le_bytes(channel.try_into()?) as f32 * scale;
                         pre_buf[j][i] = sample;
                     }
                 }
             }
             SampleFormat::I32 => {
-                let float_i32_max = i32::MAX as f32;
+                let scale = 1_f32 / i32::MAX as f32;
 
                 for (i, sample) in chunk.chunks(4 * channels_usize).enumerate() {
                     for (j, channel) in sample.chunks(4).enumerate() {
-                        let sample = i32::from_le_bytes(channel.try_into()?) as f32 / float_i32_max;
+                        let sample = i32::from_le_bytes(channel.try_into()?) as f32 * scale;
                         pre_buf[j][i] = sample;
                     }
                 }

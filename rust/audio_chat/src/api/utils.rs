@@ -1,6 +1,5 @@
 use crate::api::audio_chat::{DeviceName, Transport};
 use crate::api::error::{Error, ErrorKind};
-use atomic_float::AtomicF32;
 use cpal::traits::{DeviceTrait, HostTrait};
 use cpal::{Device, Host, Stream};
 use flutter_rust_bridge::for_generated::futures::{Sink, SinkExt};
@@ -11,8 +10,8 @@ use rubato::{SincFixedIn, SincInterpolationParameters, SincInterpolationType, Wi
 use serde::Deserialize;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
+use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::Relaxed;
-use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -34,57 +33,6 @@ pub(crate) struct SendStream {
 
 /// Safety: SendStream must not be used across awaits
 unsafe impl Send for SendStream {}
-
-/// an AtomicBool Flag which is not loaded from the atomic every time
-pub(crate) struct CachedAtomicFlag {
-    counter: i32,
-    cache: bool,
-    atomic: Arc<AtomicBool>,
-}
-
-impl CachedAtomicFlag {
-    pub(crate) fn new(atomic: &Arc<AtomicBool>) -> Self {
-        Self {
-            counter: 0,
-            cache: atomic.load(Relaxed),
-            atomic: Arc::clone(atomic),
-        }
-    }
-
-    pub(crate) fn load(&mut self) -> bool {
-        if self.counter % 100 == 0 {
-            self.cache = self.atomic.load(Relaxed);
-        }
-
-        self.counter += 1;
-        self.cache
-    }
-}
-
-pub(crate) struct CachedAtomicFloat {
-    counter: i32,
-    cache: f32,
-    atomic: Arc<AtomicF32>,
-}
-
-impl CachedAtomicFloat {
-    pub(crate) fn new(atomic: &Arc<AtomicF32>) -> Self {
-        Self {
-            counter: 0,
-            cache: atomic.load(Relaxed),
-            atomic: Arc::clone(atomic),
-        }
-    }
-
-    pub(crate) fn load(&mut self) -> f32 {
-        if self.counter % 100 == 0 {
-            self.cache = self.atomic.load(Relaxed);
-        }
-
-        self.counter += 1;
-        self.cache
-    }
-}
 
 /// multiplies each element in the slice by the factor, clamping result between -1 and 1
 pub(crate) fn mul(frame: &mut [f32], factor: f32) {

@@ -1741,15 +1741,15 @@ impl AudioChat {
         // get the output channels for chunking the output
         let output_channels = output_config.channels() as usize;
 
-        // a cached reference to the flag for use in the output callback
-        let mut deafened = CachedAtomicFlag::new(&self.deafened);
+        // a reference to the flag for use in the output callback
+        let deafened = Arc::clone(&self.deafened);
         let end_call = Arc::clone(&self.end_call);
 
         let output_stream = SendStream {
             stream: output_device.build_output_stream(
                 &output_config.into(),
                 move |output: &mut [f32], _: &_| {
-                    if deafened.load() {
+                    if deafened.load(Relaxed) {
                         output.fill(0_f32);
                         return;
                     }
@@ -2811,10 +2811,6 @@ fn input_processor(
     // a counter user for short silence detection
     let mut silence_length = 0_u8;
 
-    let mut muted = CachedAtomicFlag::new(&muted);
-    let mut rms_threshold = CachedAtomicFloat::new(&rms_threshold);
-    let mut input_factor = CachedAtomicFloat::new(&input_factor);
-
     loop {
         #[cfg(not(target_family = "wasm"))]
         {
@@ -2859,7 +2855,7 @@ fn input_processor(
         position = 0;
 
         // sends a silence signal if the input is muted
-        if muted.load() {
+        if muted.load(Relaxed) {
             sender.try_send(ProcessorMessage::silence())?;
             continue;
         }
@@ -2879,7 +2875,7 @@ fn input_processor(
         }
 
         // apply the input volume & scale the samples to -32768.0 to 32767.0
-        let factor = max_i16_f32 * input_factor.load();
+        let factor = max_i16_f32 * input_factor.load(Relaxed);
 
         // rescale the samples to -32768.0 to 32767.0 for rnnoise
         target_buffer.iter_mut().for_each(|x| {
@@ -2899,7 +2895,7 @@ fn input_processor(
         rms_sender.send(rms)?; // send the rms to the statistics collector
 
         // check if the frame is below the rms threshold
-        if rms < rms_threshold.load() {
+        if rms < rms_threshold.load(Relaxed) {
             if silence_length < 80 {
                 silence_length += 1; // short silences are ignored
             } else {
@@ -2954,9 +2950,6 @@ fn output_processor(
     // the output for the resampler
     let mut post_buf = [vec![0_f32; post_len]];
 
-    // avoids checking the state in every iteration
-    let mut output_volume = CachedAtomicFloat::new(&output_volume);
-
     while let Ok(message) = receiver.recv() {
         match message {
             ProcessorMessage::Silence => {
@@ -2997,7 +2990,7 @@ fn output_processor(
         }
 
         // apply the output volume
-        mul(pre_buf[0], output_volume.load());
+        mul(pre_buf[0], output_volume.load(Relaxed));
 
         let rms = calculate_rms(pre_buf[0]);
         rms_sender.send(rms)?;
