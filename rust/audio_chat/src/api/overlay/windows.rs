@@ -239,7 +239,10 @@ unsafe fn draw_overlay(hwnd: HWND) {
     let old_bitmap = SelectObject(hdc_mem, h_bitmap.into());
 
     let point_source = POINT { x: 0, y: 0 };
-    let size = SIZE { cx: width, cy: height };
+    let size = SIZE {
+        cx: width,
+        cy: height,
+    };
     let blend = BLENDFUNCTION {
         BlendOp: AC_SRC_OVER as u8,
         BlendFlags: 0,
