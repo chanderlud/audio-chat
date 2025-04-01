@@ -1757,8 +1757,9 @@ impl AudioChat {
                     // unwrap is safe because this mutex should never be poisoned
                     #[cfg(target_family = "wasm")]
                     let mut data = web_output.lock().unwrap();
+                    // get the len before moving data
                     #[cfg(target_family = "wasm")]
-                    let data_len = data.len(); // get the len before moving data
+                    let data_len = data.len();
                     // get enough samples to fill the output if possible
                     #[cfg(target_family = "wasm")]
                     let mut samples = data.drain(..(output.len() / output_channels).min(data_len));
