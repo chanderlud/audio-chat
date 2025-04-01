@@ -1,16 +1,18 @@
-// The following is a modified version of the code found at
-// https://github.com/RustAudio/cpal/issues/813#issuecomment-2413007276
-
 use crate::api::audio_chat::CHANNEL_SIZE;
 use log::error;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
 use wasm_bindgen::{prelude::Closure, JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use wasm_sync::{Condvar, Mutex};
 use web_sys::BlobPropertyBag;
 
+// WebAudioWrapper is based on the code found at
+// https://github.com/RustAudio/cpal/issues/813#issuecomment-2413007276
 pub(crate) struct WebAudioWrapper {
-    pub(crate) pair: Arc<(Mutex<Vec<f32>>, Condvar)>,
+    pair: Arc<(Mutex<Vec<f32>>, Condvar)>,
+    finished: Arc<AtomicBool>,
     pub(crate) sample_rate: f32,
     audio_ctx: web_sys::AudioContext,
     _source: web_sys::MediaStreamAudioSourceNode,
@@ -103,6 +105,7 @@ impl WebAudioWrapper {
 
         Ok(WebAudioWrapper {
             pair,
+            finished: Default::default(),
             sample_rate,
             audio_ctx,
             _source: source,
@@ -121,9 +124,24 @@ impl WebAudioWrapper {
 impl Drop for WebAudioWrapper {
     fn drop(&mut self) {
         let _ = self.audio_ctx.close();
+        self.finished.store(true, Relaxed);
     }
 }
 
 unsafe impl Send for WebAudioWrapper {}
 
 unsafe impl Sync for WebAudioWrapper {}
+
+pub(crate) struct WebInput {
+    pub(crate) pair: Arc<(Mutex<Vec<f32>>, Condvar)>,
+    pub(crate) finished: Arc<AtomicBool>,
+}
+
+impl From<&WebAudioWrapper> for WebInput {
+    fn from(value: &WebAudioWrapper) -> Self {
+        Self {
+            pair: Arc::clone(&value.pair),
+            finished: Arc::clone(&value.finished),
+        }
+    }
+}

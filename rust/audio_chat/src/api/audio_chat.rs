@@ -21,7 +21,7 @@ use crate::api::screenshare;
 use crate::api::screenshare::{Decoder, Encoder};
 use crate::api::utils::*;
 #[cfg(target_family = "wasm")]
-use crate::api::web_audio::WebAudioWrapper;
+use crate::api::web_audio::{WebAudioWrapper, WebInput};
 use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
 use crate::{Behaviour, BehaviourEvent};
 use atomic_float::AtomicF32;
@@ -1578,14 +1578,14 @@ impl AudioChat {
         #[cfg(target_family = "wasm")]
         {
             if let Some(web_input) = self.web_input.lock().await.as_ref() {
-                input_receiver = web_input.pair.clone();
+                input_receiver = WebInput::from(web_input);
                 input_sample_rate = web_input.sample_rate as u32;
             } else {
                 return Err(ErrorKind::NoInputDevice.into());
             }
 
             input_sample_format = String::from("f32");
-            input_channels = 1; // only ever 1 channel
+            input_channels = 1; // only ever 1 channel on web
         }
 
         // load the shared codec config values
@@ -1881,7 +1881,7 @@ impl AudioChat {
 
         #[cfg(target_family = "wasm")]
         {
-            // drop the web input to free resources
+            // drop the web input to free resources & stop input processor
             *self.web_input.lock().await = None;
         }
 
@@ -2764,7 +2764,7 @@ async fn statistics_collector(
 #[allow(clippy::too_many_arguments)]
 fn input_processor(
     #[cfg(not(target_family = "wasm"))] receiver: Receiver<f32>,
-    #[cfg(target_family = "wasm")] web_input: Arc<(wasm_sync::Mutex<Vec<f32>>, wasm_sync::Condvar)>,
+    #[cfg(target_family = "wasm")] web_input: WebInput,
     sender: Sender<ProcessorMessage>,
     sample_rate: f64,
     input_factor: Arc<AtomicF32>,
@@ -2820,12 +2820,15 @@ fn input_processor(
             }
         }
 
-        // TODO this will never end
         #[cfg(target_family = "wasm")]
         {
-            if let Ok(mut data) = web_input.0.lock() {
+            if web_input.finished.load(Relaxed) {
+                break;
+            }
+
+            if let Ok(mut data) = web_input.pair.0.lock() {
                 if data.is_empty() {
-                    if let Ok(d) = web_input.1.wait(data) {
+                    if let Ok(d) = web_input.pair.1.wait_while(data, |i| i.is_empty()) {
                         data = d;
                     } else {
                         break;
@@ -2836,10 +2839,6 @@ fn input_processor(
                 for sample in data.drain(..(in_len - position).min(data_len)) {
                     pre_buf[0][position] = sample;
                     position += 1;
-
-                    if position == in_len {
-                        break;
-                    }
                 }
             } else {
                 break;
