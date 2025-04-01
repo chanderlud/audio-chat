@@ -215,7 +215,7 @@ jobs:
 
       - name: Compile Windows Installer
         if: matrix.info.target == 'windows' && startsWith(github.ref, 'refs/tags/')
-        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+        uses: deep-soft/Inno-Setup-Action@v1.2.2
         with:
           path: windows/installer.iss
 
