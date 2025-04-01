@@ -2828,7 +2828,9 @@ fn input_processor(
 
             if let Ok(mut data) = web_input.pair.0.lock() {
                 if data.is_empty() {
-                    if let Ok(d) = web_input.pair.1.wait_while(data, |i| i.is_empty()) {
+                    let c = |i: &mut Vec<f32>| i.is_empty() && !web_input.finished.load(Relaxed);
+
+                    if let Ok(d) = web_input.pair.1.wait_while(data, c) {
                         data = d;
                     } else {
                         break;

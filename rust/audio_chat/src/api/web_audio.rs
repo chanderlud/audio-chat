@@ -125,6 +125,7 @@ impl Drop for WebAudioWrapper {
     fn drop(&mut self) {
         let _ = self.audio_ctx.close();
         self.finished.store(true, Relaxed);
+        self.pair.1.notify_all();
     }
 }
 
