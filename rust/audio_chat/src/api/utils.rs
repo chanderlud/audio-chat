@@ -1,5 +1,7 @@
 use crate::api::audio_chat::{DeviceName, Transport};
 use crate::api::error::{Error, ErrorKind};
+use bincode::config::standard;
+use bincode::{decode_from_slice, encode_into_slice, Decode, Encode};
 use cpal::traits::{DeviceTrait, HostTrait};
 use cpal::{Device, Host, Stream};
 use flutter_rust_bridge::for_generated::futures::{Sink, SinkExt};
@@ -13,8 +15,6 @@ use std::arch::x86_64::*;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
-use bincode::config::standard;
-use bincode::{decode_from_slice, encode_into_slice, Decode, Encode};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 type Result<T> = std::result::Result<T, Error>;
@@ -174,7 +174,7 @@ pub(crate) async fn level_from_window(receiver: &AsyncReceiver<f32>, max: &mut f
 /// Writes a bincode message to the stream
 pub(crate) async fn write_message<M: Encode, W>(
     transport: &mut Transport<W>,
-    message: M,
+    message: &M,
 ) -> Result<()>
 where
     W: AsyncWrite + Unpin,

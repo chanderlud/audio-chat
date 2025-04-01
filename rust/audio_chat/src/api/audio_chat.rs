@@ -1,6 +1,7 @@
 #![allow(clippy::type_complexity)]
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::mem;
 #[cfg(not(target_family = "wasm"))]
 use std::net::Ipv4Addr;
 pub use std::net::{IpAddr, SocketAddr};
@@ -405,13 +406,21 @@ impl AudioChat {
     }
 
     /// Sends a chat message
-    pub async fn send_chat(&self, message: &ChatMessage) -> std::result::Result<(), DartError> {
+    pub async fn send_chat(&self, message: &mut ChatMessage) -> std::result::Result<(), DartError> {
         if let Some(state) = self.session_states.read().await.get(&message.receiver) {
-            // TODO the attachments are cloned here, can cause issues when large
+            // take the data out of each attachment. the frontend doesn't need it
+            let attachments = message
+                .attachments
+                .iter_mut()
+                .map(|attachment| Attachment {
+                    name: attachment.name.clone(),
+                    data: mem::take(&mut attachment.data),
+                })
+                .collect();
 
             let message = Message::Chat {
                 text: message.text.clone(),
-                attachments: message.attachments.clone(),
+                attachments,
             };
 
             state
@@ -1269,7 +1278,7 @@ impl AudioChat {
 
                 if self.in_call.load(Relaxed) {
                     // do not accept another call if already in one
-                    write_message(transport, Message::Busy).await?;
+                    write_message(transport, &Message::Busy).await?;
                     return Ok(());
                 }
 
@@ -1289,14 +1298,14 @@ impl AudioChat {
                     accepted = accept_handle => {
                         if accepted? {
                             // respond with hello ack if the call is accepted
-                            write_message(transport, Message::HelloAck).await?;
+                            write_message(transport, &Message::HelloAck).await?;
 
                             // start the handshake
                             self.handshake(transport, control, contact.peer_id, message_channel, &state.stream_receiver, state).await?;
                             keep_alive.reset(); // start sending normal keep alive messages
                         } else {
                             // reject the call if not accepted
-                            write_message(transport, Message::Reject).await?;
+                            write_message(transport, &Message::Reject).await?;
                         }
                     }
                     result = read_message::<Message, _>(transport) => {
@@ -1324,7 +1333,7 @@ impl AudioChat {
 
                 // queries the other client for a call
                 let other_ringtone = (self.load_ringtone.lock().await)().await;
-                write_message(transport, Message::Hello { ringtone: other_ringtone }).await?;
+                write_message(transport, &Message::Hello { ringtone: other_ringtone }).await?;
 
                 loop {
                     select! {
@@ -1354,7 +1363,7 @@ impl AudioChat {
                         }
                         _ = self.end_call.notified() => {
                             info!("end call notified while waiting for hello ack");
-                            write_message(transport, Message::Goodbye { reason: None }).await?;
+                            write_message(transport, &Message::Goodbye { reason: None }).await?;
                         }
                     }
                 }
@@ -1368,7 +1377,7 @@ impl AudioChat {
             },
             _ = keep_alive.tick() => {
                 debug!("sending keep alive to {}", contact.nickname);
-                write_message(transport, Message::KeepAlive).await?;
+                write_message(transport, &Message::KeepAlive).await?;
                 Ok(())
             },
         }
@@ -1451,13 +1460,17 @@ impl AudioChat {
                 | ErrorKind::NoOutputDevice
                 | ErrorKind::BuildStream(_)
                 | ErrorKind::StreamConfig(_) => {
-                    let message = Message::Goodbye { reason: Some("Audio device error".to_string()) };
-                    write_message(transport, message).await?;
+                    let message = Message::Goodbye {
+                        reason: Some("Audio device error".to_string()),
+                    };
+                    write_message(transport, &message).await?;
                     Err(error)
                 }
                 _ => {
-                    let message = Message::Goodbye { reason: Some(error.to_string()) };
-                    write_message(transport, message).await?;
+                    let message = Message::Goodbye {
+                        reason: Some(error.to_string()),
+                    };
+                    write_message(transport, &message).await?;
                     Err(error)
                 }
             },
@@ -1610,7 +1623,7 @@ impl AudioChat {
         } else {
             // exchange audio headers using the audio transport
             let transport = audio_transport.as_mut().unwrap();
-            write_message(transport, audio_header).await?;
+            write_message(transport, &audio_header).await?;
             read_message(transport).await?
         };
 
@@ -1854,7 +1867,9 @@ impl AudioChat {
             info!("call controller starting");
 
             match controller_future.await {
-                Ok(message) => (self.call_ended.lock().await)(message.unwrap_or_default(), true).await,
+                Ok(message) => {
+                    (self.call_ended.lock().await)(message.unwrap_or_default(), true).await
+                }
                 Err(error) => match error.kind {
                     ErrorKind::CallEnded => (), // when the call is ended externally, no UI notification is needed
                     _ => (self.call_ended.lock().await)(error.to_string(), false).await,
@@ -2482,7 +2497,7 @@ async fn call_controller(
             // sends messages to the callee
             result = receiver.recv() => {
                 if let Ok(message) = result {
-                    write_message(transport, message).await?;
+                    write_message(transport, &message).await?;
                 } else {
                     // if the channel closes, the call has ended
                     break Ok(None);
@@ -2490,7 +2505,7 @@ async fn call_controller(
             },
             // ends the call
             _ = end_call.notified() => {
-                write_message(transport, Message::Goodbye { reason: None }).await?;
+                write_message(transport, &Message::Goodbye { reason: None }).await?;
                 break Err(ErrorKind::CallEnded.into());
             },
             receiving = state_receiver.recv() => {
@@ -2527,7 +2542,7 @@ async fn call_controller(
                         Message::ConnectionInterrupted
                     };
 
-                    if let Err(error) = write_message(transport, message).await {
+                    if let Err(error) = write_message(transport, &message).await {
                         error!("Error sending connection notification message: {}", error);
                     }
                 } else {

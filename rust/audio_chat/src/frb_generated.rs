@@ -569,7 +569,7 @@ fn wire__crate__api__audio_chat__AudioChat_send_chat_impl(
                                     flutter_rust_bridge::for_generated::LockableOrderInfo::new(
                                         &api_message,
                                         1,
-                                        false,
+                                        true,
                                     ),
                                 ],
                             );
@@ -581,16 +581,16 @@ fn wire__crate__api__audio_chat__AudioChat_send_chat_impl(
                                 }
                                 1 => {
                                     api_message_guard =
-                                        Some(api_message.lockable_decode_async_ref().await)
+                                        Some(api_message.lockable_decode_async_ref_mut().await)
                                 }
                                 _ => unreachable!(),
                             }
                         }
                         let api_that_guard = api_that_guard.unwrap();
-                        let api_message_guard = api_message_guard.unwrap();
+                        let mut api_message_guard = api_message_guard.unwrap();
                         let output_ok = crate::api::audio_chat::AudioChat::send_chat(
                             &*api_that_guard,
-                            &*api_message_guard,
+                            &mut *api_message_guard,
                         )
                         .await?;
                         Ok(output_ok)

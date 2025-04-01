@@ -2,19 +2,34 @@ use bincode::{Decode, Encode};
 
 #[derive(Debug, Decode, Encode, Clone)]
 pub enum Message {
-    Hello { ringtone: Option<Vec<u8>> },
+    Hello {
+        ringtone: Option<Vec<u8>>,
+    },
     HelloAck,
     Reject,
     Busy,
-    Goodbye { reason: Option<String> },
-    Chat { text: String, attachments: Vec<Attachment> },
+    Goodbye {
+        reason: Option<String>,
+    },
+    Chat {
+        text: String,
+        attachments: Vec<Attachment>,
+    },
     ConnectionInterrupted,
     ConnectionRestored,
     KeepAlive,
-    ScreenshareHeader { encoder_name: String },
-    RoomWelcome { peers: Vec<Vec<u8>> },
-    RoomJoin { peer: Vec<u8> },
-    RoomLeave { peer: Vec<u8> },
+    ScreenshareHeader {
+        encoder_name: String,
+    },
+    RoomWelcome {
+        peers: Vec<Vec<u8>>,
+    },
+    RoomJoin {
+        peer: Vec<u8>,
+    },
+    RoomLeave {
+        peer: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Decode, Encode)]

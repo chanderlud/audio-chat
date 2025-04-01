@@ -1,16 +1,10 @@
 mod behaviour;
 mod error;
 
-use std::collections::HashMap;
-use std::mem;
-use std::net::{Ipv4Addr, SocketAddr};
-use std::str::FromStr;
-use std::sync::Arc;
-use std::time::Duration;
-use bincode::{decode_from_slice, encode_into_slice, Decode, Encode};
-use bincode::config::standard;
 use crate::behaviour::{Behaviour, BehaviourEvent};
 use crate::error::{Error, ErrorKind};
+use bincode::config::standard;
+use bincode::{decode_from_slice, encode_into_slice, Decode, Encode};
 use kanal::{bounded_async, unbounded_async, AsyncReceiver, AsyncSender};
 use libp2p::bytes::Bytes;
 use libp2p::futures::stream::{SplitSink, SplitStream};
@@ -22,6 +16,12 @@ use libp2p::{
     autonat, dcutr, identify, noise, ping, tcp, yamux, Multiaddr, PeerId, Stream, StreamProtocol,
 };
 use messages::{AudioHeader, Message};
+use std::collections::HashMap;
+use std::mem;
+use std::net::{Ipv4Addr, SocketAddr};
+use std::str::FromStr;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::RwLock;
@@ -420,7 +420,14 @@ async fn message_receiver(
             Ok(message) => {
                 match message {
                     Message::Goodbye { .. } => {
-                        _ = message_sender.send((identity, Message::RoomJoin { peer: identity.to_bytes() })).await;
+                        _ = message_sender
+                            .send((
+                                identity,
+                                Message::RoomJoin {
+                                    peer: identity.to_bytes(),
+                                },
+                            ))
+                            .await;
                         break;
                     }
 
@@ -438,7 +445,14 @@ async fn message_receiver(
             Err(error) => {
                 println!("message receiver error for {}: {:?}", identity, error);
 
-                _ = message_sender.send((identity, Message::RoomLeave { peer: identity.to_bytes() })).await;
+                _ = message_sender
+                    .send((
+                        identity,
+                        Message::RoomLeave {
+                            peer: identity.to_bytes(),
+                        },
+                    ))
+                    .await;
                 break;
             }
         }
@@ -453,7 +467,6 @@ fn mix_frames(frames: &[&[i16]]) -> &'static [u8] {
     }
 
     let mixed_samples: Vec<i16> = (0..FRAME_SIZE)
-        .into_iter()
         .map(|i| {
             let samples = frames.iter().map(|frame| frame[i]);
             mix_samples(samples)
