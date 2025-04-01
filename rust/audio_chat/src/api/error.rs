@@ -23,7 +23,8 @@ pub(crate) struct Error {
 #[derive(Debug)]
 pub(crate) enum ErrorKind {
     Io(std::io::Error),
-    Decode(prost::DecodeError),
+    Decode(bincode::error::DecodeError),
+    Encode(bincode::error::EncodeError),
     StreamConfig(DefaultStreamConfigError),
     BuildStream(BuildStreamError),
     PlayStream(PlayStreamError),
@@ -76,10 +77,18 @@ impl From<std::io::Error> for Error {
     }
 }
 
-impl From<prost::DecodeError> for Error {
-    fn from(err: prost::DecodeError) -> Self {
+impl From<bincode::error::DecodeError> for Error {
+    fn from(err: bincode::error::DecodeError) -> Self {
         Self {
             kind: ErrorKind::Decode(err),
+        }
+    }
+}
+
+impl From<bincode::error::EncodeError> for Error {
+    fn from(err: bincode::error::EncodeError) -> Self {
+        Self {
+            kind: ErrorKind::Encode(err),
         }
     }
 }
@@ -292,6 +301,7 @@ impl Display for Error {
             match self.kind {
                 ErrorKind::Io(ref err) => format!("IO error: {}", err),
                 ErrorKind::Decode(ref err) => format!("Decode error: {}", err),
+                ErrorKind::Encode(ref err) => format!("Encode error: {}", err),
                 ErrorKind::StreamConfig(ref err) => format!("Stream config error: {}", err),
                 ErrorKind::BuildStream(ref err) => format!("Build stream error: {}", err),
                 ErrorKind::PlayStream(ref err) => format!("Play stream error: {}", err),

@@ -2,10 +2,6 @@
 name = "messages"
 version = "0.0.1"
 edition = "2021"
-build = "build.rs"
 
 [dependencies]
-prost = "0.13"
-
-[build-dependencies]
-prost-build = "0.13"
+bincode = "2"

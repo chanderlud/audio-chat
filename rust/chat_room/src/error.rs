@@ -16,7 +16,7 @@ pub(crate) struct Error {
 #[derive(Debug)]
 pub(crate) enum ErrorKind {
     Io(std::io::Error),
-    Decode(prost::DecodeError),
+    Decode(bincode::error::DecodeError),
     KanalSend(kanal::SendError),
     KanalReceive(kanal::ReceiveError),
     Timeout(Elapsed),
@@ -41,8 +41,8 @@ impl From<std::io::Error> for Error {
     }
 }
 
-impl From<prost::DecodeError> for Error {
-    fn from(err: prost::DecodeError) -> Self {
+impl From<bincode::error::DecodeError> for Error {
+    fn from(err: bincode::error::DecodeError) -> Self {
         Self {
             kind: ErrorKind::Decode(err),
         }

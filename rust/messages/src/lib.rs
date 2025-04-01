@@ -1,4 +1,37 @@
-include!(concat!(env!("OUT_DIR"), "/messages.items.rs"));
+use bincode::{Decode, Encode};
+
+#[derive(Debug, Decode, Encode, Clone)]
+pub enum Message {
+    Hello { ringtone: Option<Vec<u8>> },
+    HelloAck,
+    Reject,
+    Busy,
+    Goodbye { reason: Option<String> },
+    Chat { text: String, attachments: Vec<Attachment> },
+    ConnectionInterrupted,
+    ConnectionRestored,
+    KeepAlive,
+    ScreenshareHeader { encoder_name: String },
+    RoomWelcome { peers: Vec<Vec<u8>> },
+    RoomJoin { peer: Vec<u8> },
+    RoomLeave { peer: Vec<u8> },
+}
+
+#[derive(Debug, Decode, Encode)]
+pub struct AudioHeader {
+    pub channels: u32,
+    pub sample_rate: u32,
+    pub sample_format: String,
+    pub codec_enabled: bool,
+    pub vbr: bool,
+    pub residual_bits: f64,
+}
+
+#[derive(Debug, Decode, Encode, Clone)]
+pub struct Attachment {
+    pub name: String,
+    pub data: Vec<u8>,
+}
 
 impl From<&[u8]> for AudioHeader {
     fn from(value: &[u8]) -> Self {
@@ -25,96 +58,96 @@ impl From<&[u8]> for AudioHeader {
     }
 }
 
-impl Message {
-    pub fn hello(ringtone: Option<Vec<u8>>) -> Self {
-        Self {
-            message: Some(message::Message::Hello(Hello {
-                ringtone: ringtone.unwrap_or_default(),
-            })),
-        }
-    }
-
-    pub fn hello_ack() -> Self {
-        Self {
-            message: Some(message::Message::HelloAck(HelloAck {})),
-        }
-    }
-
-    pub fn reject() -> Self {
-        Self {
-            message: Some(message::Message::Reject(Reject {})),
-        }
-    }
-
-    pub fn busy() -> Self {
-        Self {
-            message: Some(message::Message::Busy(Busy {})),
-        }
-    }
-
-    pub fn goodbye_reason(reason: String) -> Self {
-        Self {
-            message: Some(message::Message::Goodbye(Goodbye { reason })),
-        }
-    }
-
-    pub fn goodbye() -> Self {
-        Self {
-            message: Some(message::Message::Goodbye(Goodbye {
-                reason: String::new(),
-            })),
-        }
-    }
-
-    pub fn chat(text: String, attachments: Vec<Attachment>) -> Self {
-        Self {
-            message: Some(message::Message::Chat(Chat { text, attachments })),
-        }
-    }
-
-    pub fn connection_interrupted() -> Self {
-        Self {
-            message: Some(message::Message::ConnectionInterrupted(
-                ConnectionInterrupted {},
-            )),
-        }
-    }
-
-    pub fn connection_restored() -> Self {
-        Self {
-            message: Some(message::Message::ConnectionRestored(ConnectionRestored {})),
-        }
-    }
-
-    pub fn keep_alive() -> Self {
-        Self {
-            message: Some(message::Message::KeepAlive(KeepAlive {})),
-        }
-    }
-
-    pub fn screenshare(encoder: &str) -> Self {
-        Self {
-            message: Some(message::Message::ScreenshareHeader(ScreenshareHeader {
-                encoder: encoder.to_string(),
-            })),
-        }
-    }
-
-    pub fn room_welcome(peers: Vec<Vec<u8>>) -> Self {
-        Self {
-            message: Some(message::Message::RoomWelcome(RoomWelcome { peers })),
-        }
-    }
-
-    pub fn room_join(peer: Vec<u8>) -> Self {
-        Self {
-            message: Some(message::Message::RoomJoin(RoomJoin { peer })),
-        }
-    }
-
-    pub fn room_leave(peer: Vec<u8>) -> Self {
-        Self {
-            message: Some(message::Message::RoomLeave(RoomLeave { peer })),
-        }
-    }
-}
+// impl Message {
+//     pub fn hello(ringtone: Option<Vec<u8>>) -> Self {
+//         Self {
+//             message: Some(message::Message::Hello(Hello {
+//                 ringtone: ringtone.unwrap_or_default(),
+//             })),
+//         }
+//     }
+//
+//     pub fn hello_ack() -> Self {
+//         Self {
+//             message: Some(message::Message::HelloAck(HelloAck {})),
+//         }
+//     }
+//
+//     pub fn reject() -> Self {
+//         Self {
+//             message: Some(message::Message::Reject(Reject {})),
+//         }
+//     }
+//
+//     pub fn busy() -> Self {
+//         Self {
+//             message: Some(message::Message::Busy(Busy {})),
+//         }
+//     }
+//
+//     pub fn goodbye_reason(reason: String) -> Self {
+//         Self {
+//             message: Some(message::Message::Goodbye(Goodbye { reason })),
+//         }
+//     }
+//
+//     pub fn goodbye() -> Self {
+//         Self {
+//             message: Some(message::Message::Goodbye(Goodbye {
+//                 reason: String::new(),
+//             })),
+//         }
+//     }
+//
+//     pub fn chat(text: String, attachments: Vec<Attachment>) -> Self {
+//         Self {
+//             message: Some(message::Message::Chat(Chat { text, attachments })),
+//         }
+//     }
+//
+//     pub fn connection_interrupted() -> Self {
+//         Self {
+//             message: Some(message::Message::ConnectionInterrupted(
+//                 ConnectionInterrupted {},
+//             )),
+//         }
+//     }
+//
+//     pub fn connection_restored() -> Self {
+//         Self {
+//             message: Some(message::Message::ConnectionRestored(ConnectionRestored {})),
+//         }
+//     }
+//
+//     pub fn keep_alive() -> Self {
+//         Self {
+//             message: Some(message::Message::KeepAlive(KeepAlive {})),
+//         }
+//     }
+//
+//     pub fn screenshare(encoder: &str) -> Self {
+//         Self {
+//             message: Some(message::Message::ScreenshareHeader(ScreenshareHeader {
+//                 encoder: encoder.to_string(),
+//             })),
+//         }
+//     }
+//
+//     pub fn room_welcome(peers: Vec<Vec<u8>>) -> Self {
+//         Self {
+//             message: Some(message::Message::RoomWelcome(RoomWelcome { peers })),
+//         }
+//     }
+//
+//     pub fn room_join(peer: Vec<u8>) -> Self {
+//         Self {
+//             message: Some(message::Message::RoomJoin(RoomJoin { peer })),
+//         }
+//     }
+//
+//     pub fn room_leave(peer: Vec<u8>) -> Self {
+//         Self {
+//             message: Some(message::Message::RoomLeave(RoomLeave { peer })),
+//         }
+//     }
+// }

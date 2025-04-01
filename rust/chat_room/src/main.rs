@@ -7,7 +7,8 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-
+use bincode::{encode_into_slice, Encode};
+use bincode::config::standard;
 use crate::behaviour::{Behaviour, BehaviourEvent};
 use crate::error::{Error, ErrorKind};
 use kanal::{bounded_async, unbounded_async, AsyncReceiver, AsyncSender};
@@ -21,8 +22,6 @@ use libp2p::{
     autonat, dcutr, identify, noise, ping, tcp, yamux, Multiaddr, PeerId, Stream, StreamProtocol,
 };
 use messages::{AudioHeader, Message};
-use rayon::iter::ParallelIterator;
-use rayon::prelude::IntoParallelIterator;
 use tokio::fs::File;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::RwLock;
@@ -244,7 +243,7 @@ async fn controller(stream_receiver: AsyncReceiver<(PeerId, Stream)>) {
                         tokio::spawn(message_receiver(peer, sender.clone(), read));
 
                         for writer in writer_map.values_mut() {
-                            let message = Message::room_join(peer.to_bytes());
+                            let message = Message::RoomJoin { peer: peer.to_bytes() };
 
                             if write_message(writer, message).await.is_err() {
                                 println!("failed to send room join message to {}", peer);
@@ -252,7 +251,7 @@ async fn controller(stream_receiver: AsyncReceiver<(PeerId, Stream)>) {
                         }
 
                         let peers = writer_map.keys().map(|id: &PeerId| id.to_bytes()).collect();
-                        let message = Message::room_welcome(peers);
+                        let message = Message::RoomWelcome { peers };
 
                         if write_message(&mut write, message).await.is_err() {
                             println!("failed to send room welcome message to {}", peer);
@@ -419,16 +418,13 @@ async fn message_receiver(
     loop {
         match read_message::<Message, _>(&mut socket).await {
             Ok(message) => {
-                match message.message {
-                    Some(messages::message::Message::Goodbye(_)) => {
-                        let message = Message::room_join(identity.to_bytes());
-                        _ = message_sender.send((identity, message)).await;
+                match message {
+                    Message::Goodbye { .. } => {
+                        _ = message_sender.send((identity, Message::RoomJoin { peer: identity.to_bytes() })).await;
                         break;
                     }
-                    Some(
-                        messages::message::Message::ConnectionRestored(_)
-                        | messages::message::Message::ConnectionInterrupted(_),
-                    ) => {
+
+                    Message::ConnectionRestored | Message::ConnectionInterrupted => {
                         continue;
                     }
                     _ => (),
@@ -442,8 +438,7 @@ async fn message_receiver(
             Err(error) => {
                 println!("message receiver error for {}: {:?}", identity, error);
 
-                let message = Message::room_leave(identity.to_bytes());
-                _ = message_sender.send((identity, message)).await;
+                _ = message_sender.send((identity, Message::RoomLeave { peer: identity.to_bytes() })).await;
                 break;
             }
         }
@@ -458,7 +453,7 @@ fn mix_frames(frames: &[&[i16]]) -> &'static [u8] {
     }
 
     let mixed_samples: Vec<i16> = (0..FRAME_SIZE)
-        .into_par_iter()
+        .into_iter()
         .map(|i| {
             let samples = frames.iter().map(|frame| frame[i]);
             mix_samples(samples)
@@ -498,18 +493,16 @@ fn mix_samples(samples: impl Iterator<Item = i16>) -> i16 {
 }
 
 /// Writes a protobuf message to the stream
-async fn write_message<M: prost::Message, W>(
-    transport: &mut SplitSink<Transport<W>, Bytes>,
+async fn write_message<M: Encode, W>(
+    transport: &mut Transport<W>,
     message: M,
 ) -> Result<()>
 where
     W: AsyncWrite + Unpin,
-    SplitSink<Transport<W>, Bytes>: Sink<Bytes> + Unpin,
+    Transport<W>: Sink<Bytes> + Unpin,
 {
-    let len = message.encoded_len(); // get the length of the message
-    let mut buffer = Vec::with_capacity(len);
-
-    message.encode(&mut buffer).unwrap(); // encode the message into the buffer (infallible)
+    let mut buffer = Vec::new();
+    encode_into_slice(message, &mut buffer, standard())?;
 
     transport
         .send(Bytes::from(buffer))
