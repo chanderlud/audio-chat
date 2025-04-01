@@ -126,50 +126,45 @@ unsafe extern "system" fn window_proc(
     }
 }
 
-// TODO pretty sure this leaks memory too
-// TODO pre measure text to determine the necessary width
 unsafe fn draw_overlay(hwnd: HWND) {
     let hdc_screen = GetDC(None);
     let hdc_mem = CreateCompatibleDC(Some(hdc_screen));
 
     let mut rect: RECT = mem::zeroed();
-    // get the client area
     _ = GetClientRect(hwnd, &mut rect);
 
     let width = rect.right - rect.left;
     let height = rect.bottom - rect.top;
 
-    let mut bitmap = mem::zeroed();
+    let mut bitmap = std::ptr::null_mut();
     GdipCreateBitmapFromScan0(width, height, 0, 925707, None, &mut bitmap);
 
-    let mut graphics = mem::zeroed();
+    let mut graphics = std::ptr::null_mut();
     GdipGetImageGraphicsContext(bitmap.cast(), &mut graphics);
-
-    // set the font rendering to smooth
     GdipSetTextRenderingHint(graphics, TextRenderingHint(4));
 
-    let mut background_brush = mem::zeroed();
+    let mut background_brush = std::ptr::null_mut();
     GdipCreateSolidFill(BACKGROUND_COLOR.load(Relaxed), &mut background_brush);
-
     GdipFillRectangle(
         graphics,
         background_brush.cast(),
-        0_f32,
-        0_f32,
+        0.0,
+        0.0,
         width as f32,
         height as f32,
     );
+    GdipDeleteBrush(background_brush.cast());
 
     let font_name = U16CString::from_str("Inconsolata").unwrap();
 
-    let mut font_family = mem::zeroed();
+    let mut font_family = std::ptr::null_mut();
     GdipCreateFontFamilyFromName(
         Some(&PCWSTR::from_raw(font_name.as_ptr())),
         null_mut(),
         &mut font_family,
     );
 
-    let mut font = mem::zeroed();
+    let mut font = std::ptr::null_mut();
     GdipCreateFont(
         font_family,
         FONT_HEIGHT.load(Relaxed) as f32,
@@ -177,13 +172,14 @@ unsafe fn draw_overlay(hwnd: HWND) {
         Unit(0),
         &mut font,
     );
+    GdipDeleteFontFamily(font_family);
 
-    let mut string_format = mem::zeroed();
+    let mut string_format = std::ptr::null_mut();
     GdipStringFormatGetGenericDefault(&mut string_format);
 
-    let bounding = draw_text(
+    let mut bounding = draw_text(
         "Latency:",
-        (0_f32, 0_f32),
+        (0.0, 0.0),
         FONT_COLOR.load(Relaxed),
         graphics,
         font,
@@ -191,20 +187,19 @@ unsafe fn draw_overlay(hwnd: HWND) {
     );
 
     let latency = LATENCY.load(Relaxed);
-    let color = percent_to_color(latency as f64 / 200_f64);
-
-    let bounding = draw_text(
-        latency.to_string().as_str(),
-        (bounding.Width, 0_f32),
+    let color = percent_to_color(latency as f64 / 200.0);
+    bounding = draw_text(
+        &latency.to_string(),
+        (bounding.Width, 0.0),
         color.argb(),
         graphics,
         font,
         string_format,
     );
 
-    let bounding = draw_text(
+    bounding = draw_text(
         "Loss:",
-        (bounding.X + bounding.Width + 30_f32, 0_f32),
+        (bounding.X + bounding.Width + 30.0, 0.0),
         FONT_COLOR.load(Relaxed),
         graphics,
         font,
@@ -213,10 +208,9 @@ unsafe fn draw_overlay(hwnd: HWND) {
 
     let loss = LOSS.load(Relaxed);
     let color = percent_to_color(loss);
-
-    let bounding = draw_text(
-        &format!("{:.2}%", loss * 100_f64),
-        (bounding.X + bounding.Width, 0_f32),
+    bounding = draw_text(
+        &format!("{:.2}%", loss * 100.0),
+        (bounding.X + bounding.Width, 0.0),
         color.argb(),
         graphics,
         font,
@@ -224,9 +218,9 @@ unsafe fn draw_overlay(hwnd: HWND) {
     );
 
     if !CONNECTED.load(Relaxed) {
-        draw_text(
+        _ = draw_text(
             "Disconnected",
-            (bounding.X + bounding.Width + 30_f32, 0_f32),
+            (bounding.X + bounding.Width + 30.0, 0.0),
             BAD_COLOR.argb(),
             graphics,
             font,
@@ -234,17 +228,18 @@ unsafe fn draw_overlay(hwnd: HWND) {
         );
     }
 
-    let mut h_bitmap = mem::zeroed();
+    GdipDeleteFont(font);
+    GdipDeleteStringFormat(string_format);
+    GdipDeleteGraphics(graphics);
+    GdipDisposeImage(bitmap.cast());
+
+    let mut h_bitmap = std::ptr::null_mut();
     GdipCreateHBITMAPFromBitmap(bitmap, &mut h_bitmap, 0);
 
     let old_bitmap = SelectObject(hdc_mem, h_bitmap.into());
 
     let point_source = POINT { x: 0, y: 0 };
-    let size = SIZE {
-        cx: width,
-        cy: height,
-    };
-
+    let size = SIZE { cx: width, cy: height };
     let blend = BLENDFUNCTION {
         BlendOp: AC_SRC_OVER as u8,
         BlendFlags: 0,
@@ -265,8 +260,8 @@ unsafe fn draw_overlay(hwnd: HWND) {
     );
 
     SelectObject(hdc_mem, old_bitmap);
-    _ = DeleteObject(HGDIOBJ::from(h_bitmap));
-    _ = DeleteDC(hdc_mem);
+    DeleteObject(h_bitmap.into());
+    DeleteDC(hdc_mem);
     ReleaseDC(None, hdc_screen);
 }
 
@@ -278,14 +273,14 @@ unsafe fn draw_text(
     font: *mut GpFont,
     string_format: *mut GpStringFormat,
 ) -> RectF {
-    let mut brush = mem::zeroed();
+    let mut brush = std::ptr::null_mut();
     GdipCreateSolidFill(color, &mut brush);
 
     let point_f = RectF {
         X: position.0,
         Y: position.1,
-        Width: 0_f32,
-        Height: 0_f32,
+        Width: 0.0,
+        Height: 0.0,
     };
 
     let message = U16CString::from_str(text).unwrap();
@@ -313,5 +308,6 @@ unsafe fn draw_text(
         brush.cast(),
     );
 
+    GdipDeleteBrush(brush.cast());
     bounding_box
 }

@@ -90,7 +90,6 @@ impl Overlay {
         background_color: u32,
         font_color: u32,
     ) -> Overlay {
-        // TODO make this no longer required somehow
         FONT_HEIGHT.store(font_height, Relaxed);
         BACKGROUND_COLOR.store(background_color, Relaxed);
         FONT_COLOR.store(font_color, Relaxed);
