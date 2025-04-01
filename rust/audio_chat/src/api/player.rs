@@ -1,5 +1,7 @@
 use atomic_float::AtomicF32;
 use core::time::Duration;
+use std::mem;
+
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{Host, SampleFormat};
 use flutter_rust_bridge::spawn;
@@ -9,8 +11,6 @@ use kanal::{bounded, Sender};
 use log::error;
 use nnnoiseless::FRAME_SIZE;
 use rubato::Resampler;
-#[cfg(not(target_family = "wasm"))]
-use std::mem;
 #[cfg(target_family = "wasm")]
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::Relaxed;
@@ -20,7 +20,7 @@ use tokio::sync::Notify;
 #[cfg(not(target_family = "wasm"))]
 use tokio::time::sleep;
 #[cfg(target_family = "wasm")]
-use wasm_sync::Mutex;
+use wasm_sync::{Condvar, Mutex};
 #[cfg(target_family = "wasm")]
 use wasmtimer::tokio::sleep;
 
@@ -106,6 +106,7 @@ impl SoundHandle {
 struct AudioBuffer {
     buffer: Mutex<Vec<f32>>,
     canceled: AtomicBool,
+    condvar: Condvar,
 }
 
 /// Internal play sound function
@@ -144,11 +145,13 @@ async fn play_sound(
     #[cfg(not(target_family = "wasm"))]
     let (processed_sender, processed_receiver) = bounded::<Vec<f32>>(1_000);
 
+    // handles synchronization between the processor and output stream
     #[cfg(target_family = "wasm")]
     let processed_sender: Arc<AudioBuffer> = Default::default();
     #[cfg(target_family = "wasm")]
     let audio_buffer = processed_sender.clone();
 
+    // on web the output notifies this thread when playback has finished
     #[cfg(target_family = "wasm")]
     let output_finished = Arc::new(Notify::new());
     #[cfg(target_family = "wasm")]
@@ -168,7 +171,10 @@ async fn play_sound(
             &output_config.into(),
             move |output: &mut [f32], _: &_| {
                 #[cfg(target_family = "wasm")]
-                let mut data = audio_buffer.buffer.lock().unwrap();
+                let mut data = {
+                    audio_buffer.condvar.notify_one();
+                    audio_buffer.buffer.lock().unwrap()
+                };
 
                 for frame in output.chunks_mut(output_channels) {
                     #[cfg(not(target_family = "wasm"))]
@@ -177,7 +183,17 @@ async fn play_sound(
                     let canceled = samples_result.is_err();
 
                     #[cfg(target_family = "wasm")]
-                    let canceled = audio_buffer.canceled.load(Relaxed);
+                    let canceled = {
+                        let mut canceled = audio_buffer.canceled.load(Relaxed);
+
+                        if !canceled && data.is_empty() {
+                            output_finished_clone.notify_one();
+                            audio_buffer.canceled.store(true, Relaxed);
+                            canceled = true;
+                        }
+
+                        canceled
+                    };
 
                     if canceled {
                         // fade each sample
@@ -189,12 +205,6 @@ async fn play_sound(
                         frame.copy_from_slice(&last_samples);
                         i += 1; // advance the counter
                     } else {
-                        #[cfg(target_family = "wasm")]
-                        if data.is_empty() {
-                            output_finished_clone.notify_one();
-                            return;
-                        }
-
                         // this unwrap is safe as the result was already checked for is_err
                         #[cfg(not(target_family = "wasm"))]
                         let samples = samples_result.unwrap();
@@ -247,9 +257,13 @@ async fn play_sound(
             sleep(Duration::from_secs(1)).await;
         }
         _ = processor_future => {
-            // on web, we need to wait for the output to finish playing before continuing
             #[cfg(target_family = "wasm")]
-            output_finished.notified().await;
+            {
+                // on web, we need to wait for the output to finish playing before continuing
+                output_finished.notified().await;
+                // delay allows for fade out
+                sleep(Duration::from_secs(1)).await;
+            }
         }
     }
 
@@ -392,23 +406,35 @@ fn processor(
                 let buffer = mem::take(&mut out_buf);
                 processed_sender.send(buffer)?;
             }
-        }
 
-        // send the entire frame to the output
-        #[cfg(target_family = "wasm")]
-        {
-            if audio_buffer.canceled.load(Relaxed) {
-                break;
-            }
+            #[cfg(target_family = "wasm")]
+            {
+                if audio_buffer.canceled.load(Relaxed) {
+                    break;
+                }
 
-            if let Ok(mut data) = audio_buffer.buffer.lock() {
-                data.append(&mut out_buf);
-            } else {
-                error!("failed to lock audio buffer");
-                break;
+                // enforce bounding on the buffer
+                if let Ok(data) = audio_buffer.buffer.lock() {
+                    drop(
+                        audio_buffer
+                            .condvar
+                            .wait_while(data, |d| d.len() > (10_000 * channels_usize)),
+                    );
+                }
+
+                if let Ok(mut data) = audio_buffer.buffer.lock() {
+                    let mut buffer = mem::take(&mut out_buf);
+                    data.append(&mut buffer);
+                } else {
+                    error!("failed to lock audio buffer");
+                    break;
+                }
             }
         }
     }
+
+    #[cfg(not(target_family = "wasm"))]
+    processed_sender.close()?;
 
     Ok(())
 }
