@@ -1,7 +1,7 @@
 use crate::api::audio_chat::{DeviceName, Transport};
 use crate::api::error::{Error, ErrorKind};
 use bincode::config::standard;
-use bincode::{decode_from_slice, encode_into_slice, Decode, Encode};
+use bincode::{decode_from_slice, encode_to_vec, Decode, Encode};
 use cpal::traits::{DeviceTrait, HostTrait};
 use cpal::{Device, Host, Stream};
 use flutter_rust_bridge::for_generated::futures::{Sink, SinkExt};
@@ -180,8 +180,7 @@ where
     W: AsyncWrite + Unpin,
     Transport<W>: Sink<Bytes> + Unpin,
 {
-    let mut buffer = Vec::new();
-    encode_into_slice(message, &mut buffer, standard())?;
+    let buffer = encode_to_vec(message, standard())?;
 
     transport
         .send(Bytes::from(buffer))

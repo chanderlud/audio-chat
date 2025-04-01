@@ -2186,7 +2186,7 @@ impl ScreenshareConfig {
     pub async fn update_recording_config(
         &self,
         encoder: String,
-        _device: String,
+        device: String,
         bitrate: u32,
         framerate: u32,
         height: Option<u32>,
@@ -2195,8 +2195,8 @@ impl ScreenshareConfig {
 
         let recording_config = RecordingConfig {
             encoder,
-            // TODO do something with the device names idk
-            device: screenshare::Device::DesktopDuplication,
+            device: screenshare::Device::from_str(&device)
+                .map_err(|_| "Invalid device".to_string())?,
             bitrate,
             framerate,
             height,

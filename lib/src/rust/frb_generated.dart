@@ -5803,7 +5803,7 @@ class OverlayImpl extends RustOpaque implements Overlay {
       RustLib.instance.api.crateApiOverlayOverlayOverlayMoveOverlay(
           that: this, x: x, y: y, width: width, height: height);
 
-  /// non-windows platforms don't have an overlay
+  /// access the screen resolution for overlay positioning in the front end
   (int, int) screenResolution() =>
       RustLib.instance.api.crateApiOverlayOverlayOverlayScreenResolution(
         that: this,

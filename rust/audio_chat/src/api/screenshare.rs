@@ -187,6 +187,20 @@ impl Display for Device {
     }
 }
 
+impl FromStr for Device {
+    type Err = ();
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(match s {
+            "DirectShow" => Self::DirectShow,
+            "GDI Grab" => Self::GdiGrab,
+            "Desktop Duplication" => Self::DesktopDuplication,
+            "X11 Grab" => Self::X11Grab,
+            _ => Self::AVFoundation(Vec::new()), // TODO handle the devices
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub(crate) enum Encoder {
     Libx264,

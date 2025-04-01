@@ -3050,28 +3050,28 @@ fn wire__crate__api__overlay__overlay__Overlay_new_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api__enabled = <bool>::sse_decode(&mut deserializer);
-            let api__x = <i32>::sse_decode(&mut deserializer);
-            let api__y = <i32>::sse_decode(&mut deserializer);
-            let api__width = <i32>::sse_decode(&mut deserializer);
-            let api__height = <i32>::sse_decode(&mut deserializer);
-            let api__font_height = <i32>::sse_decode(&mut deserializer);
-            let api__background_color = <u32>::sse_decode(&mut deserializer);
-            let api__font_color = <u32>::sse_decode(&mut deserializer);
+            let api_enabled = <bool>::sse_decode(&mut deserializer);
+            let api_x = <i32>::sse_decode(&mut deserializer);
+            let api_y = <i32>::sse_decode(&mut deserializer);
+            let api_width = <i32>::sse_decode(&mut deserializer);
+            let api_height = <i32>::sse_decode(&mut deserializer);
+            let api_font_height = <i32>::sse_decode(&mut deserializer);
+            let api_background_color = <u32>::sse_decode(&mut deserializer);
+            let api_font_color = <u32>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, ()>(
                     (move || async move {
                         let output_ok = Result::<_, ()>::Ok(
                             crate::api::overlay::overlay::Overlay::new(
-                                api__enabled,
-                                api__x,
-                                api__y,
-                                api__width,
-                                api__height,
-                                api__font_height,
-                                api__background_color,
-                                api__font_color,
+                                api_enabled,
+                                api_x,
+                                api_y,
+                                api_width,
+                                api_height,
+                                api_font_height,
+                                api_background_color,
+                                api_font_color,
                             )
                             .await,
                         )?;
@@ -3852,7 +3852,7 @@ fn wire__crate__api__audio_chat__ScreenshareConfig_update_recording_config_impl(
                 flutter_rust_bridge::for_generated::RustAutoOpaqueInner<ScreenshareConfig>,
             >>::sse_decode(&mut deserializer);
             let api_encoder = <String>::sse_decode(&mut deserializer);
-            let api__device = <String>::sse_decode(&mut deserializer);
+            let api_device = <String>::sse_decode(&mut deserializer);
             let api_bitrate = <u32>::sse_decode(&mut deserializer);
             let api_framerate = <u32>::sse_decode(&mut deserializer);
             let api_height = <Option<u32>>::sse_decode(&mut deserializer);
@@ -3881,7 +3881,7 @@ fn wire__crate__api__audio_chat__ScreenshareConfig_update_recording_config_impl(
                             crate::api::audio_chat::ScreenshareConfig::update_recording_config(
                                 &*api_that_guard,
                                 api_encoder,
-                                api__device,
+                                api_device,
                                 api_bitrate,
                                 api_framerate,
                                 api_height,

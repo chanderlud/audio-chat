@@ -4,7 +4,7 @@ mod error;
 use crate::behaviour::{Behaviour, BehaviourEvent};
 use crate::error::{Error, ErrorKind};
 use bincode::config::standard;
-use bincode::{decode_from_slice, encode_into_slice, Decode, Encode};
+use bincode::{decode_from_slice, encode_to_vec, Decode, Encode};
 use kanal::{bounded_async, unbounded_async, AsyncReceiver, AsyncSender};
 use libp2p::bytes::Bytes;
 use libp2p::futures::stream::{SplitSink, SplitStream};
@@ -513,8 +513,7 @@ async fn write_message<M: Encode, W>(
 where
     W: AsyncWrite + Unpin,
 {
-    let mut buffer = Vec::new();
-    encode_into_slice(message, &mut buffer, standard())?;
+    let buffer = encode_to_vec(message, standard())?;
 
     transport
         .send(Bytes::from(buffer))
