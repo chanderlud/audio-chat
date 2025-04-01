@@ -18,10 +18,11 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::Graphics::GdiPlus::{
     GdipCreateBitmapFromScan0, GdipCreateFont, GdipCreateFontFamilyFromName,
-    GdipCreateHBITMAPFromBitmap, GdipCreateSolidFill, GdipDrawString, GdipFillRectangle,
-    GdipGetImageGraphicsContext, GdipMeasureString, GdipSetTextRenderingHint,
-    GdipStringFormatGetGenericDefault, GdiplusStartup, GdiplusStartupInput, GpFont, GpGraphics,
-    GpStringFormat, RectF, TextRenderingHint, Unit,
+    GdipCreateHBITMAPFromBitmap, GdipCreateSolidFill, GdipDeleteBrush, GdipDeleteBrush,
+    GdipDeleteFont, GdipDeleteFontFamily, GdipDeleteGraphics, GdipDeleteStringFormat,
+    GdipDisposeImage, GdipDrawString, GdipFillRectangle, GdipGetImageGraphicsContext,
+    GdipMeasureString, GdipSetTextRenderingHint, GdipStringFormatGetGenericDefault, GdiplusStartup,
+    GdiplusStartupInput, GpFont, GpGraphics, GpStringFormat, RectF, TextRenderingHint, Unit,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleA;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -233,8 +234,8 @@ unsafe fn draw_overlay(hwnd: HWND) {
     GdipDeleteGraphics(graphics);
     GdipDisposeImage(bitmap.cast());
 
-    let mut h_bitmap = std::ptr::null_mut();
-    GdipCreateHBITMAPFromBitmap(bitmap, &mut h_bitmap, 0);
+    let mut h_bitmap: *mut HBITMAP = std::ptr::null_mut();
+    GdipCreateHBITMAPFromBitmap(bitmap, h_bitmap, 0);
 
     let old_bitmap = SelectObject(hdc_mem, h_bitmap.into());
 
