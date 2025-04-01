@@ -778,7 +778,7 @@ impl AudioChat {
                                 (self.screenshare_started.lock().await)(dart_stop, false).await;
                             }
                         } else if let Some(config) = self.screenshare_config.recording_config.read().await.clone() {
-                            let message = Message::ScreenshareHeader { encoder_name: config.encoder.into() };
+                            let message = Message::ScreenshareHeader { encoder_name: config.encoder.to_string() };
 
                             state
                                 .message_sender
@@ -1384,8 +1384,6 @@ impl AudioChat {
         stream_receiver: &AsyncReceiver<Stream>,
         state: &Arc<SessionState>,
     ) -> Result<()> {
-        let config = bincode::config::standard();
-
         // change the session state to accept incoming audio streams
         state.wants_stream.store(true, Relaxed);
 

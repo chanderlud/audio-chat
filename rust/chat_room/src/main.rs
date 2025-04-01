@@ -7,14 +7,14 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use bincode::{encode_into_slice, Encode};
+use bincode::{decode_from_slice, encode_into_slice, Decode, Encode};
 use bincode::config::standard;
 use crate::behaviour::{Behaviour, BehaviourEvent};
 use crate::error::{Error, ErrorKind};
 use kanal::{bounded_async, unbounded_async, AsyncReceiver, AsyncSender};
 use libp2p::bytes::Bytes;
 use libp2p::futures::stream::{SplitSink, SplitStream};
-use libp2p::futures::{Sink, SinkExt, StreamExt};
+use libp2p::futures::{SinkExt, StreamExt};
 use libp2p::identity::Keypair;
 use libp2p::multiaddr::Protocol;
 use libp2p::swarm::SwarmEvent;
@@ -494,12 +494,11 @@ fn mix_samples(samples: impl Iterator<Item = i16>) -> i16 {
 
 /// Writes a protobuf message to the stream
 async fn write_message<M: Encode, W>(
-    transport: &mut Transport<W>,
+    transport: &mut SplitSink<Transport<W>, Bytes>,
     message: M,
 ) -> Result<()>
 where
     W: AsyncWrite + Unpin,
-    Transport<W>: Sink<Bytes> + Unpin,
 {
     let mut buffer = Vec::new();
     encode_into_slice(message, &mut buffer, standard())?;
@@ -512,11 +511,11 @@ where
 }
 
 /// Reads a protobuf message from the stream
-async fn read_message<M: prost::Message + Default, R: AsyncRead + Unpin>(
+async fn read_message<M: Decode<()>, R: AsyncRead + Unpin>(
     transport: &mut SplitStream<Transport<R>>,
 ) -> Result<M> {
     if let Some(Ok(buffer)) = transport.next().await {
-        let message = M::decode(&buffer[..])?; // decode the message
+        let (message, _) = decode_from_slice(&buffer[..], standard())?; // decode the message
         Ok(message)
     } else {
         Err(ErrorKind::TransportRecv.into())

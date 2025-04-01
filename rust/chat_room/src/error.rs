@@ -17,6 +17,7 @@ pub(crate) struct Error {
 pub(crate) enum ErrorKind {
     Io(std::io::Error),
     Decode(bincode::error::DecodeError),
+    Encode(bincode::error::EncodeError),
     KanalSend(kanal::SendError),
     KanalReceive(kanal::ReceiveError),
     Timeout(Elapsed),
@@ -45,6 +46,14 @@ impl From<bincode::error::DecodeError> for Error {
     fn from(err: bincode::error::DecodeError) -> Self {
         Self {
             kind: ErrorKind::Decode(err),
+        }
+    }
+}
+
+impl From<bincode::error::EncodeError> for Error {
+    fn from(err: bincode::error::EncodeError) -> Self {
+        Self {
+            kind: ErrorKind::Encode(err),
         }
     }
 }
@@ -143,6 +152,7 @@ impl Display for Error {
             match self.kind {
                 ErrorKind::Io(ref err) => format!("IO error: {}", err),
                 ErrorKind::Decode(ref err) => format!("Decode error: {}", err),
+                ErrorKind::Encode(ref err) => format!("Encode error: {}", err),
                 ErrorKind::KanalSend(ref err) => format!("Kanal send error: {}", err),
                 ErrorKind::KanalReceive(ref err) => format!("Kanal receive error: {}", err),
                 ErrorKind::Timeout(_) => "The connection timed out".to_string(),

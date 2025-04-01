@@ -13,7 +13,7 @@ use std::arch::x86_64::*;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
-use bincode::config::{standard, Config};
+use bincode::config::standard;
 use bincode::{decode_from_slice, encode_into_slice, Decode, Encode};
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -191,7 +191,7 @@ where
 }
 
 /// Reads a bincode message from the stream
-pub(crate) async fn read_message<M: Decode<Context>, R: AsyncRead + Unpin>(
+pub(crate) async fn read_message<M: Decode<()>, R: AsyncRead + Unpin>(
     transport: &mut Transport<R>,
 ) -> Result<M> {
     if let Some(Ok(buffer)) = transport.next().await {
