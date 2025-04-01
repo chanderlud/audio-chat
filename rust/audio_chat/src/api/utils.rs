@@ -1,5 +1,7 @@
 use crate::api::audio_chat::{DeviceName, Transport};
 use crate::api::error::{Error, ErrorKind};
+use bincode::config::standard;
+use bincode::{decode_from_slice, encode_into_slice, Decode, Encode};
 use cpal::traits::{DeviceTrait, HostTrait};
 use cpal::{Device, Host, Stream};
 use flutter_rust_bridge::for_generated::futures::{Sink, SinkExt};
@@ -169,19 +171,17 @@ pub(crate) async fn level_from_window(receiver: &AsyncReceiver<f32>, max: &mut f
     }
 }
 
-/// Writes a protobuf message to the stream
-pub(crate) async fn write_message<M: prost::Message, W>(
+/// Writes a bincode message to the stream
+pub(crate) async fn write_message<M: Encode, W>(
     transport: &mut Transport<W>,
-    message: M,
+    message: &M,
 ) -> Result<()>
 where
     W: AsyncWrite + Unpin,
     Transport<W>: Sink<Bytes> + Unpin,
 {
-    let len = message.encoded_len(); // get the length of the message
-    let mut buffer = Vec::with_capacity(len);
-
-    message.encode(&mut buffer).unwrap(); // encode the message into the buffer (infallible)
+    let mut buffer = Vec::new();
+    encode_into_slice(message, &mut buffer, standard())?;
 
     transport
         .send(Bytes::from(buffer))
@@ -190,12 +190,13 @@ where
         .map_err(Into::into)
 }
 
-/// Reads a protobuf message from the stream
-pub(crate) async fn read_message<M: prost::Message + Default, R: AsyncRead + Unpin>(
+/// Reads a bincode message from the stream
+pub(crate) async fn read_message<M: Decode<()>, R: AsyncRead + Unpin>(
     transport: &mut Transport<R>,
 ) -> Result<M> {
     if let Some(Ok(buffer)) = transport.next().await {
-        let message = M::decode(&buffer[..])?; // decode the message
+        // TODO could decode from slice borrowed be used here to potentially avoid copying
+        let (message, _) = decode_from_slice(&buffer[..], standard())?; // decode the message
         Ok(message)
     } else {
         Err(ErrorKind::TransportRecv.into())
