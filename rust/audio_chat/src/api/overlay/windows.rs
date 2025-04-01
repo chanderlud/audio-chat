@@ -6,7 +6,7 @@ use crate::api::overlay::color::{percent_to_color, BAD_COLOR};
 use crate::api::overlay::{
     Result, BACKGROUND_COLOR, CONNECTED, FONT_COLOR, FONT_HEIGHT, LATENCY, LOSS,
 };
-use log::info;
+use log::{error, info};
 use widestring::U16CString;
 use windows::core::{BOOL, PCWSTR};
 use windows::Win32::Foundation::{
@@ -14,15 +14,16 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateCompatibleDC, DeleteDC, DeleteObject, EndPaint, GetDC, ReleaseDC,
-    SelectObject, UpdateWindow, AC_SRC_ALPHA, AC_SRC_OVER, BLENDFUNCTION, HBRUSH, HGDIOBJ,
+    SelectObject, UpdateWindow, AC_SRC_ALPHA, AC_SRC_OVER, BLENDFUNCTION, HBITMAP, HBRUSH,
 };
 use windows::Win32::Graphics::GdiPlus::{
-    GdipCreateBitmapFromScan0, GdipCreateFont, GdipCreateFontFamilyFromName,
-    GdipCreateHBITMAPFromBitmap, GdipCreateSolidFill, GdipDeleteBrush, GdipDeleteBrush,
-    GdipDeleteFont, GdipDeleteFontFamily, GdipDeleteGraphics, GdipDeleteStringFormat,
-    GdipDisposeImage, GdipDrawString, GdipFillRectangle, GdipGetImageGraphicsContext,
-    GdipMeasureString, GdipSetTextRenderingHint, GdipStringFormatGetGenericDefault, GdiplusStartup,
-    GdiplusStartupInput, GpFont, GpGraphics, GpStringFormat, RectF, TextRenderingHint, Unit,
+    GdipCreateBitmapFromScan0, GdipCreateFont, GdipCreateHBITMAPFromBitmap, GdipCreateSolidFill,
+    GdipDeleteBrush, GdipDeleteFont, GdipDeleteFontFamily, GdipDeleteGraphics,
+    GdipDeleteStringFormat, GdipDisposeImage, GdipDrawString, GdipFillRectangle,
+    GdipGetFontCollectionFamilyList, GdipGetImageGraphicsContext, GdipMeasureString,
+    GdipNewPrivateFontCollection, GdipPrivateAddMemoryFont, GdipSetTextRenderingHint,
+    GdipStringFormatGetGenericDefault, GdiplusStartup, GdiplusStartupInput, GpFont,
+    GpFontCollection, GpFontFamily, GpGraphics, GpStringFormat, RectF, TextRenderingHint, Unit,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleA;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -33,6 +34,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 pub(crate) const CLASS_NAME: &str = "audio_chat_overlay";
+const FONT_BYTES: &[u8] = include_bytes!("../../../../../assets/Inconsolata.ttf");
 
 pub(crate) unsafe fn build_window(width: i32, height: i32, x: i32, y: i32) -> Result<HWND> {
     let input: GdiplusStartupInput = GdiplusStartupInput {
@@ -137,14 +139,14 @@ unsafe fn draw_overlay(hwnd: HWND) {
     let width = rect.right - rect.left;
     let height = rect.bottom - rect.top;
 
-    let mut bitmap = std::ptr::null_mut();
+    let mut bitmap = null_mut();
     GdipCreateBitmapFromScan0(width, height, 0, 925707, None, &mut bitmap);
 
-    let mut graphics = std::ptr::null_mut();
+    let mut graphics = null_mut();
     GdipGetImageGraphicsContext(bitmap.cast(), &mut graphics);
     GdipSetTextRenderingHint(graphics, TextRenderingHint(4));
 
-    let mut background_brush = std::ptr::null_mut();
+    let mut background_brush = null_mut();
     GdipCreateSolidFill(BACKGROUND_COLOR.load(Relaxed), &mut background_brush);
     GdipFillRectangle(
         graphics,
@@ -154,18 +156,35 @@ unsafe fn draw_overlay(hwnd: HWND) {
         width as f32,
         height as f32,
     );
-    GdipDeleteBrush(background_brush.cast());
 
-    let font_name = U16CString::from_str("Inconsolata").unwrap();
+    let mut font_collection: *mut GpFontCollection = null_mut();
+    let status = GdipNewPrivateFontCollection(&mut font_collection);
 
-    let mut font_family = std::ptr::null_mut();
-    GdipCreateFontFamilyFromName(
-        Some(&PCWSTR::from_raw(font_name.as_ptr())),
-        null_mut(),
-        &mut font_family,
-    );
+    if status.0 != 0 {
+        error!("failed to create private font collection: {}", status.0);
+        return;
+    }
 
-    let mut font = std::ptr::null_mut();
+    let font_size = FONT_BYTES.len() as i32;
+    let font_ptr = FONT_BYTES.as_ptr() as *const std::ffi::c_void;
+
+    let status = GdipPrivateAddMemoryFont(font_collection, font_ptr, font_size);
+    if status.0 != 0 {
+        error!("failed to add memory font: {}", status.0);
+        return;
+    }
+
+    let mut font_families: [*mut GpFontFamily; 1] = [null_mut()];
+    let mut found: i32 = 0;
+    let status = GdipGetFontCollectionFamilyList(font_collection, &mut font_families, &mut found);
+    if status.0 != 0 || found == 0 {
+        error!("failed to retrieve font family {}", status.0);
+        return;
+    }
+
+    let font_family = font_families[0];
+
+    let mut font = null_mut();
     GdipCreateFont(
         font_family,
         FONT_HEIGHT.load(Relaxed) as f32,
@@ -173,9 +192,8 @@ unsafe fn draw_overlay(hwnd: HWND) {
         Unit(0),
         &mut font,
     );
-    GdipDeleteFontFamily(font_family);
 
-    let mut string_format = std::ptr::null_mut();
+    let mut string_format = null_mut();
     GdipStringFormatGetGenericDefault(&mut string_format);
 
     let mut bounding = draw_text(
@@ -229,13 +247,8 @@ unsafe fn draw_overlay(hwnd: HWND) {
         );
     }
 
-    GdipDeleteFont(font);
-    GdipDeleteStringFormat(string_format);
-    GdipDeleteGraphics(graphics);
-    GdipDisposeImage(bitmap.cast());
-
-    let mut h_bitmap: *mut HBITMAP = std::ptr::null_mut();
-    GdipCreateHBITMAPFromBitmap(bitmap, h_bitmap, 0);
+    let mut h_bitmap = HBITMAP::default();
+    GdipCreateHBITMAPFromBitmap(bitmap, &mut h_bitmap, 0);
 
     let old_bitmap = SelectObject(hdc_mem, h_bitmap.into());
 
@@ -264,8 +277,14 @@ unsafe fn draw_overlay(hwnd: HWND) {
     );
 
     SelectObject(hdc_mem, old_bitmap);
-    DeleteObject(h_bitmap.into());
-    DeleteDC(hdc_mem);
+    _ = DeleteObject(h_bitmap.into());
+    _ = DeleteDC(hdc_mem);
+    GdipDeleteFontFamily(font_family);
+    GdipDeleteFont(font);
+    GdipDeleteStringFormat(string_format);
+    GdipDeleteGraphics(graphics);
+    GdipDisposeImage(bitmap.cast());
+    GdipDeleteBrush(background_brush.cast());
     ReleaseDC(None, hdc_screen);
 }
 
@@ -277,7 +296,7 @@ unsafe fn draw_text(
     font: *mut GpFont,
     string_format: *mut GpStringFormat,
 ) -> RectF {
-    let mut brush = std::ptr::null_mut();
+    let mut brush = null_mut();
     GdipCreateSolidFill(color, &mut brush);
 
     let point_f = RectF {
