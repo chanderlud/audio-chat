@@ -14,7 +14,7 @@ use tokio::time::error::Elapsed;
 
 use crate::BehaviourEvent;
 
-/// generic error type for audio chat
+/// generic error type for Telepathy
 #[derive(Debug)]
 pub(crate) struct Error {
     pub(crate) kind: ErrorKind,

@@ -190,7 +190,7 @@ jobs:
 
       - name: Build Web
         if: matrix.info.target == 'web'
-        run: flutter_rust_bridge_codegen build-web --rust-root rust/audio_chat ${{ startsWith(github.ref, 'refs/tags/') && '--release' || '' }}
+        run: flutter_rust_bridge_codegen build-web --rust-root rust/telepathy ${{ startsWith(github.ref, 'refs/tags/') && '--release' || '' }}
 
       - name: Build Flutter
         if: matrix.info.target != 'linux' || !startsWith(github.ref, 'refs/tags/')
@@ -200,8 +200,8 @@ jobs:
         if: matrix.info.target == 'linux' && startsWith(github.ref, 'refs/tags/')
         run: |
           flutter_distributor release --name=distribution --jobs=release-distribution-linux-deb,release-distribution-linux-rpm
-          mv dist/*/audio_chat-*-linux.deb audio-chat.deb
-          mv dist/*/audio_chat-*-linux.rpm audio-chat.rpm
+          mv dist/*/telepathy-*-linux.deb telepathy.deb
+          mv dist/*/telepathy-*-linux.rpm telepathy.rpm
 
       - name: Compile Windows Installer
         if: matrix.info.target == 'windows' && startsWith(github.ref, 'refs/tags/')
@@ -211,39 +211,39 @@ jobs:
 
       - name: Move Windows Installer
         if: matrix.info.target == 'windows' && startsWith(github.ref, 'refs/tags/')
-        run: mv windows/Output/audio_chat_installer.exe audio-chat-windows-x64.exe
+        run: mv windows/Output/telepathy_installer.exe telepathy-windows-x64.exe
 
       - name: Move APK
         if: matrix.info.target == 'apk'
-        run: mv build/app/outputs/flutter-apk/${{ startsWith(github.ref, 'refs/tags/') && 'app-release.apk' || 'app-debug.apk' }} audio-chat.apk
+        run: mv build/app/outputs/flutter-apk/${{ startsWith(github.ref, 'refs/tags/') && 'app-release.apk' || 'app-debug.apk' }} telepathy.apk
 
       - name: Move IPA
         if: matrix.info.target == 'ios'
-        run: mv build/ios/iphoneos/Runner.app audio-chat.app
+        run: mv build/ios/iphoneos/Runner.app telepathy.app
 
       - name: Move Linux Bundle
         if: matrix.info.target == 'linux'
-        run: mv build/linux/x64/${{ startsWith(github.ref, 'refs/tags/') && 'release' || 'debug' }}/bundle audio-chat
+        run: mv build/linux/x64/${{ startsWith(github.ref, 'refs/tags/') && 'release' || 'debug' }}/bundle telepathy
 
       - name: Move Windows Bundle
         if: matrix.info.target == 'windows'
-        run: mv build/windows/x64/runner/${{ startsWith(github.ref, 'refs/tags/') && 'Release' || 'Debug' }} audio-chat
+        run: mv build/windows/x64/runner/${{ startsWith(github.ref, 'refs/tags/') && 'Release' || 'Debug' }} telepathy
 
       - name: Move Web Bundle
         if: matrix.info.target == 'web'
-        run: mv build/web audio-chat
+        run: mv build/web telepathy
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: audio_chat_${{ matrix.info.image }}_${{ matrix.info.target }}
+          name: telepathy_${{ matrix.info.image }}_${{ matrix.info.target }}
           path: |
-            audio-chat.apk
-            audio-chat
-            audio-chat.app
-            audio-chat-windows-x64.exe
-            audio-chat.deb
-            audio-chat.rpm
+            telepathy.apk
+            telepathy
+            telepathy.app
+            telepathy-windows-x64.exe
+            telepathy.deb
+            telepathy.rpm
           if-no-files-found: ignore
 
   build_cross:
@@ -324,12 +324,12 @@ jobs:
             export PATH="$PATH":"$HOME/.pub-cache/bin"
             export PATH=/flutter/bin/cache/dart-sdk/bin:$PATH
             flutter_distributor release --name=distribution --jobs=release-distribution-linux-deb,release-distribution-linux-rpm
-            mv dist/*/audio_chat-*-linux.deb /artifacts/audio-chat.deb
-            mv dist/*/audio_chat-*-linux.rpm /artifacts/audio-chat.rpm
-            mv build/linux/${{ matrix.out }}/release/bundle /artifacts/audio-chat
+            mv dist/*/telepathy-*-linux.deb /artifacts/telepathy.deb
+            mv dist/*/telepathy-*-linux.rpm /artifacts/telepathy.rpm
+            mv build/linux/${{ matrix.out }}/release/bundle /artifacts/telepathy
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: audio_chat_${{ matrix.distro }}_${{ matrix.arch }}
+          name: telepathy_${{ matrix.distro }}_${{ matrix.arch }}
           path: artifacts

@@ -1,5 +1,5 @@
-use crate::api::audio_chat::{DeviceName, Transport};
 use crate::api::error::{Error, ErrorKind};
+use crate::api::telepathy::{DeviceName, Transport};
 use bincode::config::standard;
 use bincode::{decode_from_slice, encode_to_vec, Decode, Encode};
 use cpal::traits::{DeviceTrait, HostTrait};
@@ -228,7 +228,7 @@ pub(crate) mod rwlock_option_recording_config {
     use std::sync::Arc;
     use tokio::sync::RwLock;
 
-    use crate::api::audio_chat::RecordingConfig;
+    use crate::api::telepathy::RecordingConfig;
 
     pub fn serialize<S>(
         value: &Arc<RwLock<Option<RecordingConfig>>>,
@@ -257,7 +257,7 @@ mod tests {
     #[test]
     #[cfg(target_arch = "x86_64")]
     fn test_mul() {
-        let frame = crate::api::audio_chat::tests::dummy_frame();
+        let frame = crate::api::telepathy::tests::dummy_frame();
         let mut scalar_frame = frame.clone();
         let mut simd_avx2_frame = frame.clone();
 

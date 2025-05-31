@@ -2,15 +2,15 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
-import 'package:audio_chat/settings/view.dart';
-import 'package:audio_chat/src/rust/api/audio_chat.dart';
-import 'package:audio_chat/src/rust/api/contact.dart';
-import 'package:audio_chat/src/rust/api/error.dart';
-import 'package:audio_chat/src/rust/api/logger.dart';
-import 'package:audio_chat/src/rust/api/player.dart';
-import 'package:audio_chat/src/rust/api/overlay/overlay.dart';
-import 'package:audio_chat/src/rust/frb_generated.dart';
-import 'package:audio_chat/settings/controller.dart';
+import 'package:telepathy/settings/view.dart';
+import 'package:telepathy/src/rust/api/telepathy.dart';
+import 'package:telepathy/src/rust/api/contact.dart';
+import 'package:telepathy/src/rust/api/error.dart';
+import 'package:telepathy/src/rust/api/logger.dart';
+import 'package:telepathy/src/rust/api/player.dart';
+import 'package:telepathy/src/rust/api/overlay/overlay.dart';
+import 'package:telepathy/src/rust/frb_generated.dart';
+import 'package:telepathy/settings/controller.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart' hide Overlay;
 import 'package:flutter/services.dart';
@@ -85,7 +85,7 @@ Future<void> main() async {
 
   final chatStateController = ChatStateController(soundPlayer);
 
-  final audioChat = await AudioChat.newInstance(
+  final telepathy = await Telepathy.newInstance(
       identity: settingsController.keypair,
       host: host,
       networkConfig: settingsController.networkConfig,
@@ -206,9 +206,9 @@ Future<void> main() async {
       // called when a session changes status
       sessionStatus: stateController.updateSession,
       // called when the backend wants to start sessions
-      startSessions: (AudioChat audioChat) {
+      startSessions: (Telepathy telepathy) {
         for (Contact contact in settingsController.contacts.values) {
-          audioChat.startSession(contact: contact);
+          telepathy.startSession(contact: contact);
         }
       },
       // called when the backend wants a custom ringtone
@@ -230,29 +230,29 @@ Future<void> main() async {
       },
       screenshareStarted: stateController.screenshareStarted);
 
-  final audioDevices = AudioDevices(audioChat: audioChat);
+  final audioDevices = AudioDevices(telepathy: telepathy);
 
-  // apply options to the audio chat instance
-  audioChat.setRmsThreshold(decimal: settingsController.inputSensitivity);
-  audioChat.setInputVolume(decibel: settingsController.inputVolume);
-  audioChat.setOutputVolume(decibel: settingsController.outputVolume);
-  audioChat.setDenoise(denoise: settingsController.useDenoise);
-  audioChat.setPlayCustomRingtones(
+  // apply options to the instance
+  telepathy.setRmsThreshold(decimal: settingsController.inputSensitivity);
+  telepathy.setInputVolume(decibel: settingsController.inputVolume);
+  telepathy.setOutputVolume(decibel: settingsController.outputVolume);
+  telepathy.setDenoise(denoise: settingsController.useDenoise);
+  telepathy.setPlayCustomRingtones(
       play: settingsController.playCustomRingtones);
-  audioChat.setInputDevice(device: settingsController.inputDevice);
-  audioChat.setOutputDevice(device: settingsController.outputDevice);
+  telepathy.setInputDevice(device: settingsController.inputDevice);
+  telepathy.setOutputDevice(device: settingsController.outputDevice);
 
   if (settingsController.denoiseModel != null) {
-    updateDenoiseModel(settingsController.denoiseModel!, audioChat);
+    updateDenoiseModel(settingsController.denoiseModel!, telepathy);
   }
 
   // Future.microtask(() {
   //   sleep(const Duration(seconds: 1));
-  //   audioChat.joinRoom(contact: Contact(nickname: 'test room', peerId: '12D3KooWRVJCFqFBrasjtcGHnRuuut9fQLsfcUNLfWFFqjMm2p4n'));
+  //   telepathy.joinRoom(contact: Contact(nickname: 'test room', peerId: '12D3KooWRVJCFqFBrasjtcGHnRuuut9fQLsfcUNLfWFFqjMm2p4n'));
   // });
 
-  runApp(AudioChatApp(
-    audioChat: audioChat,
+  runApp(TelepathyApp(
+    telepathy: telepathy,
     settingsController: settingsController,
     callStateController: stateController,
     player: soundPlayer,
@@ -264,8 +264,8 @@ Future<void> main() async {
 }
 
 /// The main app
-class AudioChatApp extends StatelessWidget {
-  final AudioChat audioChat;
+class TelepathyApp extends StatelessWidget {
+  final Telepathy telepathy;
   final SettingsController settingsController;
   final StateController callStateController;
   final StatisticsController statisticsController;
@@ -274,9 +274,9 @@ class AudioChatApp extends StatelessWidget {
   final Overlay overlay;
   final AudioDevices audioDevices;
 
-  const AudioChatApp(
+  const TelepathyApp(
       {super.key,
-      required this.audioChat,
+      required this.telepathy,
       required this.settingsController,
       required this.callStateController,
       required this.player,
@@ -323,7 +323,7 @@ class AudioChatApp extends StatelessWidget {
         ),
       ),
       home: HomePage(
-        audioChat: audioChat,
+        telepathy: telepathy,
         settingsController: settingsController,
         stateController: callStateController,
         player: player,
@@ -338,7 +338,7 @@ class AudioChatApp extends StatelessWidget {
 
 /// The main body of the app
 class HomePage extends StatelessWidget {
-  final AudioChat audioChat;
+  final Telepathy telepathy;
   final SettingsController settingsController;
   final StateController stateController;
   final StatisticsController statisticsController;
@@ -349,7 +349,7 @@ class HomePage extends StatelessWidget {
 
   const HomePage(
       {super.key,
-      required this.audioChat,
+      required this.telepathy,
       required this.settingsController,
       required this.stateController,
       required this.player,
@@ -369,14 +369,14 @@ class HomePage extends StatelessWidget {
                 stateController: stateController);
           } else {
             return ContactForm(
-                audioChat: audioChat, settingsController: settingsController);
+                telepathy: telepathy, settingsController: settingsController);
           }
         });
 
     PeriodicNotifier notifier = PeriodicNotifier();
 
     CallControls callControls = CallControls(
-      audioChat: audioChat,
+      telepathy: telepathy,
       settingsController: settingsController,
       stateController: stateController,
       statisticsController: statisticsController,
@@ -387,7 +387,7 @@ class HomePage extends StatelessWidget {
     );
 
     ChatWidget chatWidget = ChatWidget(
-        audioChat: audioChat,
+        telepathy: telepathy,
         stateController: stateController,
         chatStateController: chatStateController,
         player: player,
@@ -430,7 +430,7 @@ class HomePage extends StatelessWidget {
                             });
 
                             return ContactsList(
-                              audioChat: audioChat,
+                              telepathy: telepathy,
                               contacts: contacts,
                               stateController: stateController,
                               settingsController: settingsController,
@@ -609,11 +609,11 @@ class HomeTabViewState extends State<HomeTabView>
 
 /// A widget which allows the user to add a contact
 class ContactForm extends StatefulWidget {
-  final AudioChat audioChat;
+  final Telepathy telepathy;
   final SettingsController settingsController;
 
   const ContactForm(
-      {super.key, required this.audioChat, required this.settingsController});
+      {super.key, required this.telepathy, required this.settingsController});
 
   @override
   State<ContactForm> createState() => ContactFormState();
@@ -671,7 +671,7 @@ class ContactFormState extends State<ContactForm> {
                   Contact contact =
                       widget.settingsController.addContact(nickname, peerId);
 
-                  widget.audioChat.startSession(contact: contact);
+                  widget.telepathy.startSession(contact: contact);
 
                   _nicknameInput.clear();
                   _peerIdInput.clear();
@@ -690,7 +690,7 @@ class ContactFormState extends State<ContactForm> {
 
 /// A widget which displays a list of ContactWidgets
 class ContactsList extends StatelessWidget {
-  final AudioChat audioChat;
+  final Telepathy telepathy;
   final StateController stateController;
   final SettingsController settingsController;
   final List<Contact> contacts;
@@ -699,7 +699,7 @@ class ContactsList extends StatelessWidget {
 
   const ContactsList(
       {super.key,
-      required this.audioChat,
+      required this.telepathy,
       required this.contacts,
       required this.stateController,
       required this.settingsController,
@@ -737,7 +737,7 @@ class ContactsList extends StatelessWidget {
                                         .secondaryContainer,
                                     children: [
                                       ContactForm(
-                                        audioChat: audioChat,
+                                        telepathy: telepathy,
                                         settingsController: settingsController,
                                       )
                                     ],
@@ -766,7 +766,7 @@ class ContactsList extends StatelessWidget {
                       builder: (BuildContext context, Widget? child) {
                         return ContactWidget(
                           contact: contacts[index],
-                          audioChat: audioChat,
+                          telepathy: telepathy,
                           stateController: stateController,
                           player: player,
                           settingsController: settingsController,
@@ -785,7 +785,7 @@ class ContactsList extends StatelessWidget {
 /// A widget which displays a single contact
 class ContactWidget extends StatefulWidget {
   final Contact contact;
-  final AudioChat audioChat;
+  final Telepathy telepathy;
   final StateController stateController;
   final SettingsController settingsController;
   final SoundPlayer player;
@@ -793,7 +793,7 @@ class ContactWidget extends StatefulWidget {
   const ContactWidget(
       {super.key,
       required this.contact,
-      required this.audioChat,
+      required this.telepathy,
       required this.stateController,
       required this.player,
       required this.settingsController});
@@ -896,7 +896,7 @@ class ContactWidgetState extends State<ContactWidget> {
                           if (confirm) {
                             widget.settingsController
                                 .removeContact(widget.contact);
-                            widget.audioChat
+                            widget.telepathy
                                 .stopSession(contact: widget.contact);
                             widget.settingsController.saveContacts();
                           }
@@ -964,7 +964,7 @@ class ContactWidgetState extends State<ContactWidget> {
             if (status == 'Inactive')
               IconButton(
                   onPressed: () {
-                    widget.audioChat.startSession(contact: widget.contact);
+                    widget.telepathy.startSession(contact: widget.contact);
                   },
                   icon: SvgPicture.asset('assets/icons/Restart.svg',
                       semanticsLabel: 'Retry the session initiation')),
@@ -997,7 +997,7 @@ class ContactWidgetState extends State<ContactWidget> {
                 onPressed: () async {
                   outgoingSoundHandle?.cancel();
 
-                  widget.audioChat.endCall();
+                  widget.telepathy.endCall();
                   widget.stateController.endOfCall();
 
                   List<int> bytes = await readWavBytes('call_ended');
@@ -1031,7 +1031,7 @@ class ContactWidgetState extends State<ContactWidget> {
                   outgoingSoundHandle = await widget.player.play(bytes: bytes);
 
                   try {
-                    await widget.audioChat.sayHello(contact: widget.contact);
+                    await widget.telepathy.sayHello(contact: widget.contact);
                     widget.stateController.setActiveContact(widget.contact);
                   } on DartError catch (e) {
                     widget.stateController.setStatus('Inactive');
@@ -1050,7 +1050,7 @@ class ContactWidgetState extends State<ContactWidget> {
 
 /// A widget with commonly used controls for a call
 class CallControls extends StatelessWidget {
-  final AudioChat audioChat;
+  final Telepathy telepathy;
   final SettingsController settingsController;
   final StateController stateController;
   final StatisticsController statisticsController;
@@ -1061,7 +1061,7 @@ class CallControls extends StatelessWidget {
 
   const CallControls(
       {super.key,
-      required this.audioChat,
+      required this.telepathy,
       required this.settingsController,
       required this.stateController,
       required this.player,
@@ -1106,7 +1106,7 @@ class CallControls extends StatelessWidget {
                     stateController.sessionManagerRestartable
                         ? IconButton(
                             onPressed: () {
-                              audioChat.restartManager();
+                              telepathy.restartManager();
                             },
                             icon: SvgPicture.asset('assets/icons/Restart.svg',
                                 colorFilter: const ColorFilter.mode(
@@ -1136,7 +1136,7 @@ class CallControls extends StatelessWidget {
                         value: settingsController.outputVolume,
                         onChanged: (value) async {
                           await settingsController.updateOutputVolume(value);
-                          audioChat.setOutputVolume(decibel: value);
+                          telepathy.setOutputVolume(decibel: value);
                         },
                         min: -15,
                         max: 15,
@@ -1152,7 +1152,7 @@ class CallControls extends StatelessWidget {
                         value: settingsController.inputVolume,
                         onChanged: (value) async {
                           await settingsController.updateInputVolume(value);
-                          audioChat.setInputVolume(decibel: value);
+                          telepathy.setInputVolume(decibel: value);
                         },
                         min: -15,
                         max: 15,
@@ -1169,7 +1169,7 @@ class CallControls extends StatelessWidget {
                         onChanged: (value) async {
                           await settingsController
                               .updateInputSensitivity(value);
-                          audioChat.setRmsThreshold(decimal: value);
+                          telepathy.setRmsThreshold(decimal: value);
                         },
                         min: -16,
                         max: 50,
@@ -1208,7 +1208,7 @@ class CallControls extends StatelessWidget {
                               player.play(bytes: bytes);
 
                               stateController.mute();
-                              audioChat.setMuted(
+                              telepathy.setMuted(
                                   muted: stateController.isMuted);
                             },
                             icon: SvgPicture.asset(
@@ -1229,14 +1229,14 @@ class CallControls extends StatelessWidget {
                               player.play(bytes: bytes);
 
                               stateController.deafen();
-                              audioChat.setDeafened(
+                              telepathy.setDeafened(
                                   deafened: stateController.isDeafened);
 
                               if (stateController.isDeafened &&
                                   stateController.isMuted) {
-                                audioChat.setMuted(muted: true);
+                                telepathy.setMuted(muted: true);
                               } else {
-                                audioChat.setMuted(muted: false);
+                                telepathy.setMuted(muted: false);
                               }
                             },
                             visualDensity: VisualDensity.comfortable,
@@ -1256,7 +1256,7 @@ class CallControls extends StatelessWidget {
                                       BoxConstraints constraints) {
                                 return SettingsPage(
                                   controller: settingsController,
-                                  audioChat: audioChat,
+                                  telepathy: telepathy,
                                   stateController: stateController,
                                   statisticsController: statisticsController,
                                   player: player,
@@ -1279,7 +1279,7 @@ class CallControls extends StatelessWidget {
                                 }
 
                                 if (!stateController.isSendingScreenshare) {
-                                  audioChat.startScreenshare(
+                                  telepathy.startScreenshare(
                                       contact: stateController.activeContact!);
                                 } else {
                                   stateController.stopScreenshare(true);
@@ -1299,7 +1299,7 @@ class CallControls extends StatelessWidget {
 }
 
 class ChatWidget extends StatefulWidget {
-  final AudioChat audioChat;
+  final Telepathy telepathy;
   final StateController stateController;
   final SettingsController settingsController;
   final ChatStateController chatStateController;
@@ -1307,7 +1307,7 @@ class ChatWidget extends StatefulWidget {
 
   const ChatWidget(
       {super.key,
-      required this.audioChat,
+      required this.telepathy,
       required this.stateController,
       required this.chatStateController,
       required this.player,
@@ -1351,11 +1351,11 @@ class ChatWidgetState extends State<ChatWidget> {
     Contact contact = widget.stateController.activeContact!;
 
     try {
-      ChatMessage message = widget.audioChat.buildChat(
+      ChatMessage message = widget.telepathy.buildChat(
           contact: contact,
           text: text,
           attachments: widget.chatStateController.attachments);
-      await widget.audioChat.sendChat(message: message);
+      await widget.telepathy.sendChat(message: message);
 
       message.clearAttachments();
       widget.chatStateController.messages.add(message);
@@ -2489,14 +2489,14 @@ Future<List<int>> readWavBytes(String assetName) {
   return readAssetBytes('sounds/$assetName.wav');
 }
 
-Future<void> updateDenoiseModel(String? model, AudioChat audioChat) async {
+Future<void> updateDenoiseModel(String? model, Telepathy telepathy) async {
   if (model == null) {
-    audioChat.setModel(model: null);
+    telepathy.setModel(model: null);
     return;
   }
 
   List<int> bytes = await readAssetBytes('models/$model.rnn');
-  audioChat.setModel(model: Uint8List.fromList(bytes));
+  telepathy.setModel(model: Uint8List.fromList(bytes));
 }
 
 /// Reads the bytes of a file from the assets
@@ -2549,7 +2549,7 @@ Future<File?> saveFile(Uint8List fileBytes, String fileName) async {
   Directory? downloadsDirectory = await getDownloadsDirectory();
 
   if (downloadsDirectory != null) {
-    final subdirectory = Directory('${downloadsDirectory.path}/Audio Chat');
+    final subdirectory = Directory('${downloadsDirectory.path}/Telepathy');
     if (!await subdirectory.exists()) {
       await subdirectory.create();
     }

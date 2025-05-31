@@ -1,4 +1,3 @@
-pub mod audio_chat;
 mod codec;
 pub mod contact;
 pub mod crypto;
@@ -10,6 +9,7 @@ pub mod overlay;
 pub mod player;
 /// flutter_rust_bridge:ignore
 mod screenshare;
+pub mod telepathy;
 /// flutter_rust_bridge:ignore
 mod utils;
 /// flutter_rust_bridge:ignore

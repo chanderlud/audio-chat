@@ -12,8 +12,8 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-use crate::api::audio_chat::Capabilities;
-use crate::api::audio_chat::RecordingConfig;
+use crate::api::telepathy::Capabilities;
+use crate::api::telepathy::RecordingConfig;
 #[cfg(not(target_family = "wasm"))]
 use libp2p::futures::{AsyncReadExt as ReadExt, AsyncWriteExt as WriteExt};
 #[cfg(not(target_family = "wasm"))]
@@ -484,7 +484,7 @@ pub(crate) async fn playback(
             "1",
             // TODO -framedrop
             "-window_title",
-            "Audio Chat Screenshare",
+            "Telepathy Screenshare",
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())

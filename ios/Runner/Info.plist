@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Audio Chat</string>
+	<string>Telepathy</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>audio_chat</string>
+	<string>telepathy</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -50,6 +50,6 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Audio Chat uses your microphone for audio calls</string>
+    <string>Telepathy uses your microphone for audio calls</string>
 </dict>
 </plist>

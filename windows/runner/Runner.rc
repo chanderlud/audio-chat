@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "audio_chat" "\0"
+            VALUE "CompanyName", "com.cflm-studios.telepathy" "\0"
+            VALUE "FileDescription", "telepathy" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "audio_chat" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2024 com.audio_chat. All rights reserved." "\0"
-            VALUE "OriginalFilename", "audio_chat.exe" "\0"
-            VALUE "ProductName", "audio_chat" "\0"
+            VALUE "InternalName", "telepathy" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2025 CFLM Studios. All rights reserved." "\0"
+            VALUE "OriginalFilename", "telepathy.exe" "\0"
+            VALUE "ProductName", "telepathy" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

@@ -1,5 +1,5 @@
-display_name: Audio Chat
-package_name: audio-chat
+display_name: Telepathy
+package_name: telepathy
 
 maintainer:
   name: Chander Luderman Miller
@@ -25,10 +25,10 @@ postuninstall_scripts:
   - echo "Sorry to see you go."
 
 keywords:
-  - Audio Chat
+  - Telepathy
   - p2p
 
-generic_name: Audio Chat
+generic_name: Telepathy
 
 categories:
   - Development

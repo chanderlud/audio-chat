@@ -82,15 +82,15 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 const TIMEOUT_DURATION: Duration = Duration::from_millis(100);
 /// the number of frames to hold in a channel
 pub(crate) const CHANNEL_SIZE: usize = 2_400;
-/// the protocol identifier for audio chat
-const CHAT_PROTOCOL: StreamProtocol = StreamProtocol::new("/audio-chat/0.0.1");
-const ROOM_PROTOCOL: StreamProtocol = StreamProtocol::new("/audio-chat-room/0.0.1");
+/// the protocol identifier for Telepathy
+const CHAT_PROTOCOL: StreamProtocol = StreamProtocol::new("/telepathy/0.0.1");
+const ROOM_PROTOCOL: StreamProtocol = StreamProtocol::new("/telepathy-room/0.0.1");
 #[cfg(target_family = "wasm")]
 const SILENCE: [f32; FRAME_SIZE] = [0_f32; FRAME_SIZE];
 
 #[frb(opaque)]
 #[derive(Clone)]
-pub struct AudioChat {
+pub struct Telepathy {
     /// The audio host
     host: Arc<Host>,
 
@@ -180,7 +180,7 @@ pub struct AudioChat {
     session_status: Arc<Mutex<dyn Fn(String, String) -> DartFnFuture<()> + Send>>,
 
     /// Starts a session for each of the UI's contacts
-    start_sessions: Arc<Mutex<dyn Fn(AudioChat) -> DartFnFuture<()> + Send>>,
+    start_sessions: Arc<Mutex<dyn Fn(Telepathy) -> DartFnFuture<()> + Send>>,
 
     /// Used to load custom ringtones
     load_ringtone: Arc<Mutex<dyn Fn() -> DartFnFuture<Option<Vec<u8>>> + Send>>,
@@ -199,7 +199,7 @@ pub struct AudioChat {
     screenshare_started: Arc<Mutex<dyn Fn(DartNotify, bool) -> DartFnFuture<()> + Send>>,
 }
 
-impl AudioChat {
+impl Telepathy {
     // this function must be async to use `spawn`
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
@@ -214,13 +214,13 @@ impl AudioChat {
         get_contact: impl Fn(Vec<u8>) -> DartFnFuture<Option<Contact>> + Send + 'static,
         call_state: impl Fn(bool) -> DartFnFuture<()> + Send + 'static,
         session_status: impl Fn(String, String) -> DartFnFuture<()> + Send + 'static,
-        start_sessions: impl Fn(AudioChat) -> DartFnFuture<()> + Send + 'static,
+        start_sessions: impl Fn(Telepathy) -> DartFnFuture<()> + Send + 'static,
         load_ringtone: impl Fn() -> DartFnFuture<Option<Vec<u8>>> + Send + 'static,
         statistics: impl Fn(Statistics) -> DartFnFuture<()> + Send + 'static,
         message_received: impl Fn(ChatMessage) -> DartFnFuture<()> + Send + 'static,
         manager_active: impl Fn(bool, bool) -> DartFnFuture<()> + Send + 'static,
         screenshare_started: impl Fn(DartNotify, bool) -> DartFnFuture<()> + Send + 'static,
-    ) -> AudioChat {
+    ) -> Telepathy {
         let (start_session, session) = unbounded_async::<PeerId>();
         let (start_screenshare, screenshare) = unbounded_async::<StartScreenshare>();
 
@@ -564,7 +564,7 @@ impl AudioChat {
                 relay_client: relay_behaviour,
                 ping: ping::Behaviour::new(ping::Config::new()),
                 identify: identify::Behaviour::new(identify::Config::new(
-                    "/audio-chat/0.0.1".to_string(),
+                    "/telepathy/0.0.1".to_string(),
                     keypair.public(),
                 )),
                 dcutr: dcutr::Behaviour::new(keypair.public().to_peer_id()),

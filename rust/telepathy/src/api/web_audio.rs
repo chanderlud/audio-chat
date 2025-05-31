@@ -1,4 +1,4 @@
-use crate::api::audio_chat::CHANNEL_SIZE;
+use crate::api::telepathy::CHANNEL_SIZE;
 use log::error;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::Relaxed;
@@ -44,7 +44,7 @@ impl WebAudioWrapper {
         // return first input's first channel's samples
         // https://developer.mozilla.org/ja/docs/Web/API/AudioWorkletProcessor/process
         let processor_js_code = r#"
-            class AudioChatProcessor extends AudioWorkletProcessor {
+            class TelepathyProcessor extends AudioWorkletProcessor {
                 process(inputs, outputs, parameters) {
                     this.port.postMessage(Float32Array.from(inputs[0][0]));
 
@@ -52,7 +52,7 @@ impl WebAudioWrapper {
                 }
             }
 
-            registerProcessor('audio-chat-processor', AudioChatProcessor);
+            registerProcessor('telepathy-processor', TelepathyProcessor);
         "#;
 
         let blob_parts = js_sys::Array::new();
@@ -71,7 +71,7 @@ impl WebAudioWrapper {
 
         web_sys::Url::revoke_object_url(&url)?;
 
-        let worklet_node = web_sys::AudioWorkletNode::new(&audio_ctx, "audio-chat-processor")?;
+        let worklet_node = web_sys::AudioWorkletNode::new(&audio_ctx, "telepathy-processor")?;
 
         source.connect_with_audio_node(&worklet_node)?;
 

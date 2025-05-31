@@ -1,9 +1,9 @@
-package com.audio_chat.frontend
+package com.cflm-studios.telepathy
 
 import io.flutter.embedding.android.FlutterActivity
 
 class MainActivity: FlutterActivity() {
     init {
-        System.loadLibrary("audio_chat")
+        System.loadLibrary("telepathy")
     }
 }

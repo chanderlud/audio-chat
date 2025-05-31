@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             relay: relay::Behaviour::new(key.public().to_peer_id(), relay_config),
             ping: ping::Behaviour::new(ping::Config::new()),
             identify: identify::Behaviour::new(identify::Config::new(
-                "/audio-chat/0.0.1".to_string(),
+                "/telepathy/0.0.1".to_string(),
                 key.public(),
             )),
             auto_nat: autonat::Behaviour::new(

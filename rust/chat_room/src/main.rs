@@ -39,7 +39,7 @@ const CHANNEL_SIZE: usize = 2_400;
 const FRAME_SIZE: usize = 480;
 const BUFFER_SIZE: usize = FRAME_SIZE * mem::size_of::<i16>();
 const FRAME_DURATION: Duration = Duration::from_millis(1_000 / (48_800 / FRAME_SIZE as u64));
-const PROTOCOL: StreamProtocol = StreamProtocol::new("/audio-chat-room/0.0.1");
+const PROTOCOL: StreamProtocol = StreamProtocol::new("/telepathy-room/0.0.1");
 
 #[tokio::main]
 async fn main() {
@@ -68,7 +68,7 @@ async fn chat_room() -> Result<()> {
             relay_client: relay_behaviour,
             ping: ping::Behaviour::new(ping::Config::new()),
             identify: identify::Behaviour::new(identify::Config::new(
-                "/audio-chat-room/0.0.1".to_string(),
+                "/telepathy-room/0.0.1".to_string(),
                 keypair.public(),
             )),
             dcutr: dcutr::Behaviour::new(keypair.public().to_peer_id()),
@@ -557,7 +557,7 @@ async fn simulated_client(i: usize) {
             relay_client: relay_behaviour,
             ping: ping::Behaviour::new(ping::Config::new()),
             identify: identify::Behaviour::new(identify::Config::new(
-                "/audio-chat/0.0.1".to_string(),
+                "/telepathy/0.0.1".to_string(),
                 keypair.public(),
             )),
             dcutr: dcutr::Behaviour::new(keypair.public().to_peer_id()),

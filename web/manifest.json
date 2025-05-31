@@ -1,6 +1,6 @@
 {
-    "name": "audio_chat",
-    "short_name": "audio_chat",
+    "name": "telepathy",
+    "short_name": "telepathy",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

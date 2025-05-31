@@ -3,8 +3,8 @@ import 'dart:core';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
-import 'package:audio_chat/settings/controller.dart';
-import 'package:audio_chat/src/rust/api/player.dart';
+import 'package:telepathy/settings/controller.dart';
+import 'package:telepathy/src/rust/api/player.dart';
 import 'package:collection/collection.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart' hide Overlay;
@@ -15,13 +15,13 @@ import 'package:flutter_svg/flutter_svg.dart';
 import '../audio_level.dart';
 import '../console.dart';
 import '../main.dart';
-import '../src/rust/api/audio_chat.dart';
+import '../src/rust/api/telepathy.dart';
 import '../src/rust/api/error.dart';
 import '../src/rust/api/overlay/overlay.dart';
 
 class SettingsPage extends StatefulWidget {
   final SettingsController controller;
-  final AudioChat audioChat;
+  final Telepathy telepathy;
   final StateController stateController;
   final StatisticsController statisticsController;
   final SoundPlayer player;
@@ -32,7 +32,7 @@ class SettingsPage extends StatefulWidget {
   const SettingsPage(
       {super.key,
       required this.controller,
-      required this.audioChat,
+      required this.telepathy,
       required this.stateController,
       required this.player,
       required this.statisticsController,
@@ -139,7 +139,7 @@ class SettingsPageState extends State<SettingsPage>
                               if (route == 0) {
                                 return AVSettings(
                                   controller: widget.controller,
-                                  audioChat: widget.audioChat,
+                                  telepathy: widget.telepathy,
                                   stateController: widget.stateController,
                                   player: widget.player,
                                   statisticsController:
@@ -150,13 +150,13 @@ class SettingsPageState extends State<SettingsPage>
                               } else if (route == 1) {
                                 return ProfileSettings(
                                     controller: widget.controller,
-                                    audioChat: widget.audioChat,
+                                    telepathy: widget.telepathy,
                                     stateController: widget.stateController);
                               } else if (route == 2) {
                                 return NetworkSettings(
                                     key: _key,
                                     controller: widget.controller,
-                                    audioChat: widget.audioChat,
+                                    telepathy: widget.telepathy,
                                     stateController: widget.stateController,
                                     constraints: constraints);
                               } else if (route == 4) {
@@ -363,7 +363,7 @@ class SettingsPageState extends State<SettingsPage>
 
 class AVSettings extends StatefulWidget {
   final SettingsController controller;
-  final AudioChat audioChat;
+  final Telepathy telepathy;
   final StateController stateController;
   final StatisticsController statisticsController;
   final SoundPlayer player;
@@ -373,7 +373,7 @@ class AVSettings extends StatefulWidget {
   const AVSettings(
       {super.key,
       required this.controller,
-      required this.audioChat,
+      required this.telepathy,
       required this.stateController,
       required this.player,
       required this.statisticsController,
@@ -509,7 +509,7 @@ class _AVSettingsState extends State<AVSettings> {
                             onSelected: (String? value) {
                               if (value == 'Default') value = null;
                               widget.controller.updateInputDevice(value);
-                              widget.audioChat.setInputDevice(device: value);
+                              widget.telepathy.setInputDevice(device: value);
                             },
                             width: width),
                         DropDown(
@@ -519,7 +519,7 @@ class _AVSettingsState extends State<AVSettings> {
                           onSelected: (String? value) {
                             if (value == 'Default') value = null;
                             widget.controller.updateOutputDevice(value);
-                            widget.audioChat.setOutputDevice(device: value);
+                            widget.telepathy.setOutputDevice(device: value);
                             widget.player.updateOutputDevice(name: value);
                           },
                           width: width,
@@ -543,11 +543,11 @@ class _AVSettingsState extends State<AVSettings> {
                   onPressed: () async {
                     if (widget.stateController.inAudioTest) {
                       widget.stateController.setInAudioTest();
-                      widget.audioChat.endCall();
+                      widget.telepathy.endCall();
                     } else {
                       widget.stateController.setInAudioTest();
                       try {
-                        await widget.audioChat.audioTest();
+                        await widget.telepathy.audioTest();
                       } on DartError catch (e) {
                         if (!context.mounted) return;
                         showErrorDialog(
@@ -588,8 +588,8 @@ class _AVSettingsState extends State<AVSettings> {
                               if (value == 'Off') {
                                 // save denoise option
                                 widget.controller.updateUseDenoise(false);
-                                // set denoise to false in audio chat
-                                widget.audioChat.setDenoise(denoise: false);
+                                // set denoise to false
+                                widget.telepathy.setDenoise(denoise: false);
                               } else {
                                 if (value == 'Vanilla') {
                                   value = null;
@@ -599,10 +599,10 @@ class _AVSettingsState extends State<AVSettings> {
                                 widget.controller.updateUseDenoise(true);
                                 // save denoise model
                                 widget.controller.setDenoiseModel(value);
-                                // set denoise to true in audio chat
-                                widget.audioChat.setDenoise(denoise: true);
-                                // set denoise model in audio chat
-                                updateDenoiseModel(value, widget.audioChat);
+                                // set denoise to true
+                                widget.telepathy.setDenoise(denoise: true);
+                                // set denoise model
+                                updateDenoiseModel(value, widget.telepathy);
                               }
                             });
                       });
@@ -623,7 +623,7 @@ class _AVSettingsState extends State<AVSettings> {
                       value: widget.controller.playCustomRingtones,
                       onChanged: (play) {
                         widget.controller.updatePlayCustomRingtones(play);
-                        widget.audioChat.setPlayCustomRingtones(play: play);
+                        widget.telepathy.setPlayCustomRingtones(play: play);
                       });
                 }),
           ],
@@ -762,13 +762,13 @@ class _AVSettingsState extends State<AVSettings> {
 
 class ProfileSettings extends StatefulWidget {
   final SettingsController controller;
-  final AudioChat audioChat;
+  final Telepathy telepathy;
   final StateController stateController;
 
   const ProfileSettings(
       {super.key,
       required this.controller,
-      required this.audioChat,
+      required this.telepathy,
       required this.stateController});
 
   @override
@@ -844,9 +844,9 @@ class ProfileSettingsState extends State<ProfileSettings> {
                                     onPressed: () {
                                       widget.controller
                                           .setActiveProfile(profile.id);
-                                      widget.audioChat
+                                      widget.telepathy
                                           .setIdentity(key: profile.keypair);
-                                      widget.audioChat.restartManager();
+                                      widget.telepathy.restartManager();
                                     },
                                     noSplash: true,
                                     disabledColor: widget
@@ -962,14 +962,14 @@ class ProfileSettingsState extends State<ProfileSettings> {
 
 class NetworkSettings extends StatefulWidget {
   final SettingsController controller;
-  final AudioChat audioChat;
+  final Telepathy telepathy;
   final StateController stateController;
   final BoxConstraints constraints;
 
   const NetworkSettings(
       {super.key,
       required this.controller,
-      required this.audioChat,
+      required this.telepathy,
       required this.stateController,
       required this.constraints});
 
@@ -1104,7 +1104,7 @@ class NetworkSettingsState extends State<NetworkSettings> {
 
     if (changed) {
       widget.controller.saveNetworkConfig();
-      widget.audioChat.restartManager();
+      widget.telepathy.restartManager();
     }
   }
 }
@@ -1519,7 +1519,7 @@ class DropDown extends StatelessWidget {
 }
 
 class AudioDevices extends ChangeNotifier {
-  final AudioChat audioChat;
+  final Telepathy telepathy;
   Timer? periodicTimer;
 
   late List<String> _inputDevices = [];
@@ -1530,7 +1530,7 @@ class AudioDevices extends ChangeNotifier {
   List<String> get inputDevices => ['Default', ..._inputDevices];
   List<String> get outputDevices => ['Default', ..._outputDevices];
 
-  AudioDevices({required this.audioChat}) {
+  AudioDevices({required this.telepathy}) {
     DebugConsole.debug('AudioDevices created');
     updateDevices();
   }
@@ -1542,7 +1542,7 @@ class AudioDevices extends ChangeNotifier {
   }
 
   void updateDevices() async {
-    var (inputDevices, outputDevices) = await audioChat.listDevices();
+    var (inputDevices, outputDevices) = await telepathy.listDevices();
 
     bool notify = false;
 

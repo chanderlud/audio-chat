@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:audio_chat/src/rust/api/error.dart';
-import 'package:audio_chat/src/rust/api/audio_chat.dart';
+import 'package:telepathy/src/rust/api/error.dart';
+import 'package:telepathy/src/rust/api/telepathy.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';

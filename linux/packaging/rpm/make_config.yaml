@@ -1,4 +1,4 @@
-display_name: Audio Chat
+display_name: Telepathy
 icon: linux/icon.png
 summary: A cross-platform P2P chat application
 group: Applications/Multimedia
@@ -6,17 +6,17 @@ vendor: Chander Luderman Miller
 packager: Chander Luderman Miller
 packagerEmail: me@chanchan.dev
 license: MIT
-url: https://github.com/chanderlud/audio-chat
+url: https://github.com/chanderlud/telepathy
 
 requires:
   - libsecret
   - gtk3
 
 keywords:
-  - Audio Chat
+  - Telepathy
   - p2p
 
-generic_name: Audio Chat
+generic_name: Telepathy
 
 categories:
   - Development
@@ -27,4 +27,4 @@ startup_notify: true
 description: A peer-to-peer cross-platform audio chat application.
 
 postinstall_scripts:
-  - echo "Thank you for installing Audio Chat!"
+  - echo "Thank you for installing Telepathy!"

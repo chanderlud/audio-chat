@@ -22,9 +22,9 @@
 
 ## History
 
-- Began as a Python Tkinter app with simple UDP networking and AES cryptography
+- Began as Audio Chat, a Python Tkinter app with simple UDP networking and AES cryptography
 - Moved to the current Rust audio processing stack with improved stability
 - Upgraded from custom networking and cryptography stack to libp2p for improved security, p2p networking without port forwarding, and p2p networking in web browsers
 
 ##
-![screenshot of audio chat user interface](https://chanchan.dev/static/images/audio-chat.png)
+![screenshot of telepathy user interface](https://chanchan.dev/static/images/audio-chat.png)

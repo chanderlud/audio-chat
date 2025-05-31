@@ -7,7 +7,7 @@ use libp2p::TransportError;
 use libp2p_stream::{AlreadyRegistered, OpenStreamError};
 use tokio::time::error::Elapsed;
 
-/// generic error type for audio chat
+/// generic error type for Telepathy
 #[derive(Debug)]
 pub(crate) struct Error {
     pub(crate) kind: ErrorKind,

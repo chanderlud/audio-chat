@@ -33,7 +33,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
 };
 
-pub(crate) const CLASS_NAME: &str = "audio_chat_overlay";
+pub(crate) const CLASS_NAME: &str = "telepathy_overlay";
 const FONT_BYTES: &[u8] = include_bytes!("../../../../../assets/Inconsolata.ttf");
 
 pub(crate) unsafe fn build_window(width: i32, height: i32, x: i32, y: i32) -> Result<HWND> {
