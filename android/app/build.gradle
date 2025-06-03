@@ -23,7 +23,7 @@ if (flutterVersionName == null) {
 }
 
 android {
-    namespace "com.cflm-studios.telepathy"
+    namespace "com.telepathy.frontend"
     compileSdkVersion flutter.compileSdkVersion
     ndkVersion flutter.ndkVersion
 

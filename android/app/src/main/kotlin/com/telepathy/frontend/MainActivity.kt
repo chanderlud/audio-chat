@@ -1,4 +1,4 @@
-package com.cflm-studios.telepathy
+package com.telepathy.frontend
 
 import io.flutter.embedding.android.FlutterActivity
 
