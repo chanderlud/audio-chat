@@ -27,4 +27,4 @@
 - Upgraded from custom networking and cryptography stack to libp2p for improved security, p2p networking without port forwarding, and p2p networking in web browsers
 
 ##
-![screenshot of telepathy user interface](https://chanchan.dev/static/images/audio-chat.png)
+![screenshot of telepathy user interface](https://chanchan.dev/static/images/telepathy.png)
