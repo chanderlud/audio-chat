@@ -21,6 +21,7 @@ import '../src/rust/api/overlay/overlay.dart';
 
 class SettingsPage extends StatefulWidget {
   final SettingsController controller;
+  final InterfaceController interfaceController;
   final Telepathy telepathy;
   final StateController stateController;
   final StatisticsController statisticsController;
@@ -38,7 +39,8 @@ class SettingsPage extends StatefulWidget {
       required this.statisticsController,
       required this.overlay,
       required this.audioDevices,
-      required this.constraints});
+      required this.constraints,
+      required this.interfaceController});
 
   @override
   SettingsPageState createState() => SettingsPageState();
@@ -159,6 +161,8 @@ class SettingsPageState extends State<SettingsPage>
                                     telepathy: widget.telepathy,
                                     stateController: widget.stateController,
                                     constraints: constraints);
+                              } else if (route == 3) {
+                                return InterfaceSettings(controller: widget.interfaceController, constraints: constraints);
                               } else if (route == 4) {
                                 String? filter = _searchController.text.isEmpty
                                     ? null
@@ -1109,6 +1113,77 @@ class NetworkSettingsState extends State<NetworkSettings> {
   }
 }
 
+class InterfaceSettings extends StatefulWidget {
+  final InterfaceController controller;
+  final BoxConstraints constraints;
+
+  const InterfaceSettings({super.key, required this.controller, required this.constraints});
+
+  @override
+  InterfaceSettingsState createState() => InterfaceSettingsState();
+}
+
+class InterfaceSettingsState extends State<InterfaceSettings> {
+  final TextEditingController _primaryColorInput = TextEditingController();
+  String? _primaryColorError;
+
+  @override
+  void initState() {
+    super.initState();
+    _primaryColorInput.text = "#${widget.controller.primaryColor.toRadixString(16)}";
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    double width = widget.constraints.maxWidth < 650
+        ? widget.constraints.maxWidth
+        : (widget.constraints.maxWidth - 20) / 2;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Center(
+          child: Wrap(
+            spacing: 20,
+            runSpacing: 20,
+            children: [
+              SizedBox(
+                  width: width,
+                  child: TextInput(
+                    labelText: 'Primary Color',
+                    controller: _primaryColorInput,
+                    onChanged: (String value) {
+                      int? color = int.tryParse(value.replaceAll('#', ''), radix: 16);
+
+                      if (color == null) {
+                        _primaryColorError = 'Invalid hex color';
+                      } else {
+                        _primaryColorError = null;
+                        widget.controller.setPrimaryColor(color);
+                      }
+                    },
+                    error: _primaryColorError == null
+                        ? null
+                        : Text(_primaryColorError!,
+                        style: const TextStyle(color: Colors.red)),
+                  )),
+              Button(
+                text: 'Revert primary color to default',
+                onPressed: () {
+                  widget.controller.setPrimaryColor(0xff5538e5);
+                  _primaryColorInput.text = '#ff5538e5';
+                },
+                width: 200,
+                height: 25,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class OverlaySettings extends StatefulWidget {
   final Overlay overlay;
   final SettingsController controller;
@@ -1438,7 +1513,7 @@ class OverlayPositionWidgetState extends State<OverlayPositionWidget> {
                       decoration: BoxDecoration(
                         color: widget.controller.overlayConfig.backgroundColor,
                         border:
-                            Border.all(color: Colors.yellow.shade400, width: 2),
+                            Border.all(color: Theme.of(context).colorScheme.secondary, width: 2),
                       ),
                       child: MouseRegion(
                         cursor: SystemMouseCursors.move,

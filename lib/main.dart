@@ -246,6 +246,9 @@ Future<void> main() async {
     updateDenoiseModel(settingsController.denoiseModel!, telepathy);
   }
 
+  final InterfaceController interfaceController = InterfaceController(options: options);
+  interfaceController.init();
+
   // Future.microtask(() {
   //   sleep(const Duration(seconds: 1));
   //   telepathy.joinRoom(contact: Contact(nickname: 'test room', peerId: '12D3KooWRVJCFqFBrasjtcGHnRuuut9fQLsfcUNLfWFFqjMm2p4n'));
@@ -254,6 +257,7 @@ Future<void> main() async {
   runApp(TelepathyApp(
     telepathy: telepathy,
     settingsController: settingsController,
+    interfaceController: interfaceController,
     callStateController: stateController,
     player: soundPlayer,
     chatStateController: chatStateController,
@@ -267,6 +271,7 @@ Future<void> main() async {
 class TelepathyApp extends StatelessWidget {
   final Telepathy telepathy;
   final SettingsController settingsController;
+  final InterfaceController interfaceController;
   final StateController callStateController;
   final StatisticsController statisticsController;
   final SoundPlayer player;
@@ -283,56 +288,62 @@ class TelepathyApp extends StatelessWidget {
       required this.chatStateController,
       required this.statisticsController,
       required this.overlay,
-      required this.audioDevices});
+      required this.audioDevices,
+      required this.interfaceController});
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      navigatorKey: navigatorKey,
-      theme: ThemeData(
-        dialogTheme: const DialogTheme(
-          surfaceTintColor: Color(0xFF27292A),
-        ),
-        sliderTheme: SliderThemeData(
-          showValueIndicator: ShowValueIndicator.always,
-          overlayColor: Colors.transparent,
-          trackShape: CustomTrackShape(),
-          inactiveTrackColor: const Color(0xFF121212),
-          activeTrackColor: const Color(0xFFdb5c5c),
-        ),
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFFFD6D6D),
-          secondary: Color(0xFFdb5c5c),
-          brightness: Brightness.dark,
-          surface: Color(0xFF222425),
-          secondaryContainer: Color(0xFF191919),
-          tertiaryContainer: Color(0xFF27292A),
-          surfaceDim: Color(0xFF121212),
-        ),
-        switchTheme: SwitchThemeData(
-          trackOutlineWidth: WidgetStateProperty.all(0),
-          trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
-          overlayColor: WidgetStateProperty.all(Colors.transparent),
-          thumbColor: WidgetStateProperty.all(Theme.of(context).indicatorColor),
-        ),
-        dropdownMenuTheme: DropdownMenuThemeData(
-          menuStyle: MenuStyle(
-            backgroundColor: WidgetStateProperty.all(const Color(0xFF191919)),
-            surfaceTintColor: WidgetStateProperty.all(const Color(0xFF191919)),
+    return ListenableBuilder(listenable: interfaceController, builder: (BuildContext context, Widget? child) {
+      return MaterialApp(
+        navigatorKey: navigatorKey,
+        theme: ThemeData(
+          dialogTheme: const DialogTheme(
+            surfaceTintColor: Color(0xFF27292A),
+          ),
+          sliderTheme: SliderThemeData(
+            showValueIndicator: ShowValueIndicator.always,
+            overlayColor: Colors.transparent,
+            trackShape: CustomTrackShape(),
+            inactiveTrackColor: const Color(0xFF121212),
+            activeTrackColor: Color(interfaceController.primaryColor),
+          ),
+          colorScheme: ColorScheme.dark(
+            // primary: Color(0xFF7458ff),
+            // secondary: Color(0xFF6950e8),
+            primary: Color(interfaceController.primaryColor),
+            secondary: Color(interfaceController.secondaryColor),
+            brightness: Brightness.dark,
+            surface: const Color(0xFF222425),
+            secondaryContainer: const Color(0xFF191919),
+            tertiaryContainer: const Color(0xFF27292A),
+            surfaceDim: const Color(0xFF121212),
+          ),
+          switchTheme: SwitchThemeData(
+            trackOutlineWidth: WidgetStateProperty.all(0),
+            trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
+            overlayColor: WidgetStateProperty.all(Colors.transparent),
+            thumbColor: WidgetStateProperty.all(Theme.of(context).indicatorColor),
+          ),
+          dropdownMenuTheme: DropdownMenuThemeData(
+            menuStyle: MenuStyle(
+              backgroundColor: WidgetStateProperty.all(const Color(0xFF191919)),
+              surfaceTintColor: WidgetStateProperty.all(const Color(0xFF191919)),
+            ),
           ),
         ),
-      ),
-      home: HomePage(
-        telepathy: telepathy,
-        settingsController: settingsController,
-        stateController: callStateController,
-        player: player,
-        chatStateController: chatStateController,
-        statisticsController: statisticsController,
-        overlay: overlay,
-        audioDevices: audioDevices,
-      ),
-    );
+        home: HomePage(
+          telepathy: telepathy,
+          settingsController: settingsController,
+          interfaceController: interfaceController,
+          stateController: callStateController,
+          player: player,
+          chatStateController: chatStateController,
+          statisticsController: statisticsController,
+          overlay: overlay,
+          audioDevices: audioDevices,
+        ),
+      );
+    });
   }
 }
 
@@ -340,6 +351,7 @@ class TelepathyApp extends StatelessWidget {
 class HomePage extends StatelessWidget {
   final Telepathy telepathy;
   final SettingsController settingsController;
+  final InterfaceController interfaceController;
   final StateController stateController;
   final StatisticsController statisticsController;
   final SoundPlayer player;
@@ -351,6 +363,7 @@ class HomePage extends StatelessWidget {
       {super.key,
       required this.telepathy,
       required this.settingsController,
+      required this.interfaceController,
       required this.stateController,
       required this.player,
       required this.chatStateController,
@@ -378,6 +391,7 @@ class HomePage extends StatelessWidget {
     CallControls callControls = CallControls(
       telepathy: telepathy,
       settingsController: settingsController,
+      interfaceController: interfaceController,
       stateController: stateController,
       statisticsController: statisticsController,
       player: player,
@@ -1052,6 +1066,7 @@ class ContactWidgetState extends State<ContactWidget> {
 class CallControls extends StatelessWidget {
   final Telepathy telepathy;
   final SettingsController settingsController;
+  final InterfaceController interfaceController;
   final StateController stateController;
   final StatisticsController statisticsController;
   final SoundPlayer player;
@@ -1068,7 +1083,8 @@ class CallControls extends StatelessWidget {
       required this.statisticsController,
       required this.notifier,
       required this.overlay,
-      required this.audioDevices});
+      required this.audioDevices,
+      required this.interfaceController});
 
   @override
   Widget build(BuildContext context) {
@@ -1256,6 +1272,7 @@ class CallControls extends StatelessWidget {
                                       BoxConstraints constraints) {
                                 return SettingsPage(
                                   controller: settingsController,
+                                  interfaceController: interfaceController,
                                   telepathy: telepathy,
                                   stateController: stateController,
                                   statisticsController: statisticsController,

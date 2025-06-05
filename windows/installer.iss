@@ -4,7 +4,7 @@
 #define MyAppName "Telepathy"
 #define MyAppVersion "0.1.0"
 #define MyAppPublisher "CFLM Studios"
-#define MyAppURL "https://chanchan.dev/audio-chat"
+#define MyAppURL "https://chanchan.dev/telepathy"
 #define MyAppExeName "telepathy.exe"
 
 [Setup]

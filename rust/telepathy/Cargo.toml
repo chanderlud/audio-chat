@@ -44,7 +44,7 @@ objc2-foundation = "*"
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 uuid = { version = "1", features = ["v4", "js"] }
-getrandom = { version = "0.2", features = ["js"] }
+getrandom = { version = "0.3", features = ["wasm_js"] }
 tokio = { version = "1", features = ["time", "io-util", "macros", "rt"] }
 libp2p = { version = "0.55", features = ["quic", "ping", "dcutr", "identify", "macros", "noise", "yamux", "autonat", "relay", "wasm-bindgen"] }
 libp2p-webtransport-websys = "0.5"
