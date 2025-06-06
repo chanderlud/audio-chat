@@ -9,6 +9,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `play_sound`, `processor`, `wav_to_sea`
 
+/// loads a ringtone into a sea file for future use in the backend
 Future<void> loadRingtone({required String path}) =>
     RustLib.instance.api.crateApiPlayerLoadRingtone(path: path);
 

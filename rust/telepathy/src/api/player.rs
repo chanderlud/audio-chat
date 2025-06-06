@@ -38,6 +38,8 @@ use sea_codec::decoder::SeaDecoder;
 use sea_codec::encoder::{EncoderSettings, SeaEncoder};
 use sea_codec::ProcessorMessage;
 
+type DecodedReceiver = (Receiver<ProcessorMessage>, usize);
+
 #[frb(opaque)]
 pub struct SoundPlayer {
     /// A multiplier applied to sound effects
@@ -342,7 +344,7 @@ async fn play_sound(
 
 /// Processes the WAV data
 fn processor(
-    input: (Option<Vec<u8>>, Option<(Receiver<ProcessorMessage>, usize)>),
+    input: (Option<Vec<u8>>, Option<DecodedReceiver>),
     sample_format: SampleFormat,
     spec: AudioHeader,
     output_volume: Arc<AtomicF32>,
