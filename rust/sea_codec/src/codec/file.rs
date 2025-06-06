@@ -1,7 +1,6 @@
 use crate::{codec::chunk::SeaChunk, encoder::EncoderSettings, ProcessorMessage};
 use kanal::Receiver;
-use std::io::{Cursor, Read};
-use std::rc::Rc;
+use std::io::Cursor;
 
 use super::{
     chunk::SeaChunkType,
@@ -20,7 +19,6 @@ pub struct SeaFileHeader {
     pub chunk_size: u16,
     pub frames_per_chunk: u16,
     pub sample_rate: u32,
-    pub metadata: Rc<String>,
 }
 
 impl SeaFileHeader {
@@ -48,11 +46,6 @@ impl SeaFileHeader {
         let chunk_size = read_u16_le(&mut reader)?;
         let frames_per_chunk = read_u16_le(&mut reader)?;
         let sample_rate = read_u32_le(&mut reader)?;
-        let metadata_size = read_u32_le(&mut reader)?;
-
-        let mut metadata = Vec::<u8>::with_capacity(metadata_size as usize);
-        reader.read_exact(&mut metadata)?;
-        let metadata_string = String::from_utf8(metadata).unwrap();
 
         let res: SeaFileHeader = Self {
             version,
@@ -60,7 +53,6 @@ impl SeaFileHeader {
             chunk_size,
             frames_per_chunk,
             sample_rate,
-            metadata: Rc::new(metadata_string),
         };
 
         if !res.validate() {
@@ -79,9 +71,6 @@ impl SeaFileHeader {
         output.extend_from_slice(&self.chunk_size.to_le_bytes());
         output.extend_from_slice(&self.frames_per_chunk.to_le_bytes());
         output.extend_from_slice(&self.sample_rate.to_le_bytes());
-        let metadata_len_u32 = self.metadata.len() as u32;
-        output.extend_from_slice(&metadata_len_u32.to_le_bytes());
-        output.extend_from_slice(self.metadata.as_bytes());
 
         output
     }

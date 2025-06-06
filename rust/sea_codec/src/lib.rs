@@ -5,6 +5,7 @@ pub mod decoder;
 pub mod encoder;
 
 /// a message containing either a frame of audio or silence
+#[derive(Debug)]
 pub enum ProcessorMessage {
     Data(Bytes),
     Samples(Box<[i16; 480]>),

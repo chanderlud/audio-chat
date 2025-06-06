@@ -77,13 +77,13 @@ wasm_sync = "0.1"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 uuid = { version = "1", features = ["v4"] }
-tokio = { version = "1", features = ["time", "io-util", "macros", "process", "net", "rt-multi-thread"] }
+tokio = { version = "1", features = ["time", "io-util", "macros", "process", "net", "rt-multi-thread", "fs"] }
 libp2p = { version = "0.55", features = ["tokio", "quic", "tcp", "ping", "dcutr", "identify", "macros", "noise", "yamux", "autonat", "relay"] }
 simple-logging = "2"
 
 [dev-dependencies]
 rand = "0.8"
-criterion = "0.5.1"
+criterion = "0.6.0"
 
 [[bench]]
 name = "bench"

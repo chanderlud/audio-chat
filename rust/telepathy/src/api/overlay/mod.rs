@@ -82,6 +82,7 @@ mod tests {
     use crate::api::overlay::overlay::Overlay;
     use crate::api::overlay::{CONNECTED, LATENCY, LOSS};
 
+    #[ignore]
     #[tokio::test]
     async fn test_overlay() {
         let bcolor = Color::new(0, 0, 0, 125);

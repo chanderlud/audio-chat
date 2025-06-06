@@ -154,7 +154,6 @@ abstract class Telepathy implements RustOpaqueInterface {
           required FutureOr<void> Function(bool) callState,
           required FutureOr<void> Function(String, String) sessionStatus,
           required FutureOr<void> Function(Telepathy) startSessions,
-          required FutureOr<Uint8List?> Function() loadRingtone,
           required FutureOr<void> Function(Statistics) statistics,
           required FutureOr<void> Function(ChatMessage) messageReceived,
           required FutureOr<void> Function(bool, bool) managerActive,
@@ -173,7 +172,6 @@ abstract class Telepathy implements RustOpaqueInterface {
           callState: callState,
           sessionStatus: sessionStatus,
           startSessions: startSessions,
-          loadRingtone: loadRingtone,
           statistics: statistics,
           messageReceived: messageReceived,
           managerActive: managerActive,
@@ -211,6 +209,8 @@ abstract class Telepathy implements RustOpaqueInterface {
   void setPlayCustomRingtones({required bool play});
 
   void setRmsThreshold({required double decimal});
+
+  void setSendCustomRingtone({required bool send});
 
   Future<void> startScreenshare({required Contact contact});
 

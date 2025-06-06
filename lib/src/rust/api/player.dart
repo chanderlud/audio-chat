@@ -4,9 +4,13 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../frb_generated.dart';
+import 'error.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `play_sound`, `processor`
+// These functions are ignored because they are not marked as `pub`: `play_sound`, `processor`, `wav_to_sea`
+
+Future<void> loadRingtone({required String path}) =>
+    RustLib.instance.api.crateApiPlayerLoadRingtone(path: path);
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < Host >>>
 abstract class ArcHost implements RustOpaqueInterface {}

@@ -162,7 +162,9 @@ class SettingsPageState extends State<SettingsPage>
                                     stateController: widget.stateController,
                                     constraints: constraints);
                               } else if (route == 3) {
-                                return InterfaceSettings(controller: widget.interfaceController, constraints: constraints);
+                                return InterfaceSettings(
+                                    controller: widget.interfaceController,
+                                    constraints: constraints);
                               } else if (route == 4) {
                                 String? filter = _searchController.text.isEmpty
                                     ? null
@@ -649,8 +651,11 @@ class _AVSettingsState extends State<AVSettings> {
                   if (result != null) {
                     String? path = result.files.single.path;
                     widget.controller.updateCustomRingtoneFile(path);
+                    widget.telepathy.setSendCustomRingtone(send: true);
+                    loadRingtone(path: path!);
                   } else {
                     widget.controller.updateCustomRingtoneFile(null);
+                    widget.telepathy.setSendCustomRingtone(send: false);
                   }
                 }),
             ListenableBuilder(
@@ -1117,7 +1122,8 @@ class InterfaceSettings extends StatefulWidget {
   final InterfaceController controller;
   final BoxConstraints constraints;
 
-  const InterfaceSettings({super.key, required this.controller, required this.constraints});
+  const InterfaceSettings(
+      {super.key, required this.controller, required this.constraints});
 
   @override
   InterfaceSettingsState createState() => InterfaceSettingsState();
@@ -1130,7 +1136,8 @@ class InterfaceSettingsState extends State<InterfaceSettings> {
   @override
   void initState() {
     super.initState();
-    _primaryColorInput.text = "#${widget.controller.primaryColor.toRadixString(16)}";
+    _primaryColorInput.text =
+        "#${widget.controller.primaryColor.toRadixString(16)}";
   }
 
   @override
@@ -1153,7 +1160,8 @@ class InterfaceSettingsState extends State<InterfaceSettings> {
                     labelText: 'Primary Color',
                     controller: _primaryColorInput,
                     onChanged: (String value) {
-                      int? color = int.tryParse(value.replaceAll('#', ''), radix: 16);
+                      int? color =
+                          int.tryParse(value.replaceAll('#', ''), radix: 16);
 
                       if (color == null) {
                         _primaryColorError = 'Invalid hex color';
@@ -1165,7 +1173,7 @@ class InterfaceSettingsState extends State<InterfaceSettings> {
                     error: _primaryColorError == null
                         ? null
                         : Text(_primaryColorError!,
-                        style: const TextStyle(color: Colors.red)),
+                            style: const TextStyle(color: Colors.red)),
                   )),
               Button(
                 text: 'Revert primary color to default',
@@ -1512,8 +1520,9 @@ class OverlayPositionWidgetState extends State<OverlayPositionWidget> {
                   child: Container(
                       decoration: BoxDecoration(
                         color: widget.controller.overlayConfig.backgroundColor,
-                        border:
-                            Border.all(color: Theme.of(context).colorScheme.secondary, width: 2),
+                        border: Border.all(
+                            color: Theme.of(context).colorScheme.secondary,
+                            width: 2),
                       ),
                       child: MouseRegion(
                         cursor: SystemMouseCursors.move,

@@ -1,6 +1,5 @@
 use bytes::Bytes;
 use kanal::{Receiver, Sender};
-use std::rc::Rc;
 
 use crate::codec::{
     common::SeaError,
@@ -57,7 +56,6 @@ impl SeaEncoder {
             chunk_size: 0, // will be set later by the first chunk
             frames_per_chunk: settings.frames_per_chunk,
             sample_rate,
-            metadata: Rc::new(String::new()),
         };
 
         Ok(SeaEncoder {

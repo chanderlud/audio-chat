@@ -72,7 +72,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.10.0';
 
   @override
-  int get rustContentHash => 33495952;
+  int get rustContentHash => -1224019828;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -279,7 +279,6 @@ abstract class RustLibApi extends BaseApi {
       required FutureOr<void> Function(bool) callState,
       required FutureOr<void> Function(String, String) sessionStatus,
       required FutureOr<void> Function(Telepathy) startSessions,
-      required FutureOr<Uint8List?> Function() loadRingtone,
       required FutureOr<void> Function(Statistics) statistics,
       required FutureOr<void> Function(ChatMessage) messageReceived,
       required FutureOr<void> Function(bool, bool) managerActive,
@@ -327,6 +326,9 @@ abstract class RustLibApi extends BaseApi {
   void crateApiTelepathyTelepathySetRmsThreshold(
       {required Telepathy that, required double decimal});
 
+  void crateApiTelepathyTelepathySetSendCustomRingtone(
+      {required Telepathy that, required bool send});
+
   Future<void> crateApiTelepathyTelepathyStartScreenshare(
       {required Telepathy that, required Contact contact});
 
@@ -341,6 +343,8 @@ abstract class RustLibApi extends BaseApi {
   (String, Uint8List) crateApiCryptoGenerateKeys();
 
   Future<void> crateApiLoggerInitLogger();
+
+  Future<void> crateApiPlayerLoadRingtone({required String path});
 
   void crateApiLoggerRustSetUp();
 
@@ -2158,7 +2162,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       required FutureOr<void> Function(bool) callState,
       required FutureOr<void> Function(String, String) sessionStatus,
       required FutureOr<void> Function(Telepathy) startSessions,
-      required FutureOr<Uint8List?> Function() loadRingtone,
       required FutureOr<void> Function(Statistics) statistics,
       required FutureOr<void> Function(ChatMessage) messageReceived,
       required FutureOr<void> Function(bool, bool) managerActive,
@@ -2189,8 +2192,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             sessionStatus, serializer);
         sse_encode_DartFn_Inputs_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTelepathy_Output_unit_AnyhowException(
             startSessions, serializer);
-        sse_encode_DartFn_Inputs__Output_opt_list_prim_u_8_strict_AnyhowException(
-            loadRingtone, serializer);
         sse_encode_DartFn_Inputs_statistics_Output_unit_AnyhowException(
             statistics, serializer);
         sse_encode_DartFn_Inputs_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerChatMessage_Output_unit_AnyhowException(
@@ -2221,7 +2222,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callState,
         sessionStatus,
         startSessions,
-        loadRingtone,
         statistics,
         messageReceived,
         managerActive,
@@ -2247,7 +2247,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "callState",
           "sessionStatus",
           "startSessions",
-          "loadRingtone",
           "statistics",
           "messageReceived",
           "managerActive",
@@ -2643,6 +2642,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  void crateApiTelepathyTelepathySetSendCustomRingtone(
+      {required Telepathy that, required bool send}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTelepathy(
+            that, serializer);
+        sse_encode_bool(send, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 77)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiTelepathyTelepathySetSendCustomRingtoneConstMeta,
+      argValues: [that, send],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiTelepathyTelepathySetSendCustomRingtoneConstMeta =>
+      const TaskConstMeta(
+        debugName: "Telepathy_set_send_custom_ringtone",
+        argNames: ["that", "send"],
+      );
+
+  @override
   Future<void> crateApiTelepathyTelepathyStartScreenshare(
       {required Telepathy that, required Contact contact}) {
     return handler.executeNormal(NormalTask(
@@ -2653,7 +2679,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerContact(
             contact, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 77, port: port_);
+            funcId: 78, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2682,7 +2708,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerContact(
             contact, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 78, port: port_);
+            funcId: 79, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2711,7 +2737,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerContact(
             contact, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 79, port: port_);
+            funcId: 80, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2736,7 +2762,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_StreamSink_String_Sse(s, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 80)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 81)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2760,7 +2786,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 81)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 82)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_record_string_list_prim_u_8_strict,
@@ -2783,7 +2809,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 82, port: port_);
+            funcId: 83, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2801,11 +2827,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiPlayerLoadRingtone({required String path}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_String(path, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 84, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_dart_error,
+      ),
+      constMeta: kCrateApiPlayerLoadRingtoneConstMeta,
+      argValues: [path],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiPlayerLoadRingtoneConstMeta => const TaskConstMeta(
+        debugName: "load_ringtone",
+        argNames: ["path"],
+      );
+
+  @override
   void crateApiLoggerRustSetUp() {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 83)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 85)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2830,7 +2880,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_StreamSink_String_Sse(streamSink, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 84, port: port_);
+            funcId: 86, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2855,7 +2905,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 85, port: port_);
+            funcId: 87, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_statistics,
@@ -3070,40 +3120,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       if (rawOutput != null) {
         serializer.buffer.putUint8(0);
         sse_encode_bool(rawOutput.value, serializer);
-      } else {
-        serializer.buffer.putUint8(1);
-        sse_encode_AnyhowException(rawError!.value, serializer);
-      }
-      final output = serializer.intoRaw();
-
-      generalizedFrbRustBinding.dartFnDeliverOutput(
-          callId: callId,
-          ptr: output.ptr,
-          rustVecLen: output.rustVecLen,
-          dataLen: output.dataLen);
-    };
-  }
-
-  Future<void> Function(
-    int,
-  ) encode_DartFn_Inputs__Output_opt_list_prim_u_8_strict_AnyhowException(
-      FutureOr<Uint8List?> Function() raw) {
-    return (
-      callId,
-    ) async {
-      Box<Uint8List?>? rawOutput;
-      Box<AnyhowException>? rawError;
-      try {
-        rawOutput = Box(await raw());
-      } catch (e, s) {
-        rawError = Box(AnyhowException("$e\n\n$s"));
-      }
-
-      final serializer = SseSerializer(generalizedFrbRustBinding);
-      assert((rawOutput != null) ^ (rawError != null));
-      if (rawOutput != null) {
-        serializer.buffer.putUint8(0);
-        sse_encode_opt_list_prim_u_8_strict(rawOutput.value, serializer);
       } else {
         serializer.buffer.putUint8(1);
         sse_encode_AnyhowException(rawError!.value, serializer);
@@ -3621,14 +3637,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   FutureOr<bool> Function(String, Uint8List?, DartNotify)
       dco_decode_DartFn_Inputs_String_opt_list_prim_u_8_strict_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartNotify_Output_bool_AnyhowException(
-          dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    throw UnimplementedError('');
-  }
-
-  @protected
-  FutureOr<Uint8List?> Function()
-      dco_decode_DartFn_Inputs__Output_opt_list_prim_u_8_strict_AnyhowException(
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     throw UnimplementedError('');
@@ -4984,17 +4992,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void
-      sse_encode_DartFn_Inputs__Output_opt_list_prim_u_8_strict_AnyhowException(
-          FutureOr<Uint8List?> Function() self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_DartOpaque(
-        encode_DartFn_Inputs__Output_opt_list_prim_u_8_strict_AnyhowException(
-            self),
-        serializer);
-  }
-
-  @protected
   void sse_encode_DartFn_Inputs_bool_Output_unit_AnyhowException(
       FutureOr<void> Function(bool) self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -5968,6 +5965,9 @@ class TelepathyImpl extends RustOpaque implements Telepathy {
 
   void setRmsThreshold({required double decimal}) => RustLib.instance.api
       .crateApiTelepathyTelepathySetRmsThreshold(that: this, decimal: decimal);
+
+  void setSendCustomRingtone({required bool send}) => RustLib.instance.api
+      .crateApiTelepathyTelepathySetSendCustomRingtone(that: this, send: send);
 
   Future<void> startScreenshare({required Contact contact}) => RustLib
       .instance.api

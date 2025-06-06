@@ -242,11 +242,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  FutureOr<Uint8List?> Function()
-      dco_decode_DartFn_Inputs__Output_opt_list_prim_u_8_strict_AnyhowException(
-          dynamic raw);
-
-  @protected
   FutureOr<void> Function(bool)
       dco_decode_DartFn_Inputs_bool_Output_unit_AnyhowException(dynamic raw);
 
@@ -911,11 +906,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       sse_encode_DartFn_Inputs_String_opt_list_prim_u_8_strict_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartNotify_Output_bool_AnyhowException(
           FutureOr<bool> Function(String, Uint8List?, DartNotify) self,
           SseSerializer serializer);
-
-  @protected
-  void
-      sse_encode_DartFn_Inputs__Output_opt_list_prim_u_8_strict_AnyhowException(
-          FutureOr<Uint8List?> Function() self, SseSerializer serializer);
 
   @protected
   void sse_encode_DartFn_Inputs_bool_Output_unit_AnyhowException(

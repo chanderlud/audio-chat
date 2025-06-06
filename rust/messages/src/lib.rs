@@ -42,6 +42,12 @@ pub struct AudioHeader {
     pub residual_bits: f64,
 }
 
+impl AudioHeader {
+    pub fn is_valid(&self) -> bool {
+        self.channels < 10 && self.sample_rate < 128_000 && self.sample_format != "unknown"
+    }
+}
+
 #[derive(Debug, Decode, Encode, Clone)]
 pub struct Attachment {
     pub name: String,

@@ -106,7 +106,7 @@ Future<void> main() async {
         List<int> bytes;
 
         if (ringtone == null) {
-          bytes = await readWavBytes('incoming');
+          bytes = await readSeaBytes('incoming');
         } else {
           bytes = ringtone;
         }
@@ -152,7 +152,7 @@ Future<void> main() async {
         outgoingSoundHandle?.cancel();
         stateController.endOfCall();
 
-        List<int> bytes = await readWavBytes('call_ended');
+        List<int> bytes = await readSeaBytes('call_ended');
         await soundPlayer.play(bytes: bytes);
 
         if (message.isNotEmpty &&
@@ -184,17 +184,17 @@ Future<void> main() async {
 
         if (disconnected && !stateController.callDisconnected) {
           // handles disconnects in an active call
-          bytes = await readWavBytes('disconnected');
+          bytes = await readSeaBytes('disconnected');
           stateController.setStatus('Reconnecting');
           stateController.callDisconnected = true;
         } else if (!disconnected && stateController.callDisconnected) {
           // handles reconnects in an active call
-          bytes = await readWavBytes('reconnected');
+          bytes = await readSeaBytes('reconnected');
           stateController.setStatus('Active');
           stateController.callDisconnected = false;
         } else if (!disconnected && !stateController.callDisconnected) {
           // handles the initial connect
-          bytes = await readWavBytes('connected');
+          bytes = await readSeaBytes('connected');
           stateController.setStatus('Active');
           stateController.callDisconnected = false;
         } else {
@@ -209,15 +209,6 @@ Future<void> main() async {
       startSessions: (Telepathy telepathy) {
         for (Contact contact in settingsController.contacts.values) {
           telepathy.startSession(contact: contact);
-        }
-      },
-      // called when the backend wants a custom ringtone
-      loadRingtone: () async {
-        if (settingsController.customRingtoneFile == null) {
-          return null;
-        } else {
-          return await File(settingsController.customRingtoneFile!)
-              .readAsBytes();
         }
       },
       // called when the backend has updated statistics
@@ -241,12 +232,15 @@ Future<void> main() async {
       play: settingsController.playCustomRingtones);
   telepathy.setInputDevice(device: settingsController.inputDevice);
   telepathy.setOutputDevice(device: settingsController.outputDevice);
+  telepathy.setSendCustomRingtone(
+      send: settingsController.customRingtoneFile != null);
 
   if (settingsController.denoiseModel != null) {
     updateDenoiseModel(settingsController.denoiseModel!, telepathy);
   }
 
-  final InterfaceController interfaceController = InterfaceController(options: options);
+  final InterfaceController interfaceController =
+      InterfaceController(options: options);
   interfaceController.init();
 
   // Future.microtask(() {
@@ -293,57 +287,62 @@ class TelepathyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(listenable: interfaceController, builder: (BuildContext context, Widget? child) {
-      return MaterialApp(
-        navigatorKey: navigatorKey,
-        theme: ThemeData(
-          dialogTheme: const DialogTheme(
-            surfaceTintColor: Color(0xFF27292A),
-          ),
-          sliderTheme: SliderThemeData(
-            showValueIndicator: ShowValueIndicator.always,
-            overlayColor: Colors.transparent,
-            trackShape: CustomTrackShape(),
-            inactiveTrackColor: const Color(0xFF121212),
-            activeTrackColor: Color(interfaceController.primaryColor),
-          ),
-          colorScheme: ColorScheme.dark(
-            // primary: Color(0xFF7458ff),
-            // secondary: Color(0xFF6950e8),
-            primary: Color(interfaceController.primaryColor),
-            secondary: Color(interfaceController.secondaryColor),
-            brightness: Brightness.dark,
-            surface: const Color(0xFF222425),
-            secondaryContainer: const Color(0xFF191919),
-            tertiaryContainer: const Color(0xFF27292A),
-            surfaceDim: const Color(0xFF121212),
-          ),
-          switchTheme: SwitchThemeData(
-            trackOutlineWidth: WidgetStateProperty.all(0),
-            trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
-            overlayColor: WidgetStateProperty.all(Colors.transparent),
-            thumbColor: WidgetStateProperty.all(Theme.of(context).indicatorColor),
-          ),
-          dropdownMenuTheme: DropdownMenuThemeData(
-            menuStyle: MenuStyle(
-              backgroundColor: WidgetStateProperty.all(const Color(0xFF191919)),
-              surfaceTintColor: WidgetStateProperty.all(const Color(0xFF191919)),
+    return ListenableBuilder(
+        listenable: interfaceController,
+        builder: (BuildContext context, Widget? child) {
+          return MaterialApp(
+            navigatorKey: navigatorKey,
+            theme: ThemeData(
+              dialogTheme: const DialogThemeData(
+                surfaceTintColor: Color(0xFF27292A),
+              ),
+              sliderTheme: SliderThemeData(
+                showValueIndicator: ShowValueIndicator.always,
+                overlayColor: Colors.transparent,
+                trackShape: CustomTrackShape(),
+                inactiveTrackColor: const Color(0xFF121212),
+                activeTrackColor: Color(interfaceController.primaryColor),
+              ),
+              colorScheme: ColorScheme.dark(
+                // primary: Color(0xFF7458ff),
+                // secondary: Color(0xFF6950e8),
+                primary: Color(interfaceController.primaryColor),
+                secondary: Color(interfaceController.secondaryColor),
+                brightness: Brightness.dark,
+                surface: const Color(0xFF222425),
+                secondaryContainer: const Color(0xFF191919),
+                tertiaryContainer: const Color(0xFF27292A),
+                surfaceDim: const Color(0xFF121212),
+              ),
+              switchTheme: SwitchThemeData(
+                trackOutlineWidth: WidgetStateProperty.all(0),
+                trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
+                overlayColor: WidgetStateProperty.all(Colors.transparent),
+                thumbColor:
+                    WidgetStateProperty.all(Theme.of(context).indicatorColor),
+              ),
+              dropdownMenuTheme: DropdownMenuThemeData(
+                menuStyle: MenuStyle(
+                  backgroundColor:
+                      WidgetStateProperty.all(const Color(0xFF191919)),
+                  surfaceTintColor:
+                      WidgetStateProperty.all(const Color(0xFF191919)),
+                ),
+              ),
             ),
-          ),
-        ),
-        home: HomePage(
-          telepathy: telepathy,
-          settingsController: settingsController,
-          interfaceController: interfaceController,
-          stateController: callStateController,
-          player: player,
-          chatStateController: chatStateController,
-          statisticsController: statisticsController,
-          overlay: overlay,
-          audioDevices: audioDevices,
-        ),
-      );
-    });
+            home: HomePage(
+              telepathy: telepathy,
+              settingsController: settingsController,
+              interfaceController: interfaceController,
+              stateController: callStateController,
+              player: player,
+              chatStateController: chatStateController,
+              statisticsController: statisticsController,
+              overlay: overlay,
+              audioDevices: audioDevices,
+            ),
+          );
+        });
   }
 }
 
@@ -1014,7 +1013,7 @@ class ContactWidgetState extends State<ContactWidget> {
                   widget.telepathy.endCall();
                   widget.stateController.endOfCall();
 
-                  List<int> bytes = await readWavBytes('call_ended');
+                  List<int> bytes = await readSeaBytes('call_ended');
                   await widget.player.play(bytes: bytes);
                 },
               ),
@@ -1041,7 +1040,7 @@ class ContactWidgetState extends State<ContactWidget> {
                   }
 
                   widget.stateController.setStatus('Connecting');
-                  List<int> bytes = await readWavBytes('outgoing');
+                  List<int> bytes = await readSeaBytes('outgoing');
                   outgoingSoundHandle = await widget.player.play(bytes: bytes);
 
                   try {
@@ -1219,8 +1218,8 @@ class CallControls extends StatelessWidget {
                               }
 
                               List<int> bytes = stateController.isMuted
-                                  ? await readWavBytes('unmute')
-                                  : await readWavBytes('mute');
+                                  ? await readSeaBytes('unmute')
+                                  : await readSeaBytes('mute');
                               player.play(bytes: bytes);
 
                               stateController.mute();
@@ -1240,8 +1239,8 @@ class CallControls extends StatelessWidget {
                         return IconButton(
                             onPressed: () async {
                               List<int> bytes = stateController.isDeafened
-                                  ? await readWavBytes('deafen')
-                                  : await readWavBytes('undeafen');
+                                  ? await readSeaBytes('deafen')
+                                  : await readSeaBytes('undeafen');
                               player.play(bytes: bytes);
 
                               stateController.deafen();
@@ -2359,8 +2358,9 @@ class ChatStateController extends ChangeNotifier {
     message.clearAttachments();
     notifyListeners();
 
-    // play the received sound
-    soundPlayer.play(bytes: await readWavBytes('message_received'));
+    // TODO there is no message received sound asset
+    // // play the received sound
+    // soundPlayer.play(bytes: await readSeaBytes(''));
   }
 
   /// adds a file to the list of attachments
@@ -2501,9 +2501,9 @@ Future<bool> acceptCallPrompt(BuildContext context, Contact contact) async {
   return result ?? false;
 }
 
-/// Reads the bytes of a wav file from the assets
-Future<List<int>> readWavBytes(String assetName) {
-  return readAssetBytes('sounds/$assetName.wav');
+/// Reads the bytes of a sea file from the assets
+Future<List<int>> readSeaBytes(String assetName) {
+  return readAssetBytes('sounds/$assetName.sea');
 }
 
 Future<void> updateDenoiseModel(String? model, Telepathy telepathy) async {

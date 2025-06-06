@@ -1,34 +1,42 @@
 use atomic_float::AtomicF32;
 use core::time::Duration;
-use std::mem;
-
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{Host, SampleFormat};
 use flutter_rust_bridge::spawn;
 use flutter_rust_bridge::{frb, spawn_blocking_with};
+use kanal::unbounded;
 #[cfg(not(target_family = "wasm"))]
 use kanal::{bounded, Sender};
 use log::error;
 use nnnoiseless::FRAME_SIZE;
 use rubato::Resampler;
+use std::mem;
+use std::path::Path;
 #[cfg(target_family = "wasm")]
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
+use tokio::fs::File;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::select;
 use tokio::sync::Notify;
+use tokio::task::spawn_blocking;
 #[cfg(not(target_family = "wasm"))]
 use tokio::time::sleep;
+use tokio_util::bytes::Bytes;
 #[cfg(target_family = "wasm")]
 use wasm_sync::{Condvar, Mutex};
 #[cfg(target_family = "wasm")]
 use wasmtimer::tokio::sleep;
 
-use crate::api::error::{Error, ErrorKind};
+use crate::api::error::{DartError, Error, ErrorKind};
 use crate::api::telepathy::DeviceName;
 use crate::api::utils::{db_to_multiplier, get_output_device, mul, resampler_factory, SendStream};
 use crate::frb_generated::FLUTTER_RUST_BRIDGE_HANDLER;
 use messages::AudioHeader;
+use sea_codec::decoder::SeaDecoder;
+use sea_codec::encoder::{EncoderSettings, SeaEncoder};
+use sea_codec::ProcessorMessage;
 
 #[frb(opaque)]
 pub struct SoundPlayer {
@@ -109,6 +117,36 @@ struct AudioBuffer {
     condvar: Condvar,
 }
 
+/// loads a ringtone into a sea file for future use in the backend
+pub async fn load_ringtone(path: String) -> Result<(), DartError> {
+    let path = Path::new(&path);
+
+    let mut input_file = File::open(path).await.map_err(|error| error.to_string())?;
+    let mut output_file = File::create("ringtone.sea")
+        .await
+        .map_err(|error| error.to_string())?;
+
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("wav") => {
+            let mut wav_bytes = Vec::new();
+            input_file
+                .read_to_end(&mut wav_bytes)
+                .await
+                .map_err(|error| error.to_string())?;
+            let sea_bytes = wav_to_sea(&wav_bytes, 3.0)
+                .await
+                .map_err(|error| error.to_string())?;
+            output_file
+                .write_all(&sea_bytes)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        _ => return Err("Unsupported file type".to_string().into()),
+    }
+
+    Ok(())
+}
+
 /// Internal play sound function
 async fn play_sound(
     bytes: Vec<u8>,
@@ -126,16 +164,55 @@ async fn play_sound(
     let output_config = output_device.default_output_config()?;
 
     // parse the input spec
-    let spec = AudioHeader::from(&bytes[0..44]);
+    let mut spec = AudioHeader::from(&bytes[0..44]);
+    let mut samples = None;
 
-    // match the correct sample format
-    let sample_format = match spec.sample_format.as_str() {
-        "u8" => SampleFormat::U8,
-        "i16" => SampleFormat::I16,
-        "i32" => SampleFormat::I32,
-        "f32" => SampleFormat::F32,
-        "f64" => SampleFormat::F64,
-        _ => return Err(ErrorKind::UnknownSampleFormat.into()),
+    let sample_format = if spec.is_valid() {
+        // match the correct sample format
+        match spec.sample_format.as_str() {
+            "u8" => SampleFormat::U8,
+            "i16" => SampleFormat::I16,
+            "i32" => SampleFormat::I32,
+            "f32" => SampleFormat::F32,
+            "f64" => SampleFormat::F64,
+            _ => return Err(ErrorKind::UnknownSampleFormat.into()),
+        }
+    } else {
+        let (input_sender, input_receiver) = unbounded();
+        let (output_sender, output_receiver) = unbounded();
+        let input_sender = input_sender.to_async();
+        let output_receiver = output_receiver.to_async();
+
+        input_sender
+            .send(ProcessorMessage::Data(Bytes::copy_from_slice(&bytes[..14])))
+            .await?;
+
+        let decoder_handle =
+            spawn_blocking(move || SeaDecoder::new(input_receiver, output_sender).unwrap());
+
+        let mut decoder = decoder_handle.await?;
+        let header = decoder.get_header();
+        spec.sample_rate = header.sample_rate;
+        spec.channels = header.channels as u32;
+
+        std::thread::spawn(move || while decoder.decode_frame().is_ok() {});
+
+        for chunk in bytes[14..].chunks(header.chunk_size as usize) {
+            input_sender
+                .send(ProcessorMessage::Data(Bytes::copy_from_slice(chunk)))
+                .await?;
+        }
+
+        drop(input_sender);
+
+        let mut other_samples: Vec<i16> = Vec::new();
+
+        while let Ok(ProcessorMessage::Samples(frame)) = output_receiver.recv().await {
+            other_samples.extend_from_slice(frame.as_slice());
+        }
+
+        samples = Some(other_samples);
+        SampleFormat::I16 // codec mode is 16 bit only
     };
 
     // the resampling ratio used by the processor
@@ -231,7 +308,7 @@ async fn play_sound(
     let processor_future = spawn_blocking_with(
         move || {
             processor(
-                bytes,
+                (samples.is_none().then_some(bytes), samples),
                 sample_format,
                 spec,
                 output_volume,
@@ -272,7 +349,7 @@ async fn play_sound(
 
 /// Processes the WAV data
 fn processor(
-    bytes: Vec<u8>,
+    input: (Option<Vec<u8>>, Option<Vec<i16>>),
     sample_format: SampleFormat,
     spec: AudioHeader,
     output_volume: Arc<AtomicF32>,
@@ -281,11 +358,17 @@ fn processor(
     output_channels: usize,
     ratio: f64,
 ) -> Result<(), Error> {
+    let (bytes, samples) = input;
     let sample_size = sample_format.sample_size();
     let channels_usize = spec.channels as usize;
 
     // the number of samples in the file
-    let sample_count = (bytes.len() - 44) / sample_size / channels_usize;
+    let sample_count = bytes
+        .as_ref()
+        .map(|b| (b.len() - 44) / sample_size)
+        .or_else(|| samples.as_ref().map(|s| s.len()))
+        .unwrap_or_default()
+        / channels_usize;
     // the number of audio samples which will be played
     let audio_len = (sample_count as f64 * ratio) as f32;
     let mut position = 0_f32; // the playback position
@@ -308,55 +391,90 @@ fn processor(
     let mut resampler = resampler_factory(ratio, channels_usize, FRAME_SIZE)?;
     let output_volume = output_volume.load(Relaxed);
 
-    for chunk in bytes[44..].chunks(FRAME_SIZE * sample_size * channels_usize) {
-        match sample_format {
-            SampleFormat::U8 => {
-                let scale = 1_f32 / u8::MAX as f32;
+    let mut byte_chunks = bytes
+        .as_ref()
+        .map(|bytes| bytes[44..].chunks(FRAME_SIZE * sample_size * channels_usize));
 
-                for (i, sample) in chunk.chunks(channels_usize).enumerate() {
+    let mut sample_chunks = samples
+        .as_ref()
+        .map(|samples| samples.chunks(FRAME_SIZE * channels_usize));
+
+    loop {
+        match (byte_chunks.as_mut(), sample_chunks.as_mut()) {
+            (None, Some(samples)) => {
+                let samples = if let Some(samples) = samples.next() {
+                    samples
+                } else {
+                    break;
+                };
+
+                let scale = 1_f32 / i16::MAX as f32;
+
+                for (i, sample) in samples.chunks(channels_usize).enumerate() {
                     for (j, channel) in sample.iter().enumerate() {
                         let sample = *channel as f32 * scale;
                         pre_buf[j][i] = sample;
                     }
                 }
             }
-            SampleFormat::I16 => {
-                let scale = 1_f32 / i16::MAX as f32;
+            (Some(chunks), None) => {
+                let chunk = if let Some(chunk) = chunks.next() {
+                    chunk
+                } else {
+                    break;
+                };
 
-                for (i, sample) in chunk.chunks(2 * channels_usize).enumerate() {
-                    for (j, channel) in sample.chunks(2).enumerate() {
-                        let sample = i16::from_le_bytes(channel.try_into()?) as f32 * scale;
-                        pre_buf[j][i] = sample;
-                    }
-                }
-            }
-            SampleFormat::I32 => {
-                let scale = 1_f32 / i32::MAX as f32;
+                match sample_format {
+                    SampleFormat::U8 => {
+                        let scale = 1_f32 / u8::MAX as f32;
 
-                for (i, sample) in chunk.chunks(4 * channels_usize).enumerate() {
-                    for (j, channel) in sample.chunks(4).enumerate() {
-                        let sample = i32::from_le_bytes(channel.try_into()?) as f32 * scale;
-                        pre_buf[j][i] = sample;
+                        for (i, sample) in chunk.chunks(channels_usize).enumerate() {
+                            for (j, channel) in sample.iter().enumerate() {
+                                let sample = *channel as f32 * scale;
+                                pre_buf[j][i] = sample;
+                            }
+                        }
                     }
+                    SampleFormat::I16 => {
+                        let scale = 1_f32 / i16::MAX as f32;
+
+                        for (i, sample) in chunk.chunks(2 * channels_usize).enumerate() {
+                            for (j, channel) in sample.chunks(2).enumerate() {
+                                let sample = i16::from_le_bytes(channel.try_into()?) as f32 * scale;
+                                pre_buf[j][i] = sample;
+                            }
+                        }
+                    }
+                    SampleFormat::I32 => {
+                        let scale = 1_f32 / i32::MAX as f32;
+
+                        for (i, sample) in chunk.chunks(4 * channels_usize).enumerate() {
+                            for (j, channel) in sample.chunks(4).enumerate() {
+                                let sample = i32::from_le_bytes(channel.try_into()?) as f32 * scale;
+                                pre_buf[j][i] = sample;
+                            }
+                        }
+                    }
+                    SampleFormat::F32 => {
+                        for (i, sample) in chunk.chunks(4 * channels_usize).enumerate() {
+                            for (j, channel) in sample.chunks(4).enumerate() {
+                                let sample = f32::from_le_bytes(channel.try_into()?);
+                                pre_buf[j][i] = sample;
+                            }
+                        }
+                    }
+                    SampleFormat::F64 => {
+                        for (i, sample) in chunk.chunks(8 * channels_usize).enumerate() {
+                            for (j, channel) in sample.chunks(8).enumerate() {
+                                let sample = f64::from_le_bytes(channel.try_into()?) as f32;
+                                pre_buf[j][i] = sample;
+                            }
+                        }
+                    }
+                    _ => return Err(ErrorKind::UnknownSampleFormat.into()),
                 }
             }
-            SampleFormat::F32 => {
-                for (i, sample) in chunk.chunks(4 * channels_usize).enumerate() {
-                    for (j, channel) in sample.chunks(4).enumerate() {
-                        let sample = f32::from_le_bytes(channel.try_into()?);
-                        pre_buf[j][i] = sample;
-                    }
-                }
-            }
-            SampleFormat::F64 => {
-                for (i, sample) in chunk.chunks(8 * channels_usize).enumerate() {
-                    for (j, channel) in sample.chunks(8).enumerate() {
-                        let sample = f64::from_le_bytes(channel.try_into()?) as f32;
-                        pre_buf[j][i] = sample;
-                    }
-                }
-            }
-            _ => return Err(ErrorKind::UnknownSampleFormat.into()),
+            _ => break,
         }
 
         for channel in pre_buf.iter_mut() {
@@ -439,11 +557,88 @@ fn processor(
     Ok(())
 }
 
+/// accepts the bytes of a wav file, returns the bytes of a sea file
+/// encoding is performed in a blocking thread
+async fn wav_to_sea(bytes: &[u8], residual_bits: f32) -> Result<Vec<u8>, Error> {
+    if bytes.len() < 44 {
+        return Err(ErrorKind::InvalidWav.into());
+    }
+
+    let spec = AudioHeader::from(&bytes[0..44]);
+    let channels = spec.channels;
+    let sample_rate = spec.sample_rate;
+
+    let sample_size = match spec.sample_format.as_str() {
+        "u8" => 1,
+        "i16" => 2,
+        "i32" | "f32" => 4,
+        "f64" => 8,
+        _ => 1,
+    };
+
+    let (input_sender, input_receiver) = unbounded();
+    let (output_sender, output_receiver) = unbounded();
+    let input_sender = input_sender.to_async();
+    let output_receiver = output_receiver.to_async();
+
+    spawn_blocking(move || {
+        let settings = EncoderSettings {
+            frames_per_chunk: FRAME_SIZE as u16 / channels as u16,
+            vbr: true,
+            residual_bits,
+            ..Default::default()
+        };
+
+        let mut encoder = SeaEncoder::new(
+            channels as u8,
+            sample_rate,
+            settings,
+            input_receiver,
+            output_sender,
+        )
+        .unwrap();
+        while encoder.encode_frame().is_ok() {}
+        encoder
+    });
+
+    let mut buffer = [0; FRAME_SIZE];
+
+    for chunk in bytes[44..].chunks(FRAME_SIZE * sample_size) {
+        match spec.sample_format.as_str() {
+            "u8" => {
+                for (j, sample) in chunk.iter().enumerate() {
+                    buffer[j] = (*sample as i16 - 128) << 8;
+                }
+            }
+            "i16" => {
+                for (i, sample) in chunk.chunks(2).enumerate() {
+                    let sample = i16::from_le_bytes(sample.try_into()?);
+                    buffer[i] = sample;
+                }
+            }
+            _ => break,
+        }
+
+        input_sender.send(ProcessorMessage::samples(buffer)).await?;
+    }
+
+    drop(input_sender);
+    let mut data: Vec<u8> = Vec::new();
+
+    while let Ok(ProcessorMessage::Data(bytes)) = output_receiver.recv().await {
+        data.extend(bytes.iter());
+    }
+
+    Ok(data)
+}
+
 #[cfg(test)]
 mod tests {
-    use log::LevelFilter;
+    use crate::api::player::wav_to_sea;
+    use log::{info, LevelFilter};
+    use std::time::Instant;
     use tokio::fs::File;
-    use tokio::io::AsyncReadExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::time::sleep;
 
     #[tokio::test]
@@ -451,16 +646,54 @@ mod tests {
         simple_logging::log_to_file("tests.log", LevelFilter::Debug).unwrap();
 
         let mut wav_bytes = Vec::new();
-        let mut wav_file = File::open("../../assets/sounds/incoming.wav")
-            .await
-            .unwrap();
+        let mut wav_file = File::open("test.wav").await.unwrap();
         wav_file.read_to_end(&mut wav_bytes).await.unwrap();
 
-        let player = super::SoundPlayer::new(2_f32);
-        let handle = player.play(wav_bytes).await;
+        let now = Instant::now();
+        let other_data = wav_to_sea(&wav_bytes, 5.0).await.unwrap();
+        info!("wav to sea took {:?}", now.elapsed());
 
-        sleep(std::time::Duration::from_secs(3)).await;
+        info!("{}%", other_data.len() as f32 / wav_bytes.len() as f32);
+
+        let player = super::SoundPlayer::new(0.5);
+        let handle = player.play(other_data).await;
+
+        sleep(std::time::Duration::from_secs(2)).await;
         handle.cancel();
         sleep(std::time::Duration::from_secs(1)).await;
+    }
+
+    #[tokio::test]
+    async fn test_wav_to_sea() {
+        simple_logging::log_to_file("tests.log", LevelFilter::Debug).unwrap();
+
+        let wav_files = vec![
+            "../../assets/sounds/call_ended.wav",
+            "../../assets/sounds/connected.wav",
+            "../../assets/sounds/deafen.wav",
+            "../../assets/sounds/disconnected.wav",
+            "../../assets/sounds/incoming.wav",
+            "../../assets/sounds/mute.wav",
+            "../../assets/sounds/outgoing.wav",
+            "../../assets/sounds/reconnected.wav",
+            "../../assets/sounds/undeafen.wav",
+            "../../assets/sounds/unmute.wav",
+        ];
+
+        for wav_file_str in wav_files {
+            let mut wav_bytes = Vec::new();
+            let mut wav_file = File::open(wav_file_str).await.unwrap();
+            wav_file.read_to_end(&mut wav_bytes).await.unwrap();
+
+            let now = Instant::now();
+            let other_data = wav_to_sea(&wav_bytes, 5.0).await.unwrap();
+            info!("wav to sea took {:?}", now.elapsed());
+            info!("{}%", other_data.len() as f32 / wav_bytes.len() as f32);
+
+            let mut output_file = File::create(wav_file_str.replace(".wav", ".sea"))
+                .await
+                .unwrap();
+            output_file.write_all(&other_data).await.unwrap();
+        }
     }
 }

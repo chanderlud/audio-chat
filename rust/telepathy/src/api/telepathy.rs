@@ -54,6 +54,8 @@ use nnnoiseless::{DenoiseState, RnnModel, FRAME_SIZE};
 use rubato::Resampler;
 use sea_codec::ProcessorMessage;
 use serde::{Deserialize, Serialize};
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
 #[cfg(not(target_family = "wasm"))]
 use tokio::net::lookup_host;
 use tokio::select;
@@ -133,6 +135,9 @@ pub struct Telepathy {
     /// Disables the playback of custom ringtones
     play_custom_ringtones: Arc<AtomicBool>,
 
+    /// Enables sending your custom ringtone
+    send_custom_ringtone: Arc<AtomicBool>,
+
     /// Keeps track of and controls the sessions
     session_states: Arc<RwLock<HashMap<PeerId, Arc<SessionState>>>>,
 
@@ -182,9 +187,6 @@ pub struct Telepathy {
     /// Starts a session for each of the UI's contacts
     start_sessions: Arc<Mutex<dyn Fn(Telepathy) -> DartFnFuture<()> + Send>>,
 
-    /// Used to load custom ringtones
-    load_ringtone: Arc<Mutex<dyn Fn() -> DartFnFuture<Option<Vec<u8>>> + Send>>,
-
     /// Used to report statistics to the frontend
     statistics: Arc<Mutex<dyn Fn(Statistics) -> DartFnFuture<()> + Send>>,
 
@@ -215,7 +217,6 @@ impl Telepathy {
         call_state: impl Fn(bool) -> DartFnFuture<()> + Send + 'static,
         session_status: impl Fn(String, String) -> DartFnFuture<()> + Send + 'static,
         start_sessions: impl Fn(Telepathy) -> DartFnFuture<()> + Send + 'static,
-        load_ringtone: impl Fn() -> DartFnFuture<Option<Vec<u8>>> + Send + 'static,
         statistics: impl Fn(Statistics) -> DartFnFuture<()> + Send + 'static,
         message_received: impl Fn(ChatMessage) -> DartFnFuture<()> + Send + 'static,
         manager_active: impl Fn(bool, bool) -> DartFnFuture<()> + Send + 'static,
@@ -241,6 +242,7 @@ impl Telepathy {
             deafened: Default::default(),
             muted: Default::default(),
             play_custom_ringtones: Default::default(),
+            send_custom_ringtone: Default::default(),
             session_states: Default::default(),
             start_session,
             start_screenshare,
@@ -258,7 +260,6 @@ impl Telepathy {
             call_state: Arc::new(Mutex::new(call_state)),
             session_status: Arc::new(Mutex::new(session_status)),
             start_sessions: Arc::new(Mutex::new(start_sessions)),
-            load_ringtone: Arc::new(Mutex::new(load_ringtone)),
             statistics: Arc::new(Mutex::new(statistics)),
             message_received: Arc::new(Mutex::new(message_received)),
             manager_active: Arc::new(Mutex::new(manager_active)),
@@ -478,6 +479,11 @@ impl Telepathy {
     #[frb(sync)]
     pub fn set_play_custom_ringtones(&self, play: bool) {
         self.play_custom_ringtones.store(play, Relaxed);
+    }
+
+    #[frb(sync)]
+    pub fn set_send_custom_ringtone(&self, send: bool) {
+        self.send_custom_ringtone.store(send, Relaxed);
     }
 
     pub async fn set_input_device(&self, device: Option<String>) {
@@ -1331,13 +1337,32 @@ impl Telepathy {
             _ = state.start_call.notified() => {
                 state.in_call.store(true, Relaxed); // blocks the session from being restarted
 
+                let other_ringtone = if self.send_custom_ringtone.load(Relaxed) {
+                    if let Ok(mut file) = File::open("ringtone.sea").await {
+                        let mut buffer = Vec::new();
+
+                        if let Err(error) = file.read_to_end(&mut buffer).await {
+                            warn!("failed to read ringtone: {:?}", error);
+                            None
+                        } else {
+                            Some(buffer)
+                        }
+                    } else {
+                        warn!("failed to find ringtone");
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // when custom ringtone is used wait longer for a response to account for extra data being sent
+                let hello_timeout = HELLO_TIMEOUT + other_ringtone.is_some().then_some(Duration::from_secs(10)).unwrap_or_default();
                 // queries the other client for a call
-                let other_ringtone = (self.load_ringtone.lock().await)().await;
                 write_message(transport, &Message::Hello { ringtone: other_ringtone }).await?;
 
                 loop {
                     select! {
-                        result = timeout(HELLO_TIMEOUT, read_message(transport)) => {
+                        result = timeout(hello_timeout, read_message(transport)) => {
                             // handles a variety of outcomes in response to Hello
                             match result?? {
                                 Message::HelloAck => {
@@ -3058,6 +3083,7 @@ pub(crate) mod tests {
         end: Duration,
     }
 
+    #[ignore]
     #[test]
     fn benchmark() {
         simple_logging::log_to_file("bench.log", LevelFilter::Trace).unwrap();
