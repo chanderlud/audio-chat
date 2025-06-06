@@ -4,10 +4,10 @@ use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{Host, SampleFormat};
 use flutter_rust_bridge::spawn;
 use flutter_rust_bridge::{frb, spawn_blocking_with};
-use kanal::unbounded;
 #[cfg(not(target_family = "wasm"))]
 use kanal::{bounded, Sender};
-use log::error;
+use kanal::{unbounded, Receiver};
+use log::{error, info};
 use nnnoiseless::FRAME_SIZE;
 use rubato::Resampler;
 use std::mem;
@@ -181,7 +181,6 @@ async fn play_sound(
         let (input_sender, input_receiver) = unbounded();
         let (output_sender, output_receiver) = unbounded();
         let input_sender = input_sender.to_async();
-        let output_receiver = output_receiver.to_async();
 
         input_sender
             .send(ProcessorMessage::Data(Bytes::copy_from_slice(&bytes[..14])))
@@ -192,6 +191,8 @@ async fn play_sound(
 
         let mut decoder = decoder_handle.await?;
         let header = decoder.get_header();
+        let sample_count =
+            (bytes.len() - 14) / header.chunk_size as usize * FRAME_SIZE / header.channels as usize;
         spec.sample_rate = header.sample_rate;
         spec.channels = header.channels as u32;
 
@@ -203,15 +204,7 @@ async fn play_sound(
                 .await?;
         }
 
-        drop(input_sender);
-
-        let mut other_samples: Vec<i16> = Vec::new();
-
-        while let Ok(ProcessorMessage::Samples(frame)) = output_receiver.recv().await {
-            other_samples.extend_from_slice(frame.as_slice());
-        }
-
-        samples = Some(other_samples);
+        samples = Some((output_receiver, sample_count));
         SampleFormat::I16 // codec mode is 16 bit only
     };
 
@@ -349,7 +342,7 @@ async fn play_sound(
 
 /// Processes the WAV data
 fn processor(
-    input: (Option<Vec<u8>>, Option<Vec<i16>>),
+    input: (Option<Vec<u8>>, Option<(Receiver<ProcessorMessage>, usize)>),
     sample_format: SampleFormat,
     spec: AudioHeader,
     output_volume: Arc<AtomicF32>,
@@ -365,10 +358,10 @@ fn processor(
     // the number of samples in the file
     let sample_count = bytes
         .as_ref()
-        .map(|b| (b.len() - 44) / sample_size)
-        .or_else(|| samples.as_ref().map(|s| s.len()))
-        .unwrap_or_default()
-        / channels_usize;
+        .map(|b| (b.len() - 44) / sample_size / channels_usize)
+        .or_else(|| samples.as_ref().map(|(_, l)| *l))
+        .unwrap_or_default();
+    info!("sample count: {}", sample_count);
     // the number of audio samples which will be played
     let audio_len = (sample_count as f64 * ratio) as f32;
     let mut position = 0_f32; // the playback position
@@ -379,30 +372,27 @@ fn processor(
     let fade_in = audio_len - fade_basis;
 
     // rubato requires 10 extra bytes in the output buffer as a safety margin
-    let post_len = (FRAME_SIZE as f64 * ratio + 10.0) as usize;
+    let post_len = (FRAME_SIZE as f64 / spec.channels as f64 * ratio + 10.0) as usize;
 
     // the output for the resampler
     let mut post_buf = vec![vec![0_f32; post_len]; channels_usize];
     // the input for the resampler
-    let mut pre_buf = vec![vec![0_f32; FRAME_SIZE]; channels_usize];
+    let mut pre_buf = vec![vec![0_f32; FRAME_SIZE / spec.channels as usize]; channels_usize];
     // groups of samples ready to be sent to the output
     let mut out_buf = Vec::with_capacity(output_channels);
 
-    let mut resampler = resampler_factory(ratio, channels_usize, FRAME_SIZE)?;
+    let mut resampler =
+        resampler_factory(ratio, channels_usize, FRAME_SIZE / spec.channels as usize)?;
     let output_volume = output_volume.load(Relaxed);
 
     let mut byte_chunks = bytes
         .as_ref()
-        .map(|bytes| bytes[44..].chunks(FRAME_SIZE * sample_size * channels_usize));
-
-    let mut sample_chunks = samples
-        .as_ref()
-        .map(|samples| samples.chunks(FRAME_SIZE * channels_usize));
+        .map(|bytes| bytes[44..].chunks(FRAME_SIZE * sample_size));
 
     loop {
-        match (byte_chunks.as_mut(), sample_chunks.as_mut()) {
-            (None, Some(samples)) => {
-                let samples = if let Some(samples) = samples.next() {
+        match (byte_chunks.as_mut(), samples.as_ref()) {
+            (None, Some((samples, _))) => {
+                let samples = if let Ok(ProcessorMessage::Samples(samples)) = samples.recv() {
                     samples
                 } else {
                     break;
@@ -604,19 +594,24 @@ async fn wav_to_sea(bytes: &[u8], residual_bits: f32) -> Result<Vec<u8>, Error> 
     let mut buffer = [0; FRAME_SIZE];
 
     for chunk in bytes[44..].chunks(FRAME_SIZE * sample_size) {
-        match spec.sample_format.as_str() {
+        let written = match spec.sample_format.as_str() {
             "u8" => {
                 for (j, sample) in chunk.iter().enumerate() {
-                    buffer[j] = (*sample as i16 - 128) << 8;
+                    buffer[j] = ((*sample as i16) - 128) << 8;
                 }
+                chunk.len()
             }
             "i16" => {
-                for (i, sample) in chunk.chunks(2).enumerate() {
-                    let sample = i16::from_le_bytes(sample.try_into()?);
-                    buffer[i] = sample;
+                for (i, sample_bytes) in chunk.chunks_exact(2).enumerate() {
+                    buffer[i] = i16::from_le_bytes([sample_bytes[0], sample_bytes[1]]);
                 }
+                chunk.len() / 2
             }
             _ => break,
+        };
+
+        if written < FRAME_SIZE {
+            buffer[written..].fill(0);
         }
 
         input_sender.send(ProcessorMessage::samples(buffer)).await?;
@@ -646,7 +641,9 @@ mod tests {
         simple_logging::log_to_file("tests.log", LevelFilter::Debug).unwrap();
 
         let mut wav_bytes = Vec::new();
-        let mut wav_file = File::open("test.wav").await.unwrap();
+        let mut wav_file = File::open("../../assets/wav-sounds/incoming.wav")
+            .await
+            .unwrap();
         wav_file.read_to_end(&mut wav_bytes).await.unwrap();
 
         let now = Instant::now();
@@ -668,16 +665,16 @@ mod tests {
         simple_logging::log_to_file("tests.log", LevelFilter::Debug).unwrap();
 
         let wav_files = vec![
-            "../../assets/sounds/call_ended.wav",
-            "../../assets/sounds/connected.wav",
-            "../../assets/sounds/deafen.wav",
-            "../../assets/sounds/disconnected.wav",
-            "../../assets/sounds/incoming.wav",
-            "../../assets/sounds/mute.wav",
-            "../../assets/sounds/outgoing.wav",
-            "../../assets/sounds/reconnected.wav",
-            "../../assets/sounds/undeafen.wav",
-            "../../assets/sounds/unmute.wav",
+            "../../assets/wav-sounds/call_ended.wav",
+            "../../assets/wav-sounds/connected.wav",
+            "../../assets/wav-sounds/deafen.wav",
+            "../../assets/wav-sounds/disconnected.wav",
+            "../../assets/wav-sounds/incoming.wav",
+            "../../assets/wav-sounds/mute.wav",
+            "../../assets/wav-sounds/outgoing.wav",
+            "../../assets/wav-sounds/reconnected.wav",
+            "../../assets/wav-sounds/undeafen.wav",
+            "../../assets/wav-sounds/unmute.wav",
         ];
 
         for wav_file_str in wav_files {

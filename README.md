@@ -17,8 +17,7 @@
 ## Planned
 
 - Lossless audio codec support
-- Use SEA codec for audio assets & custom ringtones
-- Chat rooms (group calls)
+- Telepathy rooms (group calls)
 
 ## History
 
