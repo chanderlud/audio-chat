@@ -10,8 +10,8 @@ import 'overlay/overlay.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'player.dart';
 
-// These functions are ignored because they are not marked as `pub`: `_join_room`, `_start_session`, `audio_input`, `audio_output`, `call_controller`, `call`, `get_input_device`, `handshake`, `input_processor`, `latencies_missing`, `loopback`, `new`, `new`, `new`, `open_stream`, `output_processor`, `relayed_only`, `session_manager`, `session`, `statistics_collector`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ConnectionState`, `PeerState`, `SessionState`
+// These functions are ignored because they are not marked as `pub`: `_start_session`, `audio_input`, `audio_output`, `call_controller`, `call`, `codec_config`, `get_input_device`, `handshake`, `input_processor`, `latencies_missing`, `loopback`, `new`, `new`, `new`, `open_stream`, `output_processor`, `relayed_only`, `session_manager`, `session`, `setup_audio`, `setup_input`, `setup_output`, `statistics_collector`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AudioConfigurationState`, `ConnectionState`, `PeerState`, `SessionState`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Capabilities>>
@@ -187,6 +187,8 @@ abstract class Telepathy implements RustOpaqueInterface {
 
   /// Changing the denoise flag will not affect the current call
   void setDenoise({required bool denoise});
+
+  void setEfficiencyMode({required bool enabled});
 
   /// Sets the signing key (called when the profile changes)
   Future<void> setIdentity({required List<int> key});

@@ -78,6 +78,8 @@ class SettingsController with ChangeNotifier {
   /// the name of a denoise model
   late String? denoiseModel;
 
+  late bool efficiencyMode;
+
   Map<String, Contact> get contacts => profiles[activeProfile]!.contacts;
 
   List<int> get keypair => profiles[activeProfile]!.keypair;
@@ -139,6 +141,7 @@ class SettingsController with ChangeNotifier {
     playCustomRingtones = options.getBool('playCustomRingtones') ?? true;
     customRingtoneFile = options.getString('customRingtoneFile');
     denoiseModel = options.getString('denoiseModel');
+    efficiencyMode = options.getBool('efficiencyMode') ?? false;
 
     networkConfig = loadNetworkConfig();
     screenshareConfig = await loadScreenshareConfig();
@@ -247,6 +250,12 @@ class SettingsController with ChangeNotifier {
   Future<void> updatePlayCustomRingtones(bool play) async {
     playCustomRingtones = play;
     await options.setBool('playCustomRingtones', play);
+    notifyListeners();
+  }
+
+  Future<void> updateEfficiencyMode(bool enabled) async {
+    efficiencyMode = enabled;
+    await options.setBool('efficiencyMode', enabled);
     notifyListeners();
   }
 

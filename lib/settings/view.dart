@@ -621,7 +621,6 @@ class _AVSettingsState extends State<AVSettings> {
           mainAxisSize: MainAxisSize.max,
           children: [
             const Text('Play Custom Ringtones', style: TextStyle(fontSize: 18)),
-            // const SizedBox(width: 20),
             ListenableBuilder(
                 listenable: widget.controller,
                 builder: (BuildContext context, Widget? child) {
@@ -682,6 +681,25 @@ class _AVSettingsState extends State<AVSettings> {
                   label:
                       '${widget.controller.soundVolume.toStringAsFixed(2)} db');
             }),
+        const SizedBox(height: 5),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          mainAxisSize: MainAxisSize.max,
+          children: [
+            const Text('Enable Efficiency Mode',
+                style: TextStyle(fontSize: 18)),
+            ListenableBuilder(
+                listenable: widget.controller,
+                builder: (BuildContext context, Widget? child) {
+                  return CustomSwitch(
+                      value: widget.controller.efficiencyMode,
+                      onChanged: (enabled) {
+                        widget.controller.updateEfficiencyMode(enabled);
+                        widget.telepathy.setEfficiencyMode(enabled: enabled);
+                      });
+                }),
+          ],
+        ),
         const Divider(),
         const Text(
           'Screenshare Options',

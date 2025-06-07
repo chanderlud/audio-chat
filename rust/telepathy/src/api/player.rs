@@ -7,7 +7,7 @@ use flutter_rust_bridge::{frb, spawn_blocking_with};
 #[cfg(not(target_family = "wasm"))]
 use kanal::{bounded, Sender};
 use kanal::{unbounded, Receiver};
-use log::{error, info};
+use log::error;
 use nnnoiseless::FRAME_SIZE;
 use rubato::Resampler;
 use std::mem;
@@ -363,7 +363,6 @@ fn processor(
         .map(|b| (b.len() - 44) / sample_size / channels_usize)
         .or_else(|| samples.as_ref().map(|(_, l)| *l))
         .unwrap_or_default();
-    info!("sample count: {}", sample_count);
     // the number of audio samples which will be played
     let audio_len = (sample_count as f64 * ratio) as f32;
     let mut position = 0_f32; // the playback position

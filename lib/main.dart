@@ -234,6 +234,7 @@ Future<void> main() async {
   telepathy.setOutputDevice(device: settingsController.outputDevice);
   telepathy.setSendCustomRingtone(
       send: settingsController.customRingtoneFile != null);
+  telepathy.setEfficiencyMode(enabled: settingsController.efficiencyMode);
 
   if (settingsController.denoiseModel != null) {
     updateDenoiseModel(settingsController.denoiseModel!, telepathy);
