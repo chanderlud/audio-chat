@@ -2,7 +2,6 @@
 members = [
     "relay_server",
     "telepathy",
-    "chat_room",
     "messages",
     "sea_codec"
 ]

@@ -243,11 +243,6 @@ Future<void> main() async {
       InterfaceController(options: options);
   interfaceController.init();
 
-  // Future.microtask(() {
-  //   sleep(const Duration(seconds: 1));
-  //   telepathy.joinRoom(contact: Contact(nickname: 'test room', peerId: '12D3KooWRVJCFqFBrasjtcGHnRuuut9fQLsfcUNLfWFFqjMm2p4n'));
-  // });
-
   runApp(TelepathyApp(
     telepathy: telepathy,
     settingsController: settingsController,

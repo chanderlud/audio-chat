@@ -133,9 +133,6 @@ abstract class Telepathy implements RustOpaqueInterface {
   /// Ends the call (if there is one)
   void endCall();
 
-  /// Join a chat room
-  Future<void> joinRoom({required Contact contact});
-
   /// Lists the input and output devices
   Future<(List<String>, List<String>)> listDevices();
 

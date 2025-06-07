@@ -1,6 +1,6 @@
 #![allow(clippy::type_complexity)]
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::mem;
 #[cfg(not(target_family = "wasm"))]
 use std::net::Ipv4Addr;
@@ -86,7 +86,6 @@ const TIMEOUT_DURATION: Duration = Duration::from_millis(100);
 pub(crate) const CHANNEL_SIZE: usize = 2_400;
 /// the protocol identifier for Telepathy
 const CHAT_PROTOCOL: StreamProtocol = StreamProtocol::new("/telepathy/0.0.1");
-const ROOM_PROTOCOL: StreamProtocol = StreamProtocol::new("/telepathy-room/0.0.1");
 #[cfg(target_family = "wasm")]
 const SILENCE: [f32; FRAME_SIZE] = [0_f32; FRAME_SIZE];
 
@@ -161,9 +160,6 @@ pub struct Telepathy {
     overlay: Overlay,
 
     codec_config: CodecConfig,
-
-    /// A list of PeerIds which are chat rooms
-    chat_rooms: Arc<RwLock<HashSet<PeerId>>>,
 
     #[cfg(target_family = "wasm")]
     web_input: Arc<Mutex<Option<WebAudioWrapper>>>,
@@ -251,7 +247,6 @@ impl Telepathy {
             screenshare_config: screenshare_config.clone(),
             overlay: overlay.clone(),
             codec_config: codec_config.clone(),
-            chat_rooms: Default::default(),
             #[cfg(target_family = "wasm")]
             web_input: Default::default(),
             accept_call: Arc::new(Mutex::new(accept_call)),
@@ -319,17 +314,6 @@ impl Telepathy {
         } else {
             Err(String::from("No session found for contact").into())
         }
-    }
-
-    /// Join a chat room
-    pub async fn join_room(&self, contact: &Contact) {
-        // dials the room through the relay using the swarm
-        if self.start_session.send(contact.peer_id).await.is_err() {
-            error!("start_session channel is closed in join_room");
-        }
-
-        // the session manager will know to treat this connection as a chat room
-        self.chat_rooms.write().await.insert(contact.peer_id);
     }
 
     /// Ends the call (if there is one)
@@ -990,15 +974,9 @@ impl Telepathy {
 
                             let control = swarm.behaviour().stream.new_control();
 
-                            if self.chat_rooms.read().await.contains(&event.peer) {
-                                // open the room streams and start necessary threads
-                                self._join_room(event.peer, control).await;
-                                peer_states.remove(&event.peer);
-                            } else {
-                                // open a session control stream and start the session controller
-                                self.open_stream(event.peer, control, &mut peer_states)
-                                    .await;
-                            }
+                            // open a session control stream and start the session controller
+                            self.open_stream(event.peer, control, &mut peer_states)
+                                .await;
                         } else {
                             warn!("no connection available for {}", event.peer);
                         }
@@ -1078,69 +1056,6 @@ impl Telepathy {
                 break;
             }
         }
-    }
-
-    async fn _join_room(&self, peer: PeerId, mut control: Control) {
-        // it may take multiple tries to open the stream because the of the (dumb) RNG in the stream handler
-        let control_stream = loop {
-            let control_stream = control.open_stream(peer, ROOM_PROTOCOL).await;
-
-            if let Ok(control_stream) = control_stream {
-                break control_stream;
-            }
-        };
-
-        let audio_stream = loop {
-            let audio_stream = control.open_stream(peer, ROOM_PROTOCOL).await;
-
-            if let Ok(audio_stream) = audio_stream {
-                break audio_stream;
-            }
-        };
-
-        let mut control_transport = LengthDelimitedCodec::builder()
-            .max_frame_length(usize::MAX)
-            .length_field_type::<u64>()
-            .new_framed(control_stream.compat());
-
-        let (message_sender, message_receiver) = unbounded_async::<Message>();
-
-        // create the state and a clone of it for the chat room
-        let state = Arc::new(SessionState::new(&message_sender));
-        let state_clone = Arc::clone(&state);
-
-        self.session_states.write().await.insert(peer, state);
-
-        // alert the UI that this chat room is now connected
-        (self.session_status.lock().await)(peer.to_string(), "Connected".to_string()).await;
-
-        let self_clone = self.clone();
-        spawn(async move {
-            let stop_io = Arc::new(Notify::new());
-
-            let result = self_clone
-                .call(
-                    Some(audio_stream),
-                    Some(&mut control_transport),
-                    Some(message_receiver),
-                    Some(&state_clone),
-                    Some(peer),
-                    &stop_io,
-                )
-                .await;
-
-            warn!("chat room call ended: {:?}", result);
-
-            stop_io.notify_waiters();
-
-            // cleanup
-            self_clone.session_states.write().await.remove(&peer);
-
-            (self_clone.session_status.lock().await)(peer.to_string(), "Inactive".to_string())
-                .await;
-
-            info!("chat room {} cleaned up", peer);
-        });
     }
 
     /// A wrapper which manages the session throughout its lifetime
