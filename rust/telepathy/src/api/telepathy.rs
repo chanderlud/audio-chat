@@ -370,7 +370,7 @@ impl Telepathy {
         audio_config.remote_configuration = audio_config.local_configuration.clone();
 
         let result = self
-            .call(None, None, None, None, &stop_io, audio_config)
+            .call(&stop_io, audio_config, None, None, None, None)
             .await
             .map_err(Into::into);
 
@@ -1393,12 +1393,12 @@ impl Telepathy {
 
         let result = self
             .call(
+                &stop_io,
+                call_state,
                 Some(stream),
                 Some(transport),
                 Some(message_channel.1.clone()),
                 Some(state),
-                &stop_io,
-                call_state,
             )
             .await;
 
@@ -1440,22 +1440,16 @@ impl Telepathy {
     /// The bulk of the call logic
     async fn call(
         &self,
-        stream: Option<Stream>,
-        mut transport: Option<&mut Transport<TransportStream>>,
-        message_receiver: Option<AsyncReceiver<Message>>,
-        state: Option<&Arc<SessionState>>,
         stop_io: &Arc<Notify>,
         call_state: EarlyCallState,
+        stream: Option<Stream>,
+        transport: Option<&mut Transport<TransportStream>>,
+        message_receiver: Option<AsyncReceiver<Message>>,
+        state: Option<&Arc<SessionState>>,
     ) -> Result<()> {
         // on ios the audio session must be configured
         #[cfg(target_os = "ios")]
         configure_audio_session();
-
-        // if any of the values required for a normal call is missing, the call is an audio test
-        let audio_test = transport.is_none()
-            || stream.is_none()
-            || message_receiver.is_none()
-            || state.is_none();
 
         // channels used for moving values to the statistics collector
         let (input_rms_sender, input_rms_receiver) = self.efficiency_channel();
@@ -1537,70 +1531,60 @@ impl Telepathy {
             Arc::clone(stop_io),
         ));
 
-        if audio_test {
-            spawn(loopback(input_receiver, output_sender, Arc::clone(stop_io)));
-            self.end_call.notified().await;
-        } else {
-            let (receiving_sender, receiving_receiver) = unbounded_async::<bool>();
+        match (stream, transport, message_receiver) {
+            (Some(stream), Some(transport), Some(message_receiver)) => {
+                let (receiving_sender, receiving_receiver) = unbounded_async::<bool>();
 
-            let audio_transport = LengthDelimitedCodec::builder()
-                .max_frame_length(TRANSFER_BUFFER_SIZE)
-                .length_field_type::<u16>()
-                .new_framed(stream.unwrap().compat());
+                let audio_transport = LengthDelimitedCodec::builder()
+                    .max_frame_length(TRANSFER_BUFFER_SIZE)
+                    .length_field_type::<u16>()
+                    .new_framed(stream.compat());
 
-            let (write, read) = audio_transport.split();
-            let (socket_sender, socket_receiver) = unbounded_async();
-            socket_sender.send(write).await?;
+                let (write, read) = audio_transport.split();
+                let (socket_sender, socket_receiver) = unbounded_async();
+                socket_sender.send(write).await?;
 
-            spawn(audio_input(
-                input_receiver,
-                socket_receiver,
-                Arc::clone(stop_io),
-                upload_bandwidth,
-            ));
+                spawn(audio_input(
+                    input_receiver,
+                    socket_receiver,
+                    Arc::clone(stop_io),
+                    upload_bandwidth,
+                ));
 
-            spawn(audio_output(
-                output_sender,
-                read,
-                Arc::clone(stop_io),
-                download_bandwidth,
-                receiving_sender,
-            ));
+                spawn(audio_output(
+                    output_sender,
+                    read,
+                    Arc::clone(stop_io),
+                    download_bandwidth,
+                    receiving_sender,
+                ));
 
-            let transport = transport.as_mut().unwrap();
-            let message_receiver = message_receiver.unwrap();
+                let controller_future = self.call_controller(
+                    transport,
+                    message_receiver,
+                    receiving_receiver,
+                    call_state.peer,
+                );
 
-            // shared values used in the call controller
-            let end_call = Arc::clone(&self.end_call);
-            let message_received = Arc::clone(&self.message_received);
-            let other_call_state = Arc::clone(&self.call_state);
+                info!("call controller starting");
 
-            let controller_future = call_controller(
-                transport,
-                message_receiver,
-                end_call,
-                receiving_receiver,
-                message_received,
-                other_call_state,
-                self.start_screenshare.clone(),
-                call_state.peer,
-                self.identity.read().await.public().to_peer_id(),
-            );
-
-            info!("call controller starting");
-
-            match controller_future.await {
-                Ok(message) => {
-                    (self.call_ended.lock().await)(message.unwrap_or_default(), true).await
+                match controller_future.await {
+                    Ok(message) => {
+                        (self.call_ended.lock().await)(message.unwrap_or_default(), true).await
+                    }
+                    Err(error) => match error.kind {
+                        ErrorKind::CallEnded => (), // when the call is ended externally, no UI notification is needed
+                        _ => (self.call_ended.lock().await)(error.to_string(), false).await,
+                    },
                 }
-                Err(error) => match error.kind {
-                    ErrorKind::CallEnded => (), // when the call is ended externally, no UI notification is needed
-                    _ => (self.call_ended.lock().await)(error.to_string(), false).await,
-                },
-            }
 
-            stop_io.notify_waiters();
-            info!("call controller returned and was handled, call returning");
+                stop_io.notify_waiters();
+                info!("call controller returned and was handled, call returning");
+            }
+            _ => {
+                spawn(loopback(input_receiver, output_sender, Arc::clone(stop_io)));
+                self.end_call.notified().await;
+            }
         }
 
         // on ios the audio session must be deactivated
@@ -1614,6 +1598,183 @@ impl Telepathy {
         }
 
         Ok(())
+    }
+
+    /// controller for normal calls
+    async fn call_controller(
+        &self,
+        transport: &mut Transport<TransportStream>,
+        receiver: AsyncReceiver<Message>,
+        receiving: AsyncReceiver<bool>,
+        peer: PeerId,
+    ) -> Result<Option<String>> {
+        let identity = self.identity.read().await.public().to_peer_id();
+
+        // in case this value has been used in a previous call, reset to false
+        CONNECTED.store(false, Relaxed);
+
+        // whether the session is currently receiving audio
+        let mut is_receiving = false;
+        // whether the remote peer is currently receiving audio
+        let mut remote_is_receiving = true;
+
+        // the instant the UI will be notified that the session is not receiving audio
+        let mut notify_ui = Instant::now() + Duration::from_secs(2);
+
+        // the instant the session stopped receiving audio
+        let mut disconnected_at = Instant::now();
+
+        // the instant the disconnect started and the duration of the disconnect
+        let mut disconnect_durations: VecDeque<(Instant, Duration)> = VecDeque::new();
+        // ticks to update the connection quality and remove old entries from `disconnect_durations`
+        let mut update_durations = interval(Duration::from_secs(1));
+
+        // constant durations used in the connection quality algorithm
+        let window_duration = Duration::from_secs(10);
+        let disconnect_duration = Duration::from_millis(1_500);
+
+        let (state_sender, state_receiver) = unbounded_async::<bool>();
+
+        loop {
+            select! {
+                // receives and handles messages from the callee
+                result = read_message(transport) => {
+                    let message: Message = result?;
+
+                    match message {
+                        Message::Goodbye { reason } => {
+                            debug!("received goodbye, reason = {:?}", reason);
+                            break Ok(reason);
+                        },
+                        Message::Chat { text, attachments } => {
+                            (self.message_received.lock().await)(ChatMessage {
+                                text,
+                                receiver: identity,
+                                timestamp: Local::now(),
+                                attachments,
+                            }).await;
+                        }
+                        Message::ConnectionInterrupted => {
+                            // info!("received connection interrupted message r={} rr={}", is_receiving, remote_is_receiving);
+
+                            let receiving = is_receiving && remote_is_receiving;
+                            remote_is_receiving = false;
+                            state_sender.send(receiving).await?;
+                        }
+                        Message::ConnectionRestored => {
+                            // info!("received connection restored message r={} rr={}", is_receiving, remote_is_receiving);
+
+                            if remote_is_receiving {
+                                warn!("received connection restored message while already receiving");
+                                continue;
+                            }
+
+                            remote_is_receiving = true;
+                            state_sender.send(false).await?;
+                        }
+                        Message::ScreenshareHeader { .. } => {
+                            info!("received screenshare header {:?}", message);
+                            self.start_screenshare.send((peer, Some(message))).await?;
+                        }
+                        Message::RoomWelcome { peers }=> {
+                            warn!("received room welcome message {:?}", peers);
+                        }
+                        Message::RoomJoin { peer } => {
+                            warn!("received room join message {:?}", peer);
+                        }
+                        Message::RoomLeave { peer } => {
+                            warn!("received room leave message {:?}", peer);
+                        }
+                        _ => error!("call controller unexpected message: {:?}", message),
+                    }
+                },
+                // sends messages to the callee
+                result = receiver.recv() => {
+                    if let Ok(message) = result {
+                        write_message(transport, &message).await?;
+                    } else {
+                        // if the channel closes, the call has ended
+                        break Ok(None);
+                    }
+                },
+                // ends the call
+                _ = self.end_call.notified() => {
+                    write_message(transport, &Message::Goodbye { reason: None }).await?;
+                    break Err(ErrorKind::CallEnded.into());
+                },
+                receiving = state_receiver.recv() => {
+                    if receiving? {
+                        // the instant the disconnect began
+                        disconnected_at = Instant::now();
+                        // notify the ui in 2 seconds if the disconnect hasn't ended
+                        notify_ui = disconnected_at + disconnect_duration;
+                    } else if is_receiving && remote_is_receiving {
+                        let elapsed = disconnected_at.elapsed();
+
+                        // update the overlay to connected
+                        if !CONNECTED.swap(true, Relaxed) {
+                            // update the call state in the UI
+                            (self.call_state.lock().await)(false).await;
+                        }
+
+                        // record the disconnect
+                        disconnect_durations.push_back((disconnected_at, elapsed));
+                        // prevents any notification to the ui as audio is being received
+                        notify_ui = Instant::now() + Duration::from_secs(86400 * 365 * 30);
+                    }
+                },
+                // receives when the receiving state changes
+                Ok(receiving) = receiving.recv() => {
+                    if receiving != is_receiving {
+                        state_sender.send(is_receiving && remote_is_receiving).await?;
+
+                        is_receiving = receiving;
+
+                        let message = if is_receiving {
+                            Message::ConnectionRestored
+                        } else {
+                            Message::ConnectionInterrupted
+                        };
+
+                        if let Err(error) = write_message(transport, &message).await {
+                            error!("Error sending connection notification message: {}", error);
+                        }
+                    } else {
+                        // TODO it appears that this is happening occasionally
+                        warn!("received duplicate receiving state: {}", receiving);
+                    }
+                },
+                // if the session doesn't reconnect within the time limit, notify the UI
+                _ = sleep_until(notify_ui) => {
+                    (self.call_state.lock().await)(true).await;
+                    // the UI does not need to be notified until the session reconnects
+                    notify_ui = Instant::now() + Duration::from_secs(86400 * 365 * 30);
+                    // set the overlay to disconnected
+                    CONNECTED.store(false, Relaxed);
+                },
+                _ = update_durations.tick() => {
+                    let now = Instant::now();
+
+                    // check for disconnects outside the 10-second window
+                    while let Some((start, _)) = disconnect_durations.front() {
+                        if now - *start > window_duration {
+                            disconnect_durations.pop_front();
+                        } else {
+                            break;
+                        }
+                    }
+
+                    let mut total_disconnect = disconnect_durations.iter().fold(Duration::default(), |acc, (_, duration)| acc + *duration).as_millis();
+
+                    // if not receiving, add the current disconnect duration
+                    if !is_receiving || !remote_is_receiving {
+                        total_disconnect += disconnected_at.elapsed().as_millis();
+                    }
+
+                    LOSS.store(total_disconnect as f64 / 10_000_f64, Relaxed);
+                }
+            }
+        }
     }
 
     /// helper method to set up audio input stack between the network and device layers
@@ -1884,7 +2045,7 @@ impl Telepathy {
         })
     }
 
-    /// Returns either the default or the user specified device
+    /// helper method to get the user specified device or default as fallback
     #[cfg(not(target_family = "wasm"))]
     async fn get_input_device(&self) -> Result<Device> {
         match *self.input_device.lock().await {
@@ -2426,186 +2587,6 @@ impl ChatMessage {
     }
 }
 
-/// the call controller
-#[allow(clippy::too_many_arguments)]
-async fn call_controller(
-    transport: &mut Transport<TransportStream>,
-    receiver: AsyncReceiver<Message>,
-    end_call: Arc<Notify>,
-    receiving: AsyncReceiver<bool>,
-    message_received: Arc<Mutex<dyn Fn(ChatMessage) -> DartFnFuture<()> + Send>>,
-    call_state: Arc<Mutex<dyn Fn(bool) -> DartFnFuture<()> + Send>>,
-    start_screenshare: AsyncSender<StartScreenshare>,
-    peer: PeerId,
-    identity: PeerId,
-) -> Result<Option<String>> {
-    // in case this value has been used in a previous call, reset to false
-    CONNECTED.store(false, Relaxed);
-
-    // whether the session is currently receiving audio
-    let mut is_receiving = false;
-    // whether the remote peer is currently receiving audio
-    let mut remote_is_receiving = true;
-
-    // the instant the UI will be notified that the session is not receiving audio
-    let mut notify_ui = Instant::now() + Duration::from_secs(2);
-
-    // the instant the session stopped receiving audio
-    let mut disconnected_at = Instant::now();
-
-    // the instant the disconnect started and the duration of the disconnect
-    let mut disconnect_durations: VecDeque<(Instant, Duration)> = VecDeque::new();
-    // ticks to update the connection quality and remove old entries from `disconnect_durations`
-    let mut update_durations = interval(Duration::from_secs(1));
-
-    // constant durations used in the connection quality algorithm
-    let window_duration = Duration::from_secs(10);
-    let disconnect_duration = Duration::from_millis(1_500);
-
-    let (state_sender, state_receiver) = unbounded_async::<bool>();
-
-    loop {
-        select! {
-            // receives and handles messages from the callee
-            result = read_message(transport) => {
-                let message: Message = result?;
-
-                match message {
-                    Message::Goodbye { reason } => {
-                        debug!("received goodbye, reason = {:?}", reason);
-                        break Ok(reason);
-                    },
-                    Message::Chat { text, attachments } => {
-                        (message_received.lock().await)(ChatMessage {
-                            text,
-                            receiver: identity,
-                            timestamp: Local::now(),
-                            attachments,
-                        }).await;
-                    }
-                    Message::ConnectionInterrupted => {
-                        // info!("received connection interrupted message r={} rr={}", is_receiving, remote_is_receiving);
-
-                        let receiving = is_receiving && remote_is_receiving;
-                        remote_is_receiving = false;
-                        state_sender.send(receiving).await?;
-                    }
-                    Message::ConnectionRestored => {
-                        // info!("received connection restored message r={} rr={}", is_receiving, remote_is_receiving);
-
-                        if remote_is_receiving {
-                            warn!("received connection restored message while already receiving");
-                            continue;
-                        }
-
-                        remote_is_receiving = true;
-                        state_sender.send(false).await?;
-                    }
-                    Message::ScreenshareHeader { .. } => {
-                        info!("received screenshare header {:?}", message);
-                        start_screenshare.send((peer, Some(message))).await?;
-                    }
-                    Message::RoomWelcome { peers }=> {
-                        warn!("received room welcome message {:?}", peers);
-                    }
-                    Message::RoomJoin { peer } => {
-                        warn!("received room join message {:?}", peer);
-                    }
-                    Message::RoomLeave { peer } => {
-                        warn!("received room leave message {:?}", peer);
-                    }
-                    _ => error!("call controller unexpected message: {:?}", message),
-                }
-            },
-            // sends messages to the callee
-            result = receiver.recv() => {
-                if let Ok(message) = result {
-                    write_message(transport, &message).await?;
-                } else {
-                    // if the channel closes, the call has ended
-                    break Ok(None);
-                }
-            },
-            // ends the call
-            _ = end_call.notified() => {
-                write_message(transport, &Message::Goodbye { reason: None }).await?;
-                break Err(ErrorKind::CallEnded.into());
-            },
-            receiving = state_receiver.recv() => {
-                if receiving? {
-                    // the instant the disconnect began
-                    disconnected_at = Instant::now();
-                    // notify the ui in 2 seconds if the disconnect hasn't ended
-                    notify_ui = disconnected_at + disconnect_duration;
-                } else if is_receiving && remote_is_receiving {
-                    let elapsed = disconnected_at.elapsed();
-
-                    // update the overlay to connected
-                    if !CONNECTED.swap(true, Relaxed) {
-                        // update the call state in the UI
-                        (call_state.lock().await)(false).await;
-                    }
-
-                    // record the disconnect
-                    disconnect_durations.push_back((disconnected_at, elapsed));
-                    // prevents any notification to the ui as audio is being received
-                    notify_ui = Instant::now() + Duration::from_secs(86400 * 365 * 30);
-                }
-            },
-            // receives when the receiving state changes
-            Ok(receiving) = receiving.recv() => {
-                if receiving != is_receiving {
-                    state_sender.send(is_receiving && remote_is_receiving).await?;
-
-                    is_receiving = receiving;
-
-                    let message = if is_receiving {
-                        Message::ConnectionRestored
-                    } else {
-                        Message::ConnectionInterrupted
-                    };
-
-                    if let Err(error) = write_message(transport, &message).await {
-                        error!("Error sending connection notification message: {}", error);
-                    }
-                } else {
-                    // TODO it appears that this is happening occasionally
-                    warn!("received duplicate receiving state: {}", receiving);
-                }
-            },
-            // if the session doesn't reconnect within the time limit, notify the UI
-            _ = sleep_until(notify_ui) => {
-                (call_state.lock().await)(true).await;
-                // the UI does not need to be notified until the session reconnects
-                notify_ui = Instant::now() + Duration::from_secs(86400 * 365 * 30);
-                // set the overlay to disconnected
-                CONNECTED.store(false, Relaxed);
-            },
-            _ = update_durations.tick() => {
-                let now = Instant::now();
-
-                // check for disconnects outside the 10-second window
-                while let Some((start, _)) = disconnect_durations.front() {
-                    if now - *start > window_duration {
-                        disconnect_durations.pop_front();
-                    } else {
-                        break;
-                    }
-                }
-
-                let mut total_disconnect = disconnect_durations.iter().fold(Duration::default(), |acc, (_, duration)| acc + *duration).as_millis();
-
-                // if not receiving, add the current disconnect duration
-                if !is_receiving || !remote_is_receiving {
-                    total_disconnect += disconnected_at.elapsed().as_millis();
-                }
-
-                LOSS.store(total_disconnect as f64 / 10_000_f64, Relaxed);
-            }
-        }
-    }
-}
-
 /// Receives frames of audio data from the input processor and sends them to the socket
 async fn audio_input(
     input_receiver: AsyncReceiver<ProcessorMessage>,
@@ -3037,8 +3018,9 @@ fn output_processor(
         // apply the output volume
         mul(pre_buf[0], output_volume.load(Relaxed));
 
-        let rms = calculate_rms(pre_buf[0]);
-        rms_sender.as_ref().map(|s| s.send(rms));
+        rms_sender
+            .as_ref()
+            .map(|s| s.send(calculate_rms(pre_buf[0])));
 
         if let Some(resampler) = &mut resampler {
             // resample the data
