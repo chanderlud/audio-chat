@@ -1204,6 +1204,7 @@ impl Telepathy {
                         }
                     },
                     Message::KeepAlive | Message::ConnectionInterrupted | Message::ConnectionRestored => {
+                        warn!("session for {} ending expected Hello", contact.nickname);
                         return Ok::<(), Error>(());
                     },
                     message => {
@@ -1270,26 +1271,11 @@ impl Telepathy {
             _ = state.start_call.notified() => {
                 state.in_call.store(true, Relaxed); // blocks the session from being restarted
 
-                let other_ringtone = if self.send_custom_ringtone.load(Relaxed) {
-                    if let Ok(mut file) = File::open("ringtone.sea").await {
-                        let mut buffer = Vec::new();
-
-                        if let Err(error) = file.read_to_end(&mut buffer).await {
-                            warn!("failed to read ringtone: {:?}", error);
-                            None
-                        } else {
-                            Some(buffer)
-                        }
-                    } else {
-                        warn!("failed to find ringtone");
-                        None
-                    }
-                } else {
-                    None
-                };
-
+                // load custom ringtone if enabled
+                let other_ringtone = self.load_ringtone().await;
+                // initialize call state
                 let mut call_state = self.setup_call(contact.peer_id).await?;
-                // when custom ringtone is used wait longer for a response to account for extra data being sent
+                // when custom ringtone is used wait longer for a response to account for extra data being sent in Hello
                 let hello_timeout = HELLO_TIMEOUT + other_ringtone.is_some().then_some(Duration::from_secs(10)).unwrap_or_default();
                 // queries the other client for a call
                 write_message(transport, &Message::Hello { ringtone: other_ringtone, audio_header: call_state.local_configuration.clone() }).await?;
@@ -1675,15 +1661,6 @@ impl Telepathy {
                         Message::ScreenshareHeader { .. } => {
                             info!("received screenshare header {:?}", message);
                             self.start_screenshare.send((peer, Some(message))).await?;
-                        }
-                        Message::RoomWelcome { peers }=> {
-                            warn!("received room welcome message {:?}", peers);
-                        }
-                        Message::RoomJoin { peer } => {
-                            warn!("received room join message {:?}", peer);
-                        }
-                        Message::RoomLeave { peer } => {
-                            warn!("received room leave message {:?}", peer);
                         }
                         _ => error!("call controller unexpected message: {:?}", message),
                     }
@@ -2078,6 +2055,27 @@ impl Telepathy {
         } else {
             let (sender, receiver) = unbounded_async();
             (Some(sender.to_sync()), Some(receiver))
+        }
+    }
+
+    /// helper method to load pre-encoded ringtone bytes
+    async fn load_ringtone(&self) -> Option<Vec<u8>> {
+        if self.send_custom_ringtone.load(Relaxed) {
+            if let Ok(mut file) = File::open("ringtone.sea").await {
+                let mut buffer = Vec::new();
+
+                if let Err(error) = file.read_to_end(&mut buffer).await {
+                    warn!("failed to read ringtone: {:?}", error);
+                    None
+                } else {
+                    Some(buffer)
+                }
+            } else {
+                warn!("failed to find ringtone");
+                None
+            }
+        } else {
+            None
         }
     }
 }

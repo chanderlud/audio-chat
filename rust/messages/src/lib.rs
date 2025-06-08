@@ -24,15 +24,6 @@ pub enum Message {
     ScreenshareHeader {
         encoder_name: String,
     },
-    RoomWelcome {
-        peers: Vec<Vec<u8>>,
-    },
-    RoomJoin {
-        peer: Vec<u8>,
-    },
-    RoomLeave {
-        peer: Vec<u8>,
-    },
 }
 
 #[derive(Debug, Decode, Encode, Clone, Default)]
