@@ -64,7 +64,6 @@ pub(crate) enum ErrorKind {
     SwarmEnded,
     SessionStopped,
     CallEnded,
-    MissingContact,
     #[cfg(not(target_family = "wasm"))]
     InvalidEncoder,
 }
@@ -343,7 +342,6 @@ impl Display for Error {
                 ErrorKind::SwarmEnded => "Swarm ended".to_string(),
                 ErrorKind::SessionStopped => "Session stopped".to_string(),
                 ErrorKind::CallEnded => "Call ended".to_string(),
-                ErrorKind::MissingContact => "Missing contact".to_string(),
                 #[cfg(not(target_family = "wasm"))]
                 ErrorKind::InvalidEncoder => "Invalid encoder".to_string(),
             }

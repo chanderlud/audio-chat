@@ -1040,7 +1040,7 @@ class ContactWidgetState extends State<ContactWidget> {
                   outgoingSoundHandle = await widget.player.play(bytes: bytes);
 
                   try {
-                    await widget.telepathy.sayHello(contact: widget.contact);
+                    await widget.telepathy.startCall(contact: widget.contact);
                     widget.stateController.setActiveContact(widget.contact);
                   } on DartError catch (e) {
                     widget.stateController.setStatus('Inactive');

@@ -781,7 +781,20 @@ class _AVSettingsState extends State<AVSettings> {
                 showErrorDialog(
                     context, 'Error in Encoder Selection', e.message);
               }
-            })
+            }),
+        Button(
+          text: "test room",
+          width: 80,
+          height: 25,
+          disabled: false,
+          onPressed: () async {
+            widget.telepathy.joinRoom(memberStrings: [
+              "12D3KooWFGWFRpHLANALFUnvS1rEZXSiL5aihQrR1NvQgXc4ndbZ",
+              "12D3KooWREpempACHNKHCHBXqRgQHv7mMfxLF9p7zEZcNyCYqv9g",
+              "12D3KooWLEyRg5ECHzs4ejc6uY6XFUyzzGY9YU6W36cABwGfVSpb"
+            ]);
+          },
+        )
       ],
     );
   }

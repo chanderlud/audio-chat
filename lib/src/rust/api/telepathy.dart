@@ -10,8 +10,8 @@ import 'overlay/overlay.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'player.dart';
 
-// These functions are ignored because they are not marked as `pub`: `_start_session`, `audio_input`, `audio_output`, `call_controller`, `call`, `codec_config`, `get_input_device`, `handshake`, `input_processor`, `latencies_missing`, `loopback`, `new`, `new`, `new`, `open_stream`, `output_processor`, `relayed_only`, `session_manager`, `session`, `setup_audio`, `setup_input`, `setup_output`, `statistics_collector`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AudioConfigurationState`, `ConnectionState`, `PeerState`, `SessionState`
+// These functions are ignored because they are not marked as `pub`: `_start_session`, `audio_input`, `audio_output`, `call_controller`, `call`, `codec_config`, `efficiency_channel`, `get_input_device`, `handshake`, `incoming_stream_handler`, `input_processor`, `is_in_room`, `latencies_missing`, `load_ringtone`, `loopback`, `new`, `new`, `new`, `open_stream`, `output_processor`, `relayed_only`, `session_manager`, `session`, `setup_call`, `setup_input`, `setup_output`, `statistics_collector`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ConnectionState`, `EarlyCallState`, `PeerState`, `SessionState`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Capabilities>>
@@ -133,6 +133,8 @@ abstract class Telepathy implements RustOpaqueInterface {
   /// Ends the call (if there is one)
   void endCall();
 
+  Future<void> joinRoom({required List<String> memberStrings});
+
   /// Lists the input and output devices
   Future<(List<String>, List<String>)> listDevices();
 
@@ -177,9 +179,6 @@ abstract class Telepathy implements RustOpaqueInterface {
   /// Restarts the session manager
   Future<void> restartManager();
 
-  /// Attempts to start a call through an existing session
-  Future<void> sayHello({required Contact contact});
-
   /// Sends a chat message
   Future<void> sendChat({required ChatMessage message});
 
@@ -210,6 +209,9 @@ abstract class Telepathy implements RustOpaqueInterface {
   void setRmsThreshold({required double decimal});
 
   void setSendCustomRingtone({required bool send});
+
+  /// Attempts to start a call through an existing session
+  Future<void> startCall({required Contact contact});
 
   Future<void> startScreenshare({required Contact contact});
 

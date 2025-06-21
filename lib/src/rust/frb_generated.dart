@@ -72,7 +72,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.10.0';
 
   @override
-  int get rustContentHash => 687958236;
+  int get rustContentHash => 617117851;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -259,6 +259,9 @@ abstract class RustLibApi extends BaseApi {
 
   void crateApiTelepathyTelepathyEndCall({required Telepathy that});
 
+  Future<void> crateApiTelepathyTelepathyJoinRoom(
+      {required Telepathy that, required List<String> memberStrings});
+
   Future<(List<String>, List<String>)> crateApiTelepathyTelepathyListDevices(
       {required Telepathy that});
 
@@ -283,9 +286,6 @@ abstract class RustLibApi extends BaseApi {
 
   Future<void> crateApiTelepathyTelepathyRestartManager(
       {required Telepathy that});
-
-  Future<void> crateApiTelepathyTelepathySayHello(
-      {required Telepathy that, required Contact contact});
 
   Future<void> crateApiTelepathyTelepathySendChat(
       {required Telepathy that, required ChatMessage message});
@@ -328,6 +328,9 @@ abstract class RustLibApi extends BaseApi {
 
   void crateApiTelepathyTelepathySetSendCustomRingtone(
       {required Telepathy that, required bool send});
+
+  Future<void> crateApiTelepathyTelepathyStartCall(
+      {required Telepathy that, required Contact contact});
 
   Future<void> crateApiTelepathyTelepathyStartScreenshare(
       {required Telepathy that, required Contact contact});
@@ -2092,6 +2095,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiTelepathyTelepathyJoinRoom(
+      {required Telepathy that, required List<String> memberStrings}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTelepathy(
+            that, serializer);
+        sse_encode_list_String(memberStrings, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 60, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_dart_error,
+      ),
+      constMeta: kCrateApiTelepathyTelepathyJoinRoomConstMeta,
+      argValues: [that, memberStrings],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiTelepathyTelepathyJoinRoomConstMeta =>
+      const TaskConstMeta(
+        debugName: "Telepathy_join_room",
+        argNames: ["that", "memberStrings"],
+      );
+
+  @override
   Future<(List<String>, List<String>)> crateApiTelepathyTelepathyListDevices(
       {required Telepathy that}) {
     return handler.executeNormal(NormalTask(
@@ -2100,7 +2131,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTelepathy(
             that, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 60, port: port_);
+            funcId: 61, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_record_list_string_list_string,
@@ -2172,7 +2203,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_DartFn_Inputs_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartNotify_bool_Output_unit_AnyhowException(
             screenshareStarted, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 61, port: port_);
+            funcId: 62, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData:
@@ -2234,7 +2265,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTelepathy(
             that, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 62, port: port_);
+            funcId: 63, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2250,35 +2281,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(
         debugName: "Telepathy_restart_manager",
         argNames: ["that"],
-      );
-
-  @override
-  Future<void> crateApiTelepathyTelepathySayHello(
-      {required Telepathy that, required Contact contact}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTelepathy(
-            that, serializer);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerContact(
-            contact, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 63, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_dart_error,
-      ),
-      constMeta: kCrateApiTelepathyTelepathySayHelloConstMeta,
-      argValues: [that, contact],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiTelepathyTelepathySayHelloConstMeta =>
-      const TaskConstMeta(
-        debugName: "Telepathy_say_hello",
-        argNames: ["that", "contact"],
       );
 
   @override
@@ -2667,7 +2669,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<void> crateApiTelepathyTelepathyStartScreenshare(
+  Future<void> crateApiTelepathyTelepathyStartCall(
       {required Telepathy that, required Contact contact}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
@@ -2678,6 +2680,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             contact, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
             funcId: 78, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_dart_error,
+      ),
+      constMeta: kCrateApiTelepathyTelepathyStartCallConstMeta,
+      argValues: [that, contact],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiTelepathyTelepathyStartCallConstMeta =>
+      const TaskConstMeta(
+        debugName: "Telepathy_start_call",
+        argNames: ["that", "contact"],
+      );
+
+  @override
+  Future<void> crateApiTelepathyTelepathyStartScreenshare(
+      {required Telepathy that, required Contact contact}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTelepathy(
+            that, serializer);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerContact(
+            contact, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 79, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2706,7 +2737,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerContact(
             contact, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 79, port: port_);
+            funcId: 80, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2735,7 +2766,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerContact(
             contact, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 80, port: port_);
+            funcId: 81, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2760,7 +2791,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_StreamSink_String_Sse(s, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 81)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 82)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2784,7 +2815,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 82)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 83)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_record_string_list_prim_u_8_strict,
@@ -2807,7 +2838,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 83, port: port_);
+            funcId: 84, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2831,7 +2862,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_String(path, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 84, port: port_);
+            funcId: 85, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2853,7 +2884,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 85)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 86)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2878,7 +2909,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_StreamSink_String_Sse(streamSink, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 86, port: port_);
+            funcId: 87, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2903,7 +2934,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 87, port: port_);
+            funcId: 88, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_statistics,
@@ -5905,6 +5936,10 @@ class TelepathyImpl extends RustOpaque implements Telepathy {
         that: this,
       );
 
+  Future<void> joinRoom({required List<String> memberStrings}) =>
+      RustLib.instance.api.crateApiTelepathyTelepathyJoinRoom(
+          that: this, memberStrings: memberStrings);
+
   /// Lists the input and output devices
   Future<(List<String>, List<String>)> listDevices() =>
       RustLib.instance.api.crateApiTelepathyTelepathyListDevices(
@@ -5916,10 +5951,6 @@ class TelepathyImpl extends RustOpaque implements Telepathy {
       RustLib.instance.api.crateApiTelepathyTelepathyRestartManager(
         that: this,
       );
-
-  /// Attempts to start a call through an existing session
-  Future<void> sayHello({required Contact contact}) => RustLib.instance.api
-      .crateApiTelepathyTelepathySayHello(that: this, contact: contact);
 
   /// Sends a chat message
   Future<void> sendChat({required ChatMessage message}) => RustLib.instance.api
@@ -5966,6 +5997,10 @@ class TelepathyImpl extends RustOpaque implements Telepathy {
 
   void setSendCustomRingtone({required bool send}) => RustLib.instance.api
       .crateApiTelepathyTelepathySetSendCustomRingtone(that: this, send: send);
+
+  /// Attempts to start a call through an existing session
+  Future<void> startCall({required Contact contact}) => RustLib.instance.api
+      .crateApiTelepathyTelepathyStartCall(that: this, contact: contact);
 
   Future<void> startScreenshare({required Contact contact}) => RustLib
       .instance.api
